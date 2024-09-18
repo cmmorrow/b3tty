@@ -1,6 +1,3 @@
-/*
-Copyright © 2024 NAME HERE <EMAIL ADDRESS>
-*/
 package cmd
 
 import (
@@ -9,8 +6,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-
-	"github.com/cmmorrow/b3tty/src"
 )
 
 var cfgFile string
@@ -64,15 +59,7 @@ func initConfig() {
 	if cfgFile != "" {
 		// Use config file from the flag.
 		viper.SetConfigFile(cfgFile)
-		// } else {
-		// 	// Find home directory.
-		// 	home, err := os.UserHomeDir()
-		// 	cobra.CheckErr(err)
 
-		// 	// Search config in home directory with name ".lapis" (without extension).
-		// 	viper.AddConfigPath(home)
-		// 	viper.SetConfigType("yaml")
-		// 	viper.SetConfigName(".lapis")
 		if err := viper.ReadInConfig(); err != nil {
 			if _, ok := err.(viper.ConfigFileNotFoundError); ok {
 				fmt.Fprintf(os.Stderr, "%s not found\n", viper.ConfigFileUsed())
@@ -120,11 +107,9 @@ func initConfig() {
 				fmt.Fprintf(os.Stderr, "cannot find theme %s\n", themeName)
 				os.Exit(3)
 			}
-			themeMap := themeCfg.AllSettings()
-			src.MapToStruct(themeMap, &theme)
-			// for k, v := range themeMap {
-			// 	println(k, v.(string))
-			// }
+			theme.MapToTheme(themeCfg.AllSettings())
+			// themeMap := themeCfg.AllSettings()
+			// src.MapToStruct(themeMap, &theme)
 		}
 	}
 

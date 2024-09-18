@@ -1,6 +1,3 @@
-/*
-Copyright © 2024 NAME HERE <EMAIL ADDRESS>
-*/
 package cmd
 
 import (
@@ -42,25 +39,14 @@ configuration. For additional security, b3tty supports TLS over https and wss.`,
 			if port == 8080 {
 				src.InitServer.Port = 8443
 			}
-			src.ServeTLS(!noBrowser)
 		}
-		src.Serve(!noBrowser)
+		src.Serve(!noBrowser, tls)
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(startCmd)
 
-	// Here you will define your flags and configuration settings.
-
-	// Cobra supports Persistent Flags which will work for this command
-	// and all subcommands, e.g.:
-	// startCmd.PersistentFlags().String("foo", "", "A help for foo")
-
-	// Cobra supports local flags which will only run when this command
-	// is called directly, e.g.:
-
-	// startCmd.Flags().StringVar(&uri, "uri", "localhost", "")
 	uri = "localhost"
 	startCmd.Flags().IntVar(&port, "port", 8080, "The port b3tty is accessible from. If using TLS, the default port is 8443.")
 	startCmd.Flags().IntVar(&rows, "rows", 24, "The number of lines displayed by the TTY.")
@@ -73,48 +59,4 @@ func init() {
 	startCmd.Flags().StringVar(&keyFile, "key-file", "", "Path to TLS private key file.")
 	startCmd.Flags().BoolVar(&noAuth, "no-auth", false, "Disable API token verification. Using this flag will reduce security posture.")
 	startCmd.Flags().BoolVar(&noBrowser, "no-browser", false, "Disables opening b3tty in the default browser.")
-
-	// initConfig()
-
-	// viper.BindPFlags(startCmd.Flags())
-	// println(uri)
-	// println(port)
-
-	// viper.BindPFlag("uri", startCmd.Flags().Lookup("uri"))
-	// viper.BindPFlag("port", startCmd.Flags().Lookup("port"))
 }
-
-// initConfig reads in config file and ENV variables if set.
-// func initConfig() {
-// 	println("called")
-// 	if configFile != "" {
-// 		println("config found")
-// 		// Use config file from the flag.
-// 		viper.SetConfigFile(configFile)
-
-// 		// If a config file is found, read it in.
-// 		err := viper.ReadInConfig()
-// 		if err != nil {
-// 			if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-// 				fmt.Fprintf(os.Stderr, "%s not found\n", viper.ConfigFileUsed())
-// 				os.Exit(1)
-// 			}
-// 			fmt.Fprintf(os.Stderr, "Error loading config file: %s\n", viper.ConfigFileUsed())
-// 			os.Exit(2)
-// 		}
-// 		for _, val := range viper.AllKeys() {
-// 			println(val)
-// 		}
-// 		if viper.IsSet("server.uri") {
-// 			uri = viper.GetString("server.uri")
-// 			println("uri set")
-// 		}
-// 		if viper.IsSet("server.port") {
-// 			port = viper.GetInt("server.port")
-// 			println("port set")
-// 		}
-
-// 		println(uri)
-// 		println(port)
-// 	}
-// }

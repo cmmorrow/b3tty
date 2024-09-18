@@ -18,28 +18,6 @@ var HtmlTemplate = `
                 margin: 0;
                 padding: 0;
             }
-            /* #container {
-                position: relative;
-                height: 50vh;
-            } */
-            /* #container::after {
-                content: "";
-                left: 0;
-                right: 0;
-                bottom: 0;
-                height: 50vh;
-                position: absolute;
-                background: linear-gradient(to bottom, #15191e, #000000 100%);
-                z-index: -1;
-            } */
-            /* html {
-                background-image: linear-gradient(to top, #141414, #000000 25%);
-                background-size: cover;
-                background-repeat: no-repeat;
-            } */
-            /* body {
-                background-color: #000000;
-            } */
             body > div:nth-of-type(2) {
                 width: 100% !important;
             }
@@ -130,12 +108,6 @@ var HtmlTemplate = `
 
             term._initialized = true;
 
-            // term.prompt = () => {
-            //     term.write("\r\n$ ");
-            // };
-            // prompt(term);
-            //
-
             term.onKey((key) => {
                 runCommand(term, key.key);
             });
@@ -152,9 +124,6 @@ var HtmlTemplate = `
         };
 
         socket.onmessage = (event) => {
-            // if (event.data.length >= 512) {
-            //     wait(500);
-            // }
             if (event.data instanceof ArrayBuffer) {
                 const decoder = new TextDecoder("utf-8");
                 term.write(decoder.decode(event.data));
@@ -171,31 +140,9 @@ var HtmlTemplate = `
             runCommand(term, clipText);
         });
 
-        // term.attachCustomKeyEventHandler((event) => {
-        //     if (event.type === "keydown") {
-        //         const sys = window.navigator.platform;
-        //         const ctlKey = sys.includes("Mac")
-        //             ? event.metaKey
-        //             : event.ctrlKey;
-        //         if (event.key === "v" && ctlKey == true) {
-        //             term.focus();
-        //             const text = window.navigator.clipboard
-        //                 .readText()
-        //                 .then((clipText) => runCommand(term, clipText));
-        //         }
-        //     }
-        // });
-
         function runCommand(term, command) {
             socket.send(command);
         }
-
-        // function wait(duration) {
-        //     console.log("Throttling");
-        //     return new Promise((resolve) => {
-        //         setTimeout(resolve, duration);
-        //     });
-        // }
 
         init();
     </script>
