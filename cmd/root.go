@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/cmmorrow/b3tty/src"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
 var cfgFile string
+var profiles map[string]src.Profile
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -108,9 +110,60 @@ func initConfig() {
 				os.Exit(3)
 			}
 			theme.MapToTheme(themeCfg.AllSettings())
-			// themeMap := themeCfg.AllSettings()
-			// src.MapToStruct(themeMap, &theme)
 		}
+
+		if viper.IsSet("profiles") {
+			profiles = make(map[string]src.Profile)
+			profileNames := viper.GetStringMap("profiles")
+			profiles["default"] = src.NewProfile(DEFAULT_SHELL, DEFAULT_WORKING_DIRECTORY, DEFAULT_ROOT, DEFAULT_TITLE, []string{})
+			for name := range profileNames {
+				profileCfg := viper.Sub("profiles." + name)
+				if profileCfg == nil {
+					continue
+				}
+				profileCfg.SetDefault("root", DEFAULT_ROOT)
+				profileCfg.SetDefault("working-directory", DEFAULT_WORKING_DIRECTORY)
+				profileCfg.SetDefault("shell", DEFAULT_SHELL)
+				profileCfg.SetDefault("title", DEFAULT_TITLE)
+				profileCfg.SetDefault("commands", []string{})
+				root := profileCfg.GetString("root")
+				workingDirectory := profileCfg.GetString("working-directory")
+				shell := profileCfg.GetString("shell")
+				title := profileCfg.GetString("title")
+				commands := profileCfg.GetStringSlice("commands")
+				profiles[name] = src.NewProfile(shell, workingDirectory, root, title, commands)
+			}
+		}
+
+		// profileCfg := viper.Sub("profiles")
+		// if profileCfg == nil {
+		// 	profiles["default"] = src.NewProfile(DEFAULT_SHELL, DEFAULT_WORKING_DIRECTORY, DEFAULT_ROOT, DEFAULT_TITLE, []string{})
+		// } else {
+		// 	profileNames := profileCfg.AllKeys()
+		// 	for _, name := range profileNames {
+		// 		var commands []string
+		// 		root := DEFAULT_ROOT
+		// 		workingDirectory := DEFAULT_WORKING_DIRECTORY
+		// 		shell := DEFAULT_SHELL
+		// 		title := DEFAULT_TITLE
+		// 		if profileCfg.IsSet(name + ".root") {
+		// 			root = profileCfg.GetString(name + ".root")
+		// 		}
+		// 		if profileCfg.IsSet(name + ".working-directory") {
+		// 			workingDirectory = profileCfg.GetString(name + ".working-directory")
+		// 		}
+		// 		if profileCfg.IsSet(name + ".shell") {
+		// 			shell = profileCfg.GetString(name + ".shell")
+		// 		}
+		// 		if profileCfg.IsSet(name + ".title") {
+		// 			title = profileCfg.GetString(name + ".title")
+		// 		}
+		// 		if profileCfg.IsSet(name + ".commands") {
+		// 			commands = profileCfg.GetStringSlice(name + ".commands")
+		// 		}
+		// 		profiles[name] = src.NewProfile(shell, workingDirectory, root, title, commands)
+		// 	}
+		// }
 	}
 
 	// viper.AutomaticEnv() // read in environment variables that match

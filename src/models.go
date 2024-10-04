@@ -2,8 +2,13 @@ package src
 
 import (
 	"net/url"
+	"os"
+	"os/exec"
 	"reflect"
 	"strconv"
+	"strings"
+
+	"github.com/google/shlex"
 )
 
 type Client struct {
@@ -52,6 +57,61 @@ type TLS struct {
 	Enabled      bool
 	CertFilePath string
 	KeyFilePath  string
+}
+
+type Profile struct {
+	Root             string
+	WorkingDirectory string
+	Shell            string
+	Title            string
+	Commands         []string
+}
+
+func (p *Profile) ParseCommands() ([][]string, error) {
+	commands := [][]string{}
+	var err error
+	for i, cmd := range p.Commands {
+		commands[i], err = shlex.Split(strings.TrimSpace(cmd))
+		if err != nil {
+			return commands, err
+		}
+	}
+	return commands, nil
+}
+
+func (p *Profile) ApplyToCommand(cmd *exec.Cmd) (*exec.Cmd, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	if p.WorkingDirectory == "" || p.WorkingDirectory == "$HOME" {
+		cmd.Dir = home
+	} else {
+		cmd.Dir = p.WorkingDirectory
+		if strings.HasPrefix(p.WorkingDirectory, "~/") {
+			cmd.Dir = strings.Replace(p.WorkingDirectory, "~", home, 1)
+		}
+	}
+
+	// if p.Root != "" && p.Root != "/" {
+	// 	cmd.SysProcAttr = &syscall.SysProcAttr{}
+	// 	cmd.SysProcAttr.Chroot = p.Root
+	// }
+
+	if p.Shell != "" && p.Shell != "$SHELL" && strings.Contains(p.Shell, " ") == false {
+		cmd.Args[len(cmd.Args)-1] = p.Shell
+	}
+	return cmd, nil
+}
+
+func NewProfile(shell string, wd string, root string, title string, commands []string) Profile {
+	return Profile{
+		Shell:            shell,
+		WorkingDirectory: wd,
+		Root:             root,
+		Title:            title,
+		Commands:         commands,
+	}
 }
 
 type Theme struct {

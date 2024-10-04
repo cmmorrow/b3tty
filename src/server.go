@@ -6,10 +6,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
-
-	"os/exec"
 
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
@@ -22,10 +21,12 @@ const BUFFER_SIZE = 1024
 
 var InitClient *Client
 var InitServer *Server
+var Profiles map[string]Profile
 
 var token string
 var orgCols = uint16(DEFAULT_COLS)
 var orgRows = uint16(DEFAULT_ROWS)
+var profileName = "default"
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  BUFFER_SIZE / 2,
@@ -71,7 +72,7 @@ func Serve(shouldOpenBrowser bool, useTLS bool) {
 
 	mux.HandleFunc("/", displayTermHandler)
 	mux.HandleFunc("/ws", terminalHandler)
-	mux.HandleFunc("/title/*", displayTermHandler)
+	// mux.HandleFunc("/title/*", displayTermHandler)
 	mux.HandleFunc("/size", setSizeHandler)
 	if useTLS {
 		err = http.ListenAndServeTLS(addr, InitServer.CertFilePath, InitServer.KeyFilePath, mux)
@@ -108,27 +109,51 @@ func displayTermHandler(w http.ResponseWriter, r *http.Request) {
 		log.Fatal(err)
 	}
 
-	var title *string
-	path := r.URL.Path
-	if strings.Contains(path, "title") {
-		fullPath := strings.Split(path, "/")
-		if fullPath[1] == "title" {
-			title = &fullPath[2]
-		}
-	}
+	// var title *string
+	// path := r.URL.Path
+	// if strings.Contains(path, "title") {
+	// 	fullPath := strings.Split(path, "/")
+	// 	if fullPath[1] == "title" {
+	// 		title = &fullPath[2]
+	// 	}
+	// }
 
 	query := r.URL.Query()
+
 	if query.Get("token") != token {
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
 
-	err = t.Execute(w, Props{Client: *InitClient, Server: *InitServer, Title: title})
+	p := query.Get("profile")
+	if p != "" {
+		profileName = p
+	}
+	profile := Profiles[profileName]
+
+	err = t.Execute(w, Props{Client: *InitClient, Server: *InitServer, Title: &profile.Title})
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
+// terminalHandler handles WebSocket connections for terminal sessions.
+// It upgrades the HTTP connection to a WebSocket, starts a shell process,
+// and manages bidirectional communication between the WebSocket and the
+// shell's pseudo-terminal (pty).
+//
+// The function performs the following tasks:
+//   - Upgrades the HTTP connection to a WebSocket
+//   - Starts a shell process with a pty
+//   - Handles input from the WebSocket and writes it to the pty
+//   - Reads output from the pty and sends it to the WebSocket
+//   - Manages the lifecycle of the WebSocket and pty connections
+//
+// Parameters:
+//   - w: http.ResponseWriter to write the HTTP response
+//   - r: *http.Request containing the HTTP request details
+//
+// The function runs indefinitely until the WebSocket or pty connection is closed.
 func terminalHandler(w http.ResponseWriter, r *http.Request) {
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -137,8 +162,20 @@ func terminalHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer ws.Close()
 
-	// Start a zsh shell
-	c := exec.Command("zsh")
+	profile := Profiles[profileName]
+
+	// Start the default shell
+	c := exec.Command("/bin/sh", "-c", profile.Shell)
+	c, err = profile.ApplyToCommand(c)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	// home, err := os.UserHomeDir()
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// c.Dir = home
 
 	windowSize := &pty.Winsize{
 		Cols: orgCols,
@@ -147,7 +184,8 @@ func terminalHandler(w http.ResponseWriter, r *http.Request) {
 
 	ptmx, err := pty.StartWithSize(c, windowSize)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
+		return
 	}
 	defer func() { _ = ptmx.Close() }() // Best effort.
 
