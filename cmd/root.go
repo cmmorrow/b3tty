@@ -135,35 +135,6 @@ func initConfig() {
 			}
 		}
 
-		// profileCfg := viper.Sub("profiles")
-		// if profileCfg == nil {
-		// 	profiles["default"] = src.NewProfile(DEFAULT_SHELL, DEFAULT_WORKING_DIRECTORY, DEFAULT_ROOT, DEFAULT_TITLE, []string{})
-		// } else {
-		// 	profileNames := profileCfg.AllKeys()
-		// 	for _, name := range profileNames {
-		// 		var commands []string
-		// 		root := DEFAULT_ROOT
-		// 		workingDirectory := DEFAULT_WORKING_DIRECTORY
-		// 		shell := DEFAULT_SHELL
-		// 		title := DEFAULT_TITLE
-		// 		if profileCfg.IsSet(name + ".root") {
-		// 			root = profileCfg.GetString(name + ".root")
-		// 		}
-		// 		if profileCfg.IsSet(name + ".working-directory") {
-		// 			workingDirectory = profileCfg.GetString(name + ".working-directory")
-		// 		}
-		// 		if profileCfg.IsSet(name + ".shell") {
-		// 			shell = profileCfg.GetString(name + ".shell")
-		// 		}
-		// 		if profileCfg.IsSet(name + ".title") {
-		// 			title = profileCfg.GetString(name + ".title")
-		// 		}
-		// 		if profileCfg.IsSet(name + ".commands") {
-		// 			commands = profileCfg.GetStringSlice(name + ".commands")
-		// 		}
-		// 		profiles[name] = src.NewProfile(shell, workingDirectory, root, title, commands)
-		// 	}
-		// }
 	}
 
 	// viper.AutomaticEnv() // read in environment variables that match

@@ -67,18 +67,30 @@ type Profile struct {
 	Commands         []string
 }
 
+// ParseCommands processes the Profile Commands and returns a slice of string slices.
+// Each command in the Commands slice is trimmed of whitespace and split into arguments.
+//
+// Returns:
+//   - [][]string: A slice of string slices, where each inner slice represents a parsed command with its arguments.
+//   - error: An error if any occurs during the parsing process, nil otherwise.
 func (p *Profile) ParseCommands() ([][]string, error) {
 	commands := [][]string{}
-	var err error
-	for i, cmd := range p.Commands {
-		commands[i], err = shlex.Split(strings.TrimSpace(cmd))
+	for _, cmd := range p.Commands {
+		proto, err := shlex.Split(strings.TrimSpace(cmd))
 		if err != nil {
 			return commands, err
 		}
+		commands = append(commands, proto)
 	}
 	return commands, nil
 }
 
+// ApplyToCommand applies the Profile's settings to the given exec.Cmd.
+// It sets the working directory based on the Profile's WorkingDirectory field,
+// expanding $HOME and ~ to the user's home directory.
+// If a custom shell is specified in the Profile, it replaces the last argument
+// of the command with the custom shell.
+// Returns the modified exec.Cmd and any error encountered.
 func (p *Profile) ApplyToCommand(cmd *exec.Cmd) (*exec.Cmd, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -92,11 +104,6 @@ func (p *Profile) ApplyToCommand(cmd *exec.Cmd) (*exec.Cmd, error) {
 			cmd.Dir = strings.Replace(p.WorkingDirectory, "~", home, 1)
 		}
 	}
-
-	// if p.Root != "" && p.Root != "/" {
-	// 	cmd.SysProcAttr = &syscall.SysProcAttr{}
-	// 	cmd.SysProcAttr.Chroot = p.Root
-	// }
 
 	if p.Shell != "" && p.Shell != "$SHELL" && strings.Contains(p.Shell, " ") == false {
 		cmd.Args[len(cmd.Args)-1] = p.Shell
@@ -137,6 +144,16 @@ type Theme struct {
 	BrightWhite         string
 }
 
+// MapToTheme maps the key-value pairs from the given map to the corresponding
+// fields of the Theme struct. It uses reflection to set the values of the
+// struct fields based on the map keys. The map keys are expected to be in a
+// format that can be converted to the struct field names. Only string values
+// from the map are set to the corresponding struct fields.
+//
+// Parameters:
+//   - m: A map[string]any containing the theme properties to be set.
+//
+// Note: This method modifies the Theme struct in-place.
 func (tm *Theme) MapToTheme(m map[string]any) {
 	val := reflect.ValueOf(tm).Elem()
 	for k, v := range m {

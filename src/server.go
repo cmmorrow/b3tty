@@ -72,7 +72,6 @@ func Serve(shouldOpenBrowser bool, useTLS bool) {
 
 	mux.HandleFunc("/", displayTermHandler)
 	mux.HandleFunc("/ws", terminalHandler)
-	// mux.HandleFunc("/title/*", displayTermHandler)
 	mux.HandleFunc("/size", setSizeHandler)
 	if useTLS {
 		err = http.ListenAndServeTLS(addr, InitServer.CertFilePath, InitServer.KeyFilePath, mux)
@@ -109,15 +108,6 @@ func displayTermHandler(w http.ResponseWriter, r *http.Request) {
 		log.Fatal(err)
 	}
 
-	// var title *string
-	// path := r.URL.Path
-	// if strings.Contains(path, "title") {
-	// 	fullPath := strings.Split(path, "/")
-	// 	if fullPath[1] == "title" {
-	// 		title = &fullPath[2]
-	// 	}
-	// }
-
 	query := r.URL.Query()
 
 	if query.Get("token") != token {
@@ -128,12 +118,15 @@ func displayTermHandler(w http.ResponseWriter, r *http.Request) {
 	p := query.Get("profile")
 	if p != "" {
 		profileName = p
+	} else {
+		profileName = "default"
 	}
 	profile := Profiles[profileName]
 
 	err = t.Execute(w, Props{Client: *InitClient, Server: *InitServer, Title: &profile.Title})
 	if err != nil {
-		log.Fatal(err)
+		log.Println("response error: ", err)
+		return
 	}
 }
 
@@ -171,11 +164,6 @@ func terminalHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 		return
 	}
-	// home, err := os.UserHomeDir()
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// c.Dir = home
 
 	windowSize := &pty.Winsize{
 		Cols: orgCols,
@@ -187,6 +175,7 @@ func terminalHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 		return
 	}
+
 	defer func() { _ = ptmx.Close() }() // Best effort.
 
 	// Handle input from the WebSocket
