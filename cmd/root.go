@@ -9,13 +9,16 @@ import (
 	"github.com/spf13/viper"
 )
 
+var Version = "latest"
+
 var cfgFile string
 var profiles map[string]src.Profile
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "b3tty",
-	Short: ".... but browser based TTY!",
+	Version: Version,
+	Use:     "b3tty",
+	Short:   ".... but browser based TTY!",
 	Long: `b3tty is a terminal emulator accessible entirely from your web browser. It is
 built using xterm.js which provides the terminal look and feel using Javascript
 and CSS. A small web server acts as a proxy between a psuedo terminal and the
@@ -34,6 +37,7 @@ and terminal configuration options:
 // Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
+	rootCmd.SetVersionTemplate("{{ .Version }}\n")
 	err := rootCmd.Execute()
 	if err != nil {
 		os.Exit(1)
@@ -48,11 +52,6 @@ func init() {
 	// will be global for your application.
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file to use")
-
-	// Cobra also supports local flags, which will only run
-	// when this action is called directly.
-	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
-
 	viper.BindPFlags(startCmd.Flags())
 }
 
