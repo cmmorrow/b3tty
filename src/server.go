@@ -17,7 +17,7 @@ import (
 // const indexPath = "src/index.html"
 const DEFAULT_COLS = 80
 const DEFAULT_ROWS = 24
-const BUFFER_SIZE = 1024
+const BUFFER_SIZE = 4096
 
 var InitClient *Client
 var InitServer *Server
@@ -29,8 +29,9 @@ var orgRows = uint16(DEFAULT_ROWS)
 var profileName = "default"
 
 var upgrader = websocket.Upgrader{
-	ReadBufferSize:  BUFFER_SIZE / 2,
-	WriteBufferSize: BUFFER_SIZE / 2,
+	ReadBufferSize:    BUFFER_SIZE,
+	WriteBufferSize:   BUFFER_SIZE,
+	EnableCompression: true,
 	CheckOrigin: func(r *http.Request) bool {
 		origin := r.Header.Get("origin")
 		if strings.Contains(origin, "localhost") || strings.Contains(origin, "127.0.0.1") {
@@ -183,7 +184,12 @@ func terminalHandler(w http.ResponseWriter, r *http.Request) {
 		for {
 			_, message, err := ws.ReadMessage()
 			if err != nil {
-				log.Println("read:", err)
+				switch err.(type) {
+				case *websocket.CloseError:
+					log.Println("cannot read from websocket: unexpectedly closed")
+				default:
+					log.Println("read:", err)
+				}
 				break
 			}
 			_, err = ptmx.Write(message)
@@ -212,7 +218,7 @@ func terminalHandler(w http.ResponseWriter, r *http.Request) {
 				ws.Close()
 				return
 			}
-			err = ws.WriteMessage(websocket.TextMessage, buf[:n])
+			err = ws.WriteMessage(websocket.BinaryMessage, buf[:n])
 			if err != nil {
 				log.Println("write from pty:", err)
 			}

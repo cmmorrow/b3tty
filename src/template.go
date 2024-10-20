@@ -46,7 +46,7 @@ var HtmlTemplate = `
 
         const term = new window.Terminal({
             cursorBlink: "{{ .CursorBlink }}",
-            fontFamily: "{{ .FontFamily }}",
+            fontFamily: "{{ .FontFamily }}, Menlo, DejaVu Sans Mono, Ubuntu Mono, Inconsolata, Fira, monospace",
             fontSize: "{{ .FontSize }}",
             {{ if .Rows }}rows: {{ .Rows }},{{ end }}
             {{ if .Columns }}cols: {{ .Columns }},{{ end }}
@@ -77,7 +77,7 @@ var HtmlTemplate = `
             {{ end }}
         });
 
-        const termElement = document.getElementById("terminal")
+        const termElement = document.getElementById("terminal");
         term.open(termElement);
 
         {{ if not .Columns }}
@@ -108,9 +108,13 @@ var HtmlTemplate = `
 
             term._initialized = true;
 
-            term.onKey((key) => {
-                runCommand(term, key.key);
+            term.onData(chunk => {
+              runCommand(term, chunk);
             });
+
+            // term.onKey((key) => {
+            //     runCommand(term, key.key);
+            // });
         }
 
         socket.onclose = (event) => {
@@ -119,26 +123,33 @@ var HtmlTemplate = `
             alert("Connection closed");
         };
 
+        socket.onerror = (event) => {
+          console.log('A socket error occurred: ', event);
+        }
+
         socket.onopen = (event) => {
             console.log("Socket opened");
         };
 
         socket.onmessage = (event) => {
-            if (event.data instanceof ArrayBuffer) {
-                const decoder = new TextDecoder("utf-8");
-                term.write(decoder.decode(event.data));
-            } else {
-                term.write(event.data);
-            }
+          if(socket.readyState !== 1) {
+            console.log('websocket not ready!');
+          }
+          if (event.data instanceof ArrayBuffer) {
+            const decoder = new TextDecoder("utf-8");
+            term.write(decoder.decode(event.data));
+          } else {
+            term.write(event.data);
+          }
         };
 
         // Apply paste behavior
-        term.textarea.addEventListener("paste", (event) => {
-            const clipText = (
-                event.clipboardData || window.clipboardData
-            ).getData("text");
-            runCommand(term, clipText);
-        });
+        // term.textarea.addEventListener("paste", (event) => {
+        //     const clipText = (
+        //         event.clipboardData || window.clipboardData
+        //     ).getData("text");
+        //     runCommand(term, clipText);
+        // });
 
         function runCommand(term, command) {
             socket.send(command);
