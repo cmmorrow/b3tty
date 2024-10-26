@@ -21,10 +21,24 @@ var HtmlTemplate = `
             body > div:nth-of-type(2) {
                 width: 100% !important;
             }
+            .bell {
+                position: fixed;
+                top: 10px;
+                right: 10px;
+                font-size: 40px;
+                display: none; /* Initially hidden */
+                transition: opacity 0.5s;
+                z-index: 9999;
+                pointer-events: none;
+            }
+            // .fade-out {
+            //     opacity: 0;
+            // }
         </style>
     </head>
     <body>
         <div id="container">
+        	<div id="bell" class="bell">🔔</div>
             <div id="terminal"></div>
         </div>
     </body>
@@ -112,9 +126,23 @@ var HtmlTemplate = `
               runCommand(term, chunk);
             });
 
-            // term.onKey((key) => {
-            //     runCommand(term, key.key);
-            // });
+            term.onBell(() => {
+              const bell = document.getElementById('bell');
+
+              // Display the bell
+              bell.style.display = 'block';
+
+              // Set timeout to fade it out after 2 seconds
+              // setTimeout(() => {
+              //   bell.classList.add('fade-out');
+              // }, 2000);
+
+              // Hide the bell entirely after the fade-out transition
+              setTimeout(() => {
+                bell.style.display = 'none';
+                // bell.classList.remove('fade-out'); // Reset for future triggers
+              }, 500);
+            });
         }
 
         socket.onclose = (event) => {
@@ -142,14 +170,6 @@ var HtmlTemplate = `
             term.write(event.data);
           }
         };
-
-        // Apply paste behavior
-        // term.textarea.addEventListener("paste", (event) => {
-        //     const clipText = (
-        //         event.clipboardData || window.clipboardData
-        //     ).getData("text");
-        //     runCommand(term, clipText);
-        // });
 
         function runCommand(term, command) {
             socket.send(command);

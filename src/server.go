@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
@@ -224,6 +225,18 @@ func terminalHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
+
+	if len(profile.Commands) > 0 {
+		time.Sleep(time.Second * 1)
+		for _, command := range profile.Commands {
+			_, err = ptmx.Write([]byte(strings.TrimSpace(command) + "\n"))
+			if err != nil {
+				log.Println("write to pty:", err)
+				os.Exit(24)
+			}
+			time.Sleep(time.Millisecond * 200)
+		}
+	}
 
 	// Keep the connection open
 	select {}
