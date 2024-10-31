@@ -86,6 +86,10 @@ func Serve(shouldOpenBrowser bool, useTLS bool) {
 }
 
 func setSizeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
 	val := r.URL.Query()
 	cols, err := strconv.Atoi(val.Get("cols"))
 	if err != nil {
@@ -152,7 +156,7 @@ func displayTermHandler(w http.ResponseWriter, r *http.Request) {
 func terminalHandler(w http.ResponseWriter, r *http.Request) {
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Println(err)
+		log.Printf("upgrader error: %v", err)
 		return
 	}
 	defer ws.Close()

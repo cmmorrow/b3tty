@@ -57,6 +57,9 @@ func init() {
 
 // initConfig reads in config file and ENV variables if set.
 func initConfig() {
+	profiles = make(map[string]src.Profile)
+	profiles["default"] = src.NewProfile(DEFAULT_SHELL, DEFAULT_WORKING_DIRECTORY, DEFAULT_ROOT, DEFAULT_TITLE, []string{})
+
 	if cfgFile != "" {
 		// Use config file from the flag.
 		viper.SetConfigFile(cfgFile)
@@ -112,9 +115,7 @@ func initConfig() {
 		}
 
 		if viper.IsSet("profiles") {
-			profiles = make(map[string]src.Profile)
 			profileNames := viper.GetStringMap("profiles")
-			profiles["default"] = src.NewProfile(DEFAULT_SHELL, DEFAULT_WORKING_DIRECTORY, DEFAULT_ROOT, DEFAULT_TITLE, []string{})
 			for name := range profileNames {
 				profileCfg := viper.Sub("profiles." + name)
 				if profileCfg == nil {

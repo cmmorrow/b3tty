@@ -111,6 +111,9 @@ var HtmlTemplate = `
             term.cols +
             "&rows=" +
             term.rows,
+            {
+            	method: "POST",
+            }
         );
         const socket = new WebSocket(wsProtocol + '://' + {{ .Uri }} + ':' + {{ .Port }} + '/ws');
         socket.binaryType = "arraybuffer";
