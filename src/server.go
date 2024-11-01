@@ -72,6 +72,23 @@ func Serve(shouldOpenBrowser bool, useTLS bool) {
 	mux := http.NewServeMux()
 	log.Printf("%s server started on "+uiUrl, protocol)
 
+	// Display the available profiles in the config file
+	if len(Profiles) > 1 {
+		log.Println("Configured profiles:")
+		var prfQuery string
+		if len(tokenQuery) > 0 {
+			prfQuery = "&profile="
+		} else {
+			prfQuery = "?profile="
+		}
+		for prf := range Profiles {
+			if prf == "default" {
+				continue
+			}
+			log.Printf("* %s%s%s", uiUrl, prfQuery, prf)
+		}
+	}
+
 	mux.HandleFunc("/", displayTermHandler)
 	mux.HandleFunc("/ws", terminalHandler)
 	mux.HandleFunc("/size", setSizeHandler)

@@ -10,7 +10,9 @@ var HtmlTemplate = `
             href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css"
         />
         <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-image@0.8.0/lib/addon-image.min.js"></script>
         <style>
             html,
             body {
@@ -31,9 +33,6 @@ var HtmlTemplate = `
                 z-index: 9999;
                 pointer-events: none;
             }
-            // .fade-out {
-            //     opacity: 0;
-            // }
         </style>
     </head>
     <body>
@@ -64,7 +63,6 @@ var HtmlTemplate = `
             fontSize: "{{ .FontSize }}",
             {{ if .Rows }}rows: {{ .Rows }},{{ end }}
             {{ if .Columns }}cols: {{ .Columns }},{{ end }}
-            // rows: "50",
             {{ if .Theme }}
             theme: {
                 foreground: {{ .Theme.Foreground }},
@@ -93,6 +91,12 @@ var HtmlTemplate = `
 
         const termElement = document.getElementById("terminal");
         term.open(termElement);
+
+        const webLinks = new window.WebLinksAddon.WebLinksAddon();
+        term.loadAddon(webLinks);
+
+        const imageAddon = new window.ImageAddon.ImageAddon();
+        term.loadAddon(imageAddon);
 
         {{ if not .Columns }}
         const fitAddon = new window.FitAddon.FitAddon();
