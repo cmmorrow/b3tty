@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"log"
 	"os"
 
 	"github.com/cmmorrow/b3tty/src"
@@ -60,20 +61,31 @@ func initConfig() {
 	profiles = make(map[string]src.Profile)
 	profiles["default"] = src.NewProfile(DEFAULT_SHELL, DEFAULT_WORKING_DIRECTORY, DEFAULT_ROOT, DEFAULT_TITLE, []string{})
 
-	if cfgFile != "" {
-		// Use config file from the flag.
-		viper.SetConfigFile(cfgFile)
-
-		if err := viper.ReadInConfig(); err != nil {
-			if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-				fmt.Fprintf(os.Stderr, "%s not found\n", viper.ConfigFileUsed())
-				os.Exit(1)
+	viper.SetConfigName("conf")
+	viper.SetConfigType("yaml")
+	viper.AddConfigPath("$HOME/.config/b3tty")
+	viper.AddConfigPath("/etc/b3tty")
+	viper.AddConfigPath("$HOME/repos/b3tty/")
+	viper.SetConfigFile(cfgFile)
+	if err := viper.ReadInConfig(); err != nil {
+		switch err.(type) {
+		case viper.ConfigFileNotFoundError:
+			if len(cfgFile) > 0 {
+				log.Printf("%s not found\n", cfgFile)
 			}
-			fmt.Fprintf(os.Stderr, "Error loading config file: %s\n", viper.ConfigFileUsed())
-			os.Exit(2)
+		default:
+			f := ""
+			if len(cfgFile) > 0 {
+				f = cfgFile
+			}
+			fmt.Fprintf(os.Stderr, "Error loading config file %s\n", f)
+			os.Exit(1)
 		}
+	}
 
+	if len(viper.ConfigFileUsed()) > 0 {
 		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+
 		if viper.IsSet("server.port") {
 			port = viper.GetInt("server.port")
 		}
