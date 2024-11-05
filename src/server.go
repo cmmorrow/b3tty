@@ -85,7 +85,7 @@ func Serve(shouldOpenBrowser bool, useTLS bool) {
 			if prf == "default" {
 				continue
 			}
-			log.Printf("* %s%s%s", uiUrl, prfQuery, prf)
+			log.Printf("-> %s%s%s", uiUrl, prfQuery, prf)
 		}
 	}
 
@@ -124,7 +124,7 @@ func displayTermHandler(w http.ResponseWriter, r *http.Request) {
 	type Props struct {
 		Client
 		Server
-		Title *string
+		Title string
 	}
 	t, err := template.New("b3tty").Parse(HtmlTemplate)
 	if err != nil {
@@ -146,7 +146,7 @@ func displayTermHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	profile := Profiles[profileName]
 
-	err = t.Execute(w, Props{Client: *InitClient, Server: *InitServer, Title: &profile.Title})
+	err = t.Execute(w, Props{Client: *InitClient, Server: *InitServer, Title: profile.Title})
 	if err != nil {
 		log.Println("response error: ", err)
 		return

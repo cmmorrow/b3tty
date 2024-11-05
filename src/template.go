@@ -33,12 +33,22 @@ var HtmlTemplate = `
                 z-index: 9999;
                 pointer-events: none;
             }
+            #profile {
+            	position: fixed;
+             	bottom: 15px;
+              	left: 15px;
+                font-size: {{ .FontSize }}pt;
+                color: white;
+                font-family: sans-serif;
+                z-index: 9999;
+            }
         </style>
     </head>
     <body>
         <div id="container">
         	<div id="bell" class="bell">🔔</div>
             <div id="terminal"></div>
+            <div id="profile">{{ if ne .Title "b3tty" }}Profile: {{ .Title }}{{ end }}</div>
         </div>
     </body>
     <script>
