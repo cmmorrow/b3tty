@@ -1,7 +1,7 @@
 package src
 
 import (
-	"html/template"
+	"embed"
 	"io"
 	"log"
 	"net/http"
@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/creack/pty"
@@ -19,6 +20,12 @@ import (
 const DEFAULT_COLS = 80
 const DEFAULT_ROWS = 24
 const BUFFER_SIZE = 4096
+
+//go:embed assets
+var assets embed.FS
+
+//go:embed templates/terminal.tmpl
+var templ string
 
 var InitClient *Client
 var InitServer *Server
@@ -33,13 +40,13 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:    BUFFER_SIZE,
 	WriteBufferSize:   BUFFER_SIZE,
 	EnableCompression: true,
-	CheckOrigin: func(r *http.Request) bool {
-		origin := r.Header.Get("origin")
-		if strings.Contains(origin, "localhost") || strings.Contains(origin, "127.0.0.1") {
-			return true
-		}
-		return false
-	},
+	// CheckOrigin: func(r *http.Request) bool {
+	// 	origin := r.Header.Get("origin")
+	// 	if strings.Contains(origin, "localhost") || strings.Contains(origin, "127.0.0.1") {
+	// 		return true
+	// 	}
+	// 	return false
+	// },
 }
 
 func Serve(shouldOpenBrowser bool, useTLS bool) {
@@ -90,6 +97,7 @@ func Serve(shouldOpenBrowser bool, useTLS bool) {
 	}
 
 	mux.HandleFunc("/", displayTermHandler)
+	mux.Handle("/assets/", http.StripPrefix("/", http.FileServer(http.FS(assets))))
 	mux.HandleFunc("/ws", terminalHandler)
 	mux.HandleFunc("/size", setSizeHandler)
 	if useTLS {
@@ -126,7 +134,7 @@ func displayTermHandler(w http.ResponseWriter, r *http.Request) {
 		Server
 		Title string
 	}
-	t, err := template.New("b3tty").Parse(HtmlTemplate)
+	t, err := template.New("b3tty").Parse(templ)
 	if err != nil {
 		log.Fatal(err)
 	}
