@@ -16,6 +16,7 @@
                 height: 100%;
                 margin: 0;
                 padding: 0;
+                background: black;
             }
             body > div:nth-of-type(2) {
                 width: 100% !important;
@@ -115,7 +116,7 @@
         const percentage = getPercentageOfViewport(termElement);
         const styleSheet = document.styleSheets[1];
         {{- if .Theme }}{{ if .Theme.Background -}}
-        styleSheet.insertRule('#container::after { content: ""; left: 0; right: 0; bottom: 0; height: ' + (100 - percentage) + 'vh; position: absolute; background: linear-gradient(to bottom, ' + "{{ .Theme.Background }}" + ', #000000 120%); z-index: -1;}', styleSheet.cssRules.length - 1);
+        styleSheet.insertRule('#container::after { content: ""; left: 0; right: 0; bottom: 0; height: ' + (100 - percentage) + 'vh; position: absolute; background: linear-gradient(to bottom, ' + "{{ .Theme.Background }}" + ', #000000 120%); z-index: 1;}', styleSheet.cssRules.length - 1);
         {{- end }}{{ end -}}
 
         fetch(
