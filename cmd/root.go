@@ -113,7 +113,7 @@ func initConfig() {
 		if viper.IsSet("terminal.font-family") {
 			fontFamily = viper.GetString("terminal.font-family")
 		}
-		if viper.IsSet("server.font-size") {
+		if viper.IsSet("terminal.font-size") {
 			fontSize = viper.GetInt("terminal.font-size")
 		}
 		if viper.IsSet("theme") {
