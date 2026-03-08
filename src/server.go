@@ -2,6 +2,7 @@ package src
 
 import (
 	"embed"
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
@@ -212,7 +213,7 @@ func terminalHandler(w http.ResponseWriter, r *http.Request) {
 	// Handle input from the WebSocket
 	go func() {
 		for {
-			_, message, err := ws.ReadMessage()
+			msgType, message, err := ws.ReadMessage()
 			if err != nil {
 				switch err.(type) {
 				case *websocket.CloseError:
@@ -221,6 +222,17 @@ func terminalHandler(w http.ResponseWriter, r *http.Request) {
 					log.Println("read:", err)
 				}
 				break
+			}
+			if msgType == websocket.TextMessage {
+				var msg struct {
+					Type string `json:"type"`
+					Cols uint16 `json:"cols"`
+					Rows uint16 `json:"rows"`
+				}
+				if err := json.Unmarshal(message, &msg); err == nil && msg.Type == "resize" {
+					pty.Setsize(ptmx, &pty.Winsize{Cols: msg.Cols, Rows: msg.Rows})
+					continue
+				}
 			}
 			_, err = ptmx.Write(message)
 			if err != nil {

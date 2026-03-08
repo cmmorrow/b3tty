@@ -41,7 +41,7 @@ The connection between the client and server can be secured over TLS. Using TLS 
 * A machine running Linux or MacOS.
 * Your favorite web browser.
 * git and familiarity with using git.
-* Go version 1.22 or higher.
+* Go version 1.25 or higher.
 
 ### Steps
 
