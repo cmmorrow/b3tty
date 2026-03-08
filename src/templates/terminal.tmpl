@@ -4,12 +4,12 @@
         <title>{{ if .Title }}{{ .Title }}{{ else }}b3tty{{ end }}</title>
         <link
             rel="stylesheet"
-            href="/assets/xterm.5.3.0.min.css"
+            href="/assets/xterm.6.0.0.min.css"
         />
-        <script src="/assets/xterm.5.3.0.min.js"></script>
-        <script src="/assets/addon-fit.0.10.0.min.js"></script>
-        <script src="/assets/addon-web-links.0.11.0.min.js"></script>
-        <script src="/assets/addon-image.0.8.0.min.js"></script>
+        <script src="/assets/xterm.6.0.0.min.js"></script>
+        <script src="/assets/addon-fit.0.11.0.min.js"></script>
+        <script src="/assets/addon-web-links.0.12.0.min.js"></script>
+        <script src="/assets/addon-image.0.9.0.min.js"></script>
         <style>
             html,
             body {
@@ -175,17 +175,29 @@
             console.log("Socket opened");
         };
 
+        const decoder = new TextDecoder("utf-8");
         socket.onmessage = (event) => {
           if(socket.readyState !== 1) {
             console.log('websocket not ready!');
           }
           if (event.data instanceof ArrayBuffer) {
-            const decoder = new TextDecoder("utf-8");
-            term.write(decoder.decode(event.data));
+            term.write(decoder.decode(event.data, { stream: true }));
           } else {
             term.write(event.data);
           }
         };
+
+        {{ if not .Columns }}
+        term.onResize(({ cols, rows }) => {
+            if (socket.readyState === 1) {
+                socket.send(JSON.stringify({ type: 'resize', cols, rows }));
+            }
+        });
+
+        window.addEventListener('resize', () => {
+            fitAddon.fit();
+        });
+        {{ end }}
 
         function runCommand(term, command) {
             socket.send(command);
