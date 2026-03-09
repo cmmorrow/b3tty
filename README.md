@@ -14,7 +14,7 @@ b3tty start --help
 
 ### Architecture
 
-b3tty uses a client/server model to enable the connection from a web browser to a pseudo terminal. When the server is started, a url where where b3tty can be accessed from a web browser is displayed. When the url is visited through a web browser, the page is first served to the browser. The page will then determine the width of the browser window to know how many columns to use when starting the pseudo terminal. Next, the server will fork a new pseudo terminal process for b3tty to use. Finally, the page will establish a websocket connection to the server which will forward all writes to the pseudo terminal. Any data returned from the pseudo terminal is sent back to the page over the websocket connection and displayed on the page.
+b3tty uses a client/server model to enable the connection from a web browser to a pseudo terminal. When the server is started, a url where b3tty can be accessed from a web browser is displayed. When the url is visited through a web browser, the server renders an HTML page containing a JSON configuration object (`window.B3TTY`) with the terminal settings, then loads the frontend JavaScript bundle. The frontend will determine the width of the browser window to know how many columns to use when starting the pseudo terminal. Next, the server will fork a new pseudo terminal process for b3tty to use. Finally, the page will establish a websocket connection to the server which will forward all writes to the pseudo terminal. Any data returned from the pseudo terminal is sent back to the page over the websocket connection and displayed on the page.
 
 ### A word on security
 
@@ -42,12 +42,14 @@ The connection between the client and server can be secured over TLS. Using TLS 
 * Your favorite web browser.
 * git and familiarity with using git.
 * Go version 1.25 or higher.
+* [bun](https://bun.sh) — used to bundle the frontend JavaScript (`src/client/terminal.mjs` → `src/assets/terminal.min.js`)
 
 ### Steps
 
 1. Open a new terminal window.
 2. b3tty does not ship as a binary. To install b3tty, clone the repo at [https://github.com/cmmorrow/b3tty.git](https://github.com/cmmorrow/b3tty.git).
-3. In the root b3tty directory, run `make build` to build b3tty for your system.
+3. In the root b3tty directory, run `make build` to build b3tty for your system. This will first bundle the frontend JavaScript with bun, then compile the Go binary.
+   * To format frontend source files before building, run `make format`. To check formatting without modifying files (e.g. in CI), run `make format-check`.
 4. Make the b3tty binary executable with `chmod u+x b3tty`.
 5. Either copy the b3tty binary to a directory in your `$PATH` such as /usr/local/bin, or create a symlink to the betty executable that is in your `$PATH`.
 

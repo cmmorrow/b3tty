@@ -22,7 +22,16 @@ BUILD_FLAGS=-v -ldflags="-X 'github.com/cmmorrow/b3tty/cmd.Version=$(PACKAGE_VER
 
 all: test build
 
-build:
+format:
+	cd src/client && bun run format
+
+format-check:
+	cd src/client && bun run format:check
+
+client:
+	bun build src/client/terminal.mjs --outfile src/assets/terminal.min.js --target browser --minify
+
+build: client
 	@echo "Building $(BINARY_NAME) version $(PACKAGE_VERSION)"
 	$(GOBUILD) $(BUILD_FLAGS) -o $(BINARY_NAME) $(MAIN_PACKAGE)
 
@@ -52,4 +61,4 @@ build-freebsd:
 build-mac:
 	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GOBUILD) $(BUILD_FLAGS) -o $(BINARY_NAME)_mac $(MAIN_PACKAGE)
 
-.PHONY: all build test clean run deps tidy build-linux build-freebsd build-mac
+.PHONY: all format format-check client build test clean run deps tidy build-linux build-freebsd build-mac

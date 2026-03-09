@@ -131,11 +131,10 @@ func setSizeHandler(w http.ResponseWriter, r *http.Request) {
 
 func displayTermHandler(w http.ResponseWriter, r *http.Request) {
 	type Props struct {
-		Client
-		Server
-		Title string
+		ConfigJSON string
+		Title      string
 	}
-	t, err := template.New("b3tty").Parse(templ)
+	tmpl, err := template.New("b3tty").Parse(templ)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -155,7 +154,16 @@ func displayTermHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	profile := Profiles[profileName]
 
-	err = t.Execute(w, Props{Client: *InitClient, Server: *InitServer, Title: profile.Title})
+	thm := InitClient.Theme
+	cfg := NewTermConfig(InitServer, InitClient, &thm)
+	cfgJSON, err := json.Marshal(cfg)
+	if err != nil {
+		log.Println("config serialization error: ", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	err = tmpl.Execute(w, Props{ConfigJSON: string(cfgJSON), Title: profile.Title})
 	if err != nil {
 		log.Println("response error: ", err)
 		return
