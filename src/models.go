@@ -122,26 +122,26 @@ func NewProfile(shell string, wd string, root string, title string, commands []s
 }
 
 type Theme struct {
-	Foreground          string
-	Background          string
-	SelectionForeground string
-	SelectionBackground string
-	Black               string
-	BrightBlack         string
-	Red                 string
-	BrightRed           string
-	Yellow              string
-	BrightYellow        string
-	Green               string
-	BrightGreen         string
-	Blue                string
-	BrightBlue          string
-	Magenta             string
-	BrightMagenta       string
-	Cyan                string
-	BrightCyan          string
-	White               string
-	BrightWhite         string
+	Foreground          string `json:"foreground,omitempty"`
+	Background          string `json:"background,omitempty"`
+	SelectionForeground string `json:"selectionForeground,omitempty"`
+	SelectionBackground string `json:"selectionBackground,omitempty"`
+	Black               string `json:"black,omitempty"`
+	BrightBlack         string `json:"brightBlack,omitempty"`
+	Red                 string `json:"red,omitempty"`
+	BrightRed           string `json:"brightRed,omitempty"`
+	Yellow              string `json:"yellow,omitempty"`
+	BrightYellow        string `json:"brightYellow,omitempty"`
+	Green               string `json:"green,omitempty"`
+	BrightGreen         string `json:"brightGreen,omitempty"`
+	Blue                string `json:"blue,omitempty"`
+	BrightBlue          string `json:"brightBlue,omitempty"`
+	Magenta             string `json:"magenta,omitempty"`
+	BrightMagenta       string `json:"brightMagenta,omitempty"`
+	Cyan                string `json:"cyan,omitempty"`
+	BrightCyan          string `json:"brightCyan,omitempty"`
+	White               string `json:"white,omitempty"`
+	BrightWhite         string `json:"brightWhite,omitempty"`
 }
 
 // MapToTheme maps the key-value pairs from the given map to the corresponding
@@ -163,5 +163,31 @@ func (tm *Theme) MapToTheme(m map[string]any) {
 		if field.IsValid() && field.CanSet() {
 			field.SetString(v.(string))
 		}
+	}
+}
+
+type TermConfig struct {
+	TLS         bool   `json:"tls"`
+	CursorBlink bool   `json:"cursorBlink"`
+	FontFamily  string `json:"fontFamily"`
+	FontSize    int    `json:"fontSize"`
+	Rows        int    `json:"rows"`
+	Columns     int    `json:"columns"`
+	Theme       Theme  `json:"theme"`
+	Uri         string `json:"uri"`
+	Port        int    `json:"port"`
+}
+
+func NewTermConfig(srv *Server, clnt *Client, thm *Theme) *TermConfig {
+	return &TermConfig{
+		TLS:         srv.TLS.Enabled,
+		CursorBlink: clnt.CursorBlink,
+		FontFamily:  clnt.FontFamily,
+		FontSize:    clnt.FontSize,
+		Rows:        clnt.Rows,
+		Columns:     clnt.Columns,
+		Theme:       *thm,
+		Uri:         srv.Uri,
+		Port:        srv.Port,
 	}
 }
