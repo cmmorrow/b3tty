@@ -4,6 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "test": "bun test",
     "format": "prettier --write \"**/*.{mjs,ts}\"",
     "format:check": "prettier --check \"**/*.{mjs,ts}\""
   },
