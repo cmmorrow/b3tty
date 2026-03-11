@@ -37,6 +37,7 @@ build: client
 
 test:
 	$(GOTEST) -v ./...
+	cd src/client && bun test
 
 clean:
 	$(GOCLEAN)
