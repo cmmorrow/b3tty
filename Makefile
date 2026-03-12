@@ -29,7 +29,7 @@ format-check:
 	cd src/client && bun run format:check
 
 client:
-	bun build src/client/terminal.mjs --outfile src/assets/terminal.min.js --target browser --minify
+	bun build src/client/terminal.ts --outfile src/assets/terminal.min.js --target browser --minify
 
 build: client
 	@echo "Building $(BINARY_NAME) version $(PACKAGE_VERSION)"
