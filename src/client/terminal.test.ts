@@ -10,7 +10,7 @@ import {
     handleSocketClose,
     sendResizeMessage,
     initTerm,
-} from "./terminal.mjs";
+} from "./terminal.ts";
 
 // ---------------------------------------------------------------------------
 // Shared mock factories
