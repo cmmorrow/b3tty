@@ -4,11 +4,22 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"os/exec"
 	"runtime"
 	"strings"
 )
+
+// validateTerminalDimension reports whether dim is a valid terminal dimension.
+// A valid dimension is a non-negative integer that fits within a uint16 (0–65535),
+// matching the range accepted by the pty resize API.
+func validateTerminalDimension(dim int) bool {
+	if dim < 0 || dim > math.MaxUint16 {
+		return false
+	}
+	return true
+}
 
 // convertToFieldName converts a hyphenated string to a camelCase field name.
 // It splits the input string by hyphens, capitalizes the first letter of each part,

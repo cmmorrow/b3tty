@@ -229,4 +229,14 @@ func TestMapToTheme(t *testing.T) {
 	assert.Equal("black", theme.Background)
 	assert.Empty(theme.SelectionForeground)
 	assert.Empty(theme.SelectionBackground)
+
+	// Test case 5: Valid field name with a non-string value does not panic
+	theme = &Theme{Foreground: "red"}
+	nonStringMap := map[string]any{
+		"foreground": 42,
+		"background": true,
+	}
+	assert.NotPanics(func() { theme.MapToTheme(nonStringMap) })
+	assert.Equal("red", theme.Foreground)
+	assert.Empty(theme.Background)
 }

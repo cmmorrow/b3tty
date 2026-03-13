@@ -12,6 +12,7 @@ import type {
     ClientConfig,
     ThemeConfig,
 } from "./types.ts";
+import { isValidHttpProtocol, isValidWsProtocol, isValidPort, isValidUri } from "./validators.ts";
 
 export const THEME_KEYS = [
     "foreground",
@@ -78,7 +79,23 @@ export function buildTermOptions(config: ClientConfig, theme: ITheme): ITerminal
  * Builds the URL used to POST the initial terminal size to the server.
  */
 export function buildSizeUrl(httpProto: string, uri: string, port: number, cols: number, rows: number): string {
-    return `${httpProto}://${uri}:${port}/size?cols=${cols}&rows=${rows}`;
+    if (!isValidHttpProtocol(httpProto)) throw new Error(`Invalid HTTP protocol: "${httpProto}"`);
+    if (!isValidUri(uri)) throw new Error(`Invalid URI: "${uri}"`);
+    if (!isValidPort(port)) throw new Error(`Invalid port: ${port}`);
+    const url = new URL(`${httpProto}://${uri}:${port}/size`);
+    url.searchParams.set("cols", String(cols));
+    url.searchParams.set("rows", String(rows));
+    return url.toString();
+}
+
+/**
+ * Builds the URL used to open the terminal WebSocket connection.
+ */
+export function buildWsUrl(wsProtocol: string, uri: string, port: number): URL {
+    if (!isValidWsProtocol(wsProtocol)) throw new Error(`Invalid WebSocket protocol: "${wsProtocol}"`);
+    if (!isValidUri(uri)) throw new Error(`Invalid URI: "${uri}"`);
+    if (!isValidPort(port)) throw new Error(`Invalid port: ${port}`);
+    return new URL(`${wsProtocol}://${uri}:${port}/ws`);
 }
 
 /**
@@ -147,7 +164,7 @@ export function initTerm(term: TerminalLike, socket: SocketLike, bellElement: Be
 /**
  * Main entry point. Wires together all terminal, WebSocket, and DOM interactions.
  */
-export function main(config: TermConfig): void {
+export async function main(config: TermConfig): Promise<void> {
     const { wsProtocol, httpProto } = getProtocols(config.tls);
 
     document.documentElement.style.setProperty("--b3tty-font-size", `${config.fontSize}pt`);
@@ -182,9 +199,10 @@ export function main(config: TermConfig): void {
     }
 
     const sizeUrl = buildSizeUrl(httpProto, config.uri, config.port, term.cols, term.rows);
-    fetch(sizeUrl, { method: "POST" });
+    await fetch(sizeUrl, { method: "POST" });
 
-    const socket = new WebSocket(`${wsProtocol}://${config.uri}:${config.port}/ws`);
+    const wsUrl = buildWsUrl(wsProtocol, config.uri, config.port);
+    const socket = new WebSocket(wsUrl);
     socket.binaryType = "arraybuffer";
 
     const decoder = new TextDecoder("utf-8");
