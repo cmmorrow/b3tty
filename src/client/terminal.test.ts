@@ -5,12 +5,14 @@ import {
     buildTheme,
     buildTermOptions,
     buildSizeUrl,
+    buildWsUrl,
     buildBackgroundStyleContent,
     handleSocketMessage,
     handleSocketClose,
     sendResizeMessage,
     initTerm,
 } from "./terminal.ts";
+import { isValidHttpProtocol, isValidWsProtocol, isValidPort, isValidUri, MAX_UINT16 } from "./validators.ts";
 
 // ---------------------------------------------------------------------------
 // Shared mock factories
@@ -99,7 +101,7 @@ describe("THEME_KEYS", () => {
             "brightWhite",
             "selectionForeground",
             "selectionBackground",
-        ];
+        ] as const;
         expect(THEME_KEYS).toEqual(expected);
     });
 
@@ -246,6 +248,208 @@ describe("buildSizeUrl", () => {
     it("handles zero cols and rows", () => {
         const url = buildSizeUrl("http", "localhost", 8080, 0, 0);
         expect(url).toBe("http://localhost:8080/size?cols=0&rows=0");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// buildWsUrl
+// ---------------------------------------------------------------------------
+
+describe("buildWsUrl", () => {
+    it("builds a correct ws URL", () => {
+        const url = buildWsUrl("ws", "localhost", 8080);
+        expect(url.toString()).toBe("ws://localhost:8080/ws");
+    });
+
+    it("builds a correct wss URL", () => {
+        const url = buildWsUrl("wss", "example.com", 8443);
+        expect(url.toString()).toBe("wss://example.com:8443/ws");
+    });
+
+    it("handles non-standard ports", () => {
+        const url = buildWsUrl("ws", "localhost", 3000);
+        expect(url.toString()).toContain(":3000/");
+    });
+
+    it("returns a URL instance", () => {
+        const url = buildWsUrl("ws", "localhost", 8080);
+        expect(url).toBeInstanceOf(URL);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// isValidHttpProtocol
+// ---------------------------------------------------------------------------
+
+describe("isValidHttpProtocol", () => {
+    it("accepts http", () => {
+        expect(isValidHttpProtocol("http")).toBe(true);
+    });
+
+    it("accepts https", () => {
+        expect(isValidHttpProtocol("https")).toBe(true);
+    });
+
+    it("rejects ws", () => {
+        expect(isValidHttpProtocol("ws")).toBe(false);
+    });
+
+    it("rejects wss", () => {
+        expect(isValidHttpProtocol("wss")).toBe(false);
+    });
+
+    it("rejects empty string", () => {
+        expect(isValidHttpProtocol("")).toBe(false);
+    });
+
+    it("rejects arbitrary string", () => {
+        expect(isValidHttpProtocol("ftp")).toBe(false);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// isValidWsProtocol
+// ---------------------------------------------------------------------------
+
+describe("isValidWsProtocol", () => {
+    it("accepts ws", () => {
+        expect(isValidWsProtocol("ws")).toBe(true);
+    });
+
+    it("accepts wss", () => {
+        expect(isValidWsProtocol("wss")).toBe(true);
+    });
+
+    it("rejects http", () => {
+        expect(isValidWsProtocol("http")).toBe(false);
+    });
+
+    it("rejects https", () => {
+        expect(isValidWsProtocol("https")).toBe(false);
+    });
+
+    it("rejects empty string", () => {
+        expect(isValidWsProtocol("")).toBe(false);
+    });
+
+    it("rejects arbitrary string", () => {
+        expect(isValidWsProtocol("ftp")).toBe(false);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// isValidPort
+// ---------------------------------------------------------------------------
+
+describe("isValidPort", () => {
+    it("accepts port 1 (minimum)", () => {
+        expect(isValidPort(1)).toBe(true);
+    });
+
+    it("accepts port 8080", () => {
+        expect(isValidPort(8080)).toBe(true);
+    });
+
+    it("accepts port 65535 (MaxUint16)", () => {
+        expect(isValidPort(MAX_UINT16)).toBe(true);
+    });
+
+    it("rejects port 0", () => {
+        expect(isValidPort(0)).toBe(false);
+    });
+
+    it("rejects negative port", () => {
+        expect(isValidPort(-1)).toBe(false);
+    });
+
+    it("rejects port above 65535", () => {
+        expect(isValidPort(MAX_UINT16 + 1)).toBe(false);
+    });
+
+    it("rejects non-integer port", () => {
+        expect(isValidPort(80.5)).toBe(false);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// isValidUri
+// ---------------------------------------------------------------------------
+
+describe("isValidUri", () => {
+    it("accepts localhost", () => {
+        expect(isValidUri("localhost")).toBe(true);
+    });
+
+    it("accepts a domain name", () => {
+        expect(isValidUri("example.com")).toBe(true);
+    });
+
+    it("accepts a subdomain", () => {
+        expect(isValidUri("sub.example.com")).toBe(true);
+    });
+
+    it("accepts an IPv4 address", () => {
+        expect(isValidUri("192.168.1.1")).toBe(true);
+    });
+
+    it("accepts a hostname with hyphens", () => {
+        expect(isValidUri("my-server.local")).toBe(true);
+    });
+
+    it("rejects an empty string", () => {
+        expect(isValidUri("")).toBe(false);
+    });
+
+    it("rejects a URI with a protocol prefix", () => {
+        expect(isValidUri("http://example.com")).toBe(false);
+    });
+
+    it("rejects a URI with a path", () => {
+        expect(isValidUri("example.com/path")).toBe(false);
+    });
+
+    it("rejects a hostname with a trailing dot", () => {
+        expect(isValidUri("example.com.")).toBe(false);
+    });
+
+    it("rejects a hostname with spaces", () => {
+        expect(isValidUri("my server")).toBe(false);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// buildSizeUrl — validation errors
+// ---------------------------------------------------------------------------
+
+describe("buildSizeUrl validation", () => {
+    it("throws on invalid HTTP protocol", () => {
+        expect(() => buildSizeUrl("ws", "localhost", 8080, 80, 24)).toThrow("Invalid HTTP protocol");
+    });
+
+    it("throws on invalid URI", () => {
+        expect(() => buildSizeUrl("http", "bad uri", 8080, 80, 24)).toThrow("Invalid URI");
+    });
+
+    it("throws on invalid port", () => {
+        expect(() => buildSizeUrl("http", "localhost", 0, 80, 24)).toThrow("Invalid port");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// buildWsUrl — validation errors
+// ---------------------------------------------------------------------------
+
+describe("buildWsUrl validation", () => {
+    it("throws on invalid WebSocket protocol", () => {
+        expect(() => buildWsUrl("http", "localhost", 8080)).toThrow("Invalid WebSocket protocol");
+    });
+
+    it("throws on invalid URI", () => {
+        expect(() => buildWsUrl("ws", "bad uri", 8080)).toThrow("Invalid URI");
+    });
+
+    it("throws on invalid port", () => {
+        expect(() => buildWsUrl("ws", "localhost", 0)).toThrow("Invalid port");
     });
 });
 

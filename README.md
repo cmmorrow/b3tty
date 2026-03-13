@@ -14,7 +14,7 @@ b3tty start --help
 
 ### Architecture
 
-b3tty uses a client/server model to enable the connection from a web browser to a pseudo terminal. When the server is started, a url where b3tty can be accessed from a web browser is displayed. When the url is visited through a web browser, the server renders an HTML page containing a JSON configuration object (`window.B3TTY`) with the terminal settings, then loads the frontend JavaScript bundle. The frontend will determine the width of the browser window to know how many columns to use when starting the pseudo terminal. Next, the server will fork a new pseudo terminal process for b3tty to use. Finally, the page will establish a websocket connection to the server which will forward all writes to the pseudo terminal. Any data returned from the pseudo terminal is sent back to the page over the websocket connection and displayed on the page.
+b3tty uses a client/server model to enable the connection from a web browser to a pseudo terminal. When the server is started, a url where b3tty can be accessed from a web browser is displayed. When the url is visited through a web browser, the server renders an HTML page containing a JSON configuration object (`window.B3TTY`) with the terminal settings, then loads the frontend JavaScript bundle. The frontend determines the width of the browser window to know how many columns to use, then sends that size to the server and waits for confirmation before opening a WebSocket connection. The server then forks a new pseudo terminal process sized to those dimensions. All keyboard input is forwarded over the WebSocket to the pseudo terminal, and any output from the pseudo terminal is sent back and displayed on the page.
 
 ### A word on security
 
@@ -26,7 +26,15 @@ The server will only allow connections from localhost or 127.0.0.1 as part of an
 
 #### Access token
 
-By default, when the server starts, the url with a token of 16 randomly generated characters is provided and must be provided to access the b3tty client in the browser. This is to prevent a user without access to the terminal session where b3tty was started from guessing the url. This behavior can be disabled by passing the `--no-auth` flag at start up or setting the `server.no-auth: true` property in the b3tty config.
+By default, when the server starts, the url with a token of 24 randomly generated characters is provided and must be provided to access the b3tty client in the browser. This is to prevent a user without access to the terminal session where b3tty was started from guessing the url. This behavior can be disabled by passing the `--no-auth` flag at start up or setting the `server.no-auth: true` property in the b3tty config.
+
+#### Content Security Policy
+
+The server sets a `Content-Security-Policy` header on every page response. Scripts are restricted to same-origin files and a single per-request nonce used for the inline configuration block. `'wasm-unsafe-eval'` is also permitted to support xterm.js's internal use of WebAssembly. Framing by other pages is blocked via `frame-ancestors 'none'`.
+
+#### CSRF protection
+
+The `POST /size` endpoint (used by the frontend to communicate terminal dimensions before opening the WebSocket) is protected against cross-site request forgery. Requests that carry a `Sec-Fetch-Site` header with a value other than `same-origin` are rejected. This header is set automatically by browsers and cannot be overridden by page scripts.
 
 #### TLS
 
@@ -42,7 +50,7 @@ The connection between the client and server can be secured over TLS. Using TLS 
 * Your favorite web browser.
 * git and familiarity with using git.
 * Go version 1.25 or higher.
-* [bun](https://bun.sh) — used to bundle the frontend JavaScript (`src/client/terminal.mjs` → `src/assets/terminal.min.js`)
+* [bun](https://bun.sh) — used to bundle the frontend TypeScript (`src/client/terminal.ts` → `src/assets/terminal.min.js`)
 
 ### Steps
 

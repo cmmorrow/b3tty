@@ -7,6 +7,15 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestValidateTerminalDimension(t *testing.T) {
+	assert.True(t, validateTerminalDimension(0))
+	assert.True(t, validateTerminalDimension(80))
+	assert.True(t, validateTerminalDimension(65535))
+	assert.False(t, validateTerminalDimension(-1))
+	assert.False(t, validateTerminalDimension(65536))
+	assert.False(t, validateTerminalDimension(-1000))
+}
+
 func TestConvertToFieldName(t *testing.T) {
 	assert.Equal(t, "UserFirstName", convertToFieldName("user-first-name"))
 	assert.Equal(t, "Id", convertToFieldName("id"))

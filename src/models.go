@@ -160,8 +160,8 @@ func (tm *Theme) MapToTheme(m map[string]any) {
 		// Convert the map key to the struct field name
 		fieldName := convertToFieldName(k)
 		field := val.FieldByName(fieldName)
-		if field.IsValid() && field.CanSet() {
-			field.SetString(v.(string))
+		if s, ok := v.(string); ok && field.IsValid() && field.CanSet() {
+			field.SetString(s)
 		}
 	}
 }

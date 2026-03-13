@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -36,13 +35,21 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:    BUFFER_SIZE,
 	WriteBufferSize:   BUFFER_SIZE,
 	EnableCompression: false,
-	// CheckOrigin: func(r *http.Request) bool {
-	// 	origin := r.Header.Get("origin")
-	// 	if strings.Contains(origin, "localhost") || strings.Contains(origin, "127.0.0.1") {
-	// 		return true
-	// 	}
-	// 	return false
-	// },
+	// CheckOrigin rejects cross-origin WebSocket upgrade requests. An absent
+	// Origin header (non-browser clients) is allowed; any browser-sent Origin
+	// must match the Host the browser used to reach this server, preventing
+	// third-party pages from silently opening terminal connections.
+	CheckOrigin: func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true
+		}
+		u, err := url.Parse(origin)
+		if err != nil {
+			return false
+		}
+		return u.Host == r.Host
+	},
 }
 
 // TerminalServer bundles all mutable per-session state used by the HTTP handlers,
@@ -58,14 +65,15 @@ type TerminalServer struct {
 }
 
 // parseSizeParams reads "cols" and "rows" from q, falling back to DEFAULT_COLS/DEFAULT_ROWS
-// when a value is missing or cannot be parsed as an integer.
+// when a value is missing, cannot be parsed as an integer, or falls outside the valid
+// uint16 range [0, 65535].
 func parseSizeParams(q url.Values) (uint16, uint16) {
 	cols, err := strconv.Atoi(q.Get("cols"))
-	if err != nil {
+	if err != nil || !validateTerminalDimension(cols) {
 		cols = DEFAULT_COLS
 	}
 	rows, err := strconv.Atoi(q.Get("rows"))
-	if err != nil {
+	if err != nil || !validateTerminalDimension(rows) {
 		rows = DEFAULT_ROWS
 	}
 	return uint16(cols), uint16(rows)
@@ -136,7 +144,7 @@ func Serve(shouldOpenBrowser bool, useTLS bool) {
 	}
 
 	if !ts.server.NoAuth {
-		ts.token, err = generateToken(16)
+		ts.token, err = generateToken(24)
 		if err != nil {
 			log.Fatalf("error generating token: %v", err)
 		}
@@ -191,7 +199,19 @@ func Serve(shouldOpenBrowser bool, useTLS bool) {
 // storing the parsed values for use when the next pty session is started.
 func (ts *TerminalServer) setSizeHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
+		log.Printf("%s %s: method not allowed: %s", r.Method, r.URL.Path, r.Method)
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	// CSRF protection via Fetch Metadata: browsers attach Sec-Fetch-Site
+	// automatically and scripts cannot forge it. Only same-origin fetches (the
+	// normal case from terminal.mjs) carry "same-origin"; cross-origin CSRF
+	// attempts will carry "cross-site" or "same-site" and are rejected.
+	// An absent header indicates a non-browser client (e.g. curl), which is
+	// allowed because it cannot be issued by a malicious web page.
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
+		log.Printf("%s %s: forbidden: cross-origin request from Sec-Fetch-Site %q", r.Method, r.URL.Path, site)
+		w.WriteHeader(http.StatusForbidden)
 		return
 	}
 	ts.orgCols, ts.orgRows = parseSizeParams(r.URL.Query())
@@ -203,6 +223,7 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	type Props struct {
 		ConfigJSON string
 		Title      string
+		Nonce      string
 	}
 	tmpl, err := template.New("b3tty").Parse(templ)
 	if err != nil {
@@ -212,6 +233,7 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	query := r.URL.Query()
 
 	if !validateToken(query, ts.token) {
+		log.Printf("%s %s: forbidden: invalid or missing token", r.Method, r.URL.Path)
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
@@ -227,7 +249,40 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	err = tmpl.Execute(w, Props{ConfigJSON: string(cfgJSON), Title: profile.Title})
+	nonce, err := generateToken(16)
+	if err != nil {
+		log.Println("nonce generation error: ", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	// Content-Security-Policy is set as an HTTP header (not a <meta> tag) so
+	// that it is enforced by the browser before any page content is parsed and
+	// cannot be modified by injected content.
+	//
+	// script-src: allow same-origin module scripts plus the one inline script
+	//   that sets window.B3TTY, identified by its per-request nonce.
+	//   'wasm-unsafe-eval' is required for xterm.js which uses WebAssembly
+	//   internally; it is more targeted than 'unsafe-eval' and does not permit
+	//   JS eval().
+	// style-src:  allow same-origin stylesheets plus 'unsafe-inline' for the
+	//   dynamic <style> element the JS injects for theme background gradients.
+	// connect-src 'self': covers same-origin fetch and ws:/wss: connections.
+	// frame-ancestors 'none': prevents the terminal from being embedded in an
+	//   iframe on any other page.
+	// base-uri 'self': blocks <base> tag injection that could redirect relative
+	//   URLs to an attacker-controlled origin.
+	csp := "default-src 'none'; " +
+		"script-src 'self' 'wasm-unsafe-eval' 'nonce-" + nonce + "'; " +
+		"style-src 'self' 'unsafe-inline'; " +
+		"connect-src 'self'; " +
+		"img-src 'self'; " +
+		"font-src 'self'; " +
+		"frame-ancestors 'none'; " +
+		"base-uri 'self'"
+	w.Header().Set("Content-Security-Policy", csp)
+
+	err = tmpl.Execute(w, Props{ConfigJSON: string(cfgJSON), Title: profile.Title, Nonce: nonce})
 	if err != nil {
 		log.Println("response error: ", err)
 		return
@@ -304,7 +359,8 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 			_, err = ptmx.Write(message)
 			if err != nil {
 				log.Println("write to pty:", err)
-				os.Exit(24)
+				ptmx.Close()
+				break
 			}
 		}
 	}()
@@ -340,7 +396,8 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 			_, err = ptmx.Write(formatCommand(command))
 			if err != nil {
 				log.Println("write to pty:", err)
-				os.Exit(24)
+				ptmx.Close()
+				return
 			}
 			time.Sleep(time.Millisecond * 200)
 		}

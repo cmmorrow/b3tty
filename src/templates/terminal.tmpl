@@ -13,6 +13,6 @@
             <div id="profile">{{ if ne .Title "b3tty" }}Profile: {{ .Title }}{{ end }}</div>
         </div>
     </body>
-    <script>window.B3TTY = {{ .ConfigJSON }};</script>
+    <script nonce="{{ .Nonce }}">window.B3TTY = {{ .ConfigJSON }};</script>
     <script type="module" src="/assets/terminal.min.js"></script>
 </html>

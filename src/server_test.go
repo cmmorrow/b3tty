@@ -1,7 +1,9 @@
 package src
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,6 +13,20 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// captureLog redirects the standard logger to a buffer for the duration of f
+// and returns everything that was logged.
+func captureLog(f func()) string {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	defer func() {
+		log.SetOutput(nil) // restore default (stderr)
+		log.SetFlags(log.LstdFlags)
+	}()
+	f()
+	return buf.String()
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -125,6 +141,30 @@ func TestParseSizeParams(t *testing.T) {
 			query:        queryWith("cols", "65535", "rows", "65535"),
 			expectedCols: 65535,
 			expectedRows: 65535,
+		},
+		{
+			name:         "values exceeding uint16 max fall back to defaults",
+			query:        queryWith("cols", "65536", "rows", "65536"),
+			expectedCols: DEFAULT_COLS,
+			expectedRows: DEFAULT_ROWS,
+		},
+		{
+			name:         "negative cols fall back to default cols",
+			query:        queryWith("cols", "-1", "rows", "24"),
+			expectedCols: DEFAULT_COLS,
+			expectedRows: 24,
+		},
+		{
+			name:         "negative rows fall back to default rows",
+			query:        queryWith("cols", "80", "rows", "-1"),
+			expectedCols: 80,
+			expectedRows: DEFAULT_ROWS,
+		},
+		{
+			name:         "both negative fall back to defaults",
+			query:        queryWith("cols", "-100", "rows", "-50"),
+			expectedCols: DEFAULT_COLS,
+			expectedRows: DEFAULT_ROWS,
 		},
 		{
 			name:         "floating-point strings fall back to defaults",
@@ -440,6 +480,20 @@ func TestParseResizeMessage(t *testing.T) {
 			expectedOK:   true,
 		},
 		{
+			name:         "cols exceeding uint16 max is rejected",
+			message:      []byte(`{"type":"resize","cols":65536,"rows":24}`),
+			expectedCols: 0,
+			expectedRows: 0,
+			expectedOK:   false,
+		},
+		{
+			name:         "negative cols is rejected",
+			message:      []byte(`{"type":"resize","cols":-1,"rows":24}`),
+			expectedCols: 0,
+			expectedRows: 0,
+			expectedOK:   false,
+		},
+		{
 			name:         "empty JSON object is rejected",
 			message:      []byte(`{}`),
 			expectedCols: 0,
@@ -537,8 +591,9 @@ func TestSetSizeHandler(t *testing.T) {
 		ts := newTestTerminalServer()
 		req := httptest.NewRequest(http.MethodGet, "/size?cols=80&rows=24", nil)
 		w := httptest.NewRecorder()
-		ts.setSizeHandler(w, req)
+		logged := captureLog(func() { ts.setSizeHandler(w, req) })
 		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+		assert.Contains(t, logged, "method not allowed")
 		// State must not be mutated on error
 		assert.Equal(t, uint16(DEFAULT_COLS), ts.orgCols)
 		assert.Equal(t, uint16(DEFAULT_ROWS), ts.orgRows)
@@ -548,16 +603,18 @@ func TestSetSizeHandler(t *testing.T) {
 		ts := newTestTerminalServer()
 		req := httptest.NewRequest(http.MethodDelete, "/size", nil)
 		w := httptest.NewRecorder()
-		ts.setSizeHandler(w, req)
+		logged := captureLog(func() { ts.setSizeHandler(w, req) })
 		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+		assert.Contains(t, logged, "method not allowed")
 	})
 
 	t.Run("PUT is rejected with 405", func(t *testing.T) {
 		ts := newTestTerminalServer()
 		req := httptest.NewRequest(http.MethodPut, "/size?cols=80&rows=24", nil)
 		w := httptest.NewRecorder()
-		ts.setSizeHandler(w, req)
+		logged := captureLog(func() { ts.setSizeHandler(w, req) })
 		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+		assert.Contains(t, logged, "method not allowed")
 	})
 
 	t.Run("POST with valid params updates orgCols and orgRows", func(t *testing.T) {
@@ -622,6 +679,54 @@ func TestSetSizeHandler(t *testing.T) {
 		ts.setSizeHandler(w, req)
 		assert.Empty(t, w.Body.String())
 	})
+
+	t.Run("POST with Sec-Fetch-Site same-origin is allowed", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		req := httptest.NewRequest(http.MethodPost, "/size?cols=132&rows=50", nil)
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		w := httptest.NewRecorder()
+		ts.setSizeHandler(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, uint16(132), ts.orgCols)
+		assert.Equal(t, uint16(50), ts.orgRows)
+	})
+
+	t.Run("POST with Sec-Fetch-Site cross-site is rejected with 403", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		req := httptest.NewRequest(http.MethodPost, "/size?cols=132&rows=50", nil)
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		w := httptest.NewRecorder()
+		logged := captureLog(func() { ts.setSizeHandler(w, req) })
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, logged, "forbidden")
+		assert.Contains(t, logged, "cross-site")
+		// State must not be mutated on error
+		assert.Equal(t, uint16(DEFAULT_COLS), ts.orgCols)
+		assert.Equal(t, uint16(DEFAULT_ROWS), ts.orgRows)
+	})
+
+	t.Run("POST with Sec-Fetch-Site same-site is rejected with 403", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		req := httptest.NewRequest(http.MethodPost, "/size?cols=132&rows=50", nil)
+		req.Header.Set("Sec-Fetch-Site", "same-site")
+		w := httptest.NewRecorder()
+		logged := captureLog(func() { ts.setSizeHandler(w, req) })
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, logged, "forbidden")
+		assert.Contains(t, logged, "same-site")
+		assert.Equal(t, uint16(DEFAULT_COLS), ts.orgCols)
+		assert.Equal(t, uint16(DEFAULT_ROWS), ts.orgRows)
+	})
+
+	t.Run("POST without Sec-Fetch-Site (non-browser client) is allowed", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		req := httptest.NewRequest(http.MethodPost, "/size?cols=100&rows=30", nil)
+		w := httptest.NewRecorder()
+		ts.setSizeHandler(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, uint16(100), ts.orgCols)
+		assert.Equal(t, uint16(30), ts.orgRows)
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -633,16 +738,18 @@ func TestDisplayTermHandler(t *testing.T) {
 		ts := newTestTerminalServer()
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		w := httptest.NewRecorder()
-		ts.displayTermHandler(w, req)
+		logged := captureLog(func() { ts.displayTermHandler(w, req) })
 		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, logged, "forbidden")
 	})
 
 	t.Run("wrong token returns 403", func(t *testing.T) {
 		ts := newTestTerminalServer()
 		req := httptest.NewRequest(http.MethodGet, "/?token=wrong-token", nil)
 		w := httptest.NewRecorder()
-		ts.displayTermHandler(w, req)
+		logged := captureLog(func() { ts.displayTermHandler(w, req) })
 		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, logged, "forbidden")
 	})
 
 	t.Run("correct token returns 200", func(t *testing.T) {
