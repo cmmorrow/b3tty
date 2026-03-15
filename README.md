@@ -71,8 +71,20 @@ When the b3tty server is started, the output should look something like the outp
 
 ```bash
 > b3tty start
-2024/10/14 00:49:12 http server started on http://localhost:8080/?token=2uzc8uFR7o5yUDy9
+2024/10/14 00:49:12 [INFO ] http server started on http://localhost:8080/?token=2uzc8uFR7o5yUDy9
 ```
+
+Log output uses level prefixes to make it easier to identify the nature of each message:
+
+| Level     | Color      | Meaning                                          |
+|-----------|------------|--------------------------------------------------|
+| `[INFO ]` | Cyan       | Normal operational messages                      |
+| `[WARN ]` | Yellow     | Rejected requests, recoverable conditions        |
+| `[ERROR]` | Red        | Handler errors that did not stop the server      |
+| `[FATAL]` | Bold red   | Unrecoverable errors — server exits immediately  |
+| `[DEBUG]` | Magenta    | Verbose diagnostics, only shown with `--debug`   |
+
+Colors are shown when output is an interactive terminal and suppressed when piped or redirected.
 
 ## Configuration
 
@@ -133,3 +145,31 @@ Each color value in a theme must be either a 3- or 6-digit CSS hex color (e.g. `
 Profiles are used to set the default terminal behavior when navigating to the b3tty url. Profiles allow the working directory and shell to be used to be set when the pseudo terminal is started by the server. The title of the browser tab can also be set to make different profiles easier to distinguish from one another.
 
 Unlike server, terminal, and theme settings, different profiles can be used by different browser tabs (or browser windows) when connecting to the b3tty server. To use a profile defined in the b3tty config file, add the `profile=` query parameter to the end of the b3tty url where the value is the name of the profile to use.
+
+When more than one profile is configured, the server lists them on startup with their URL, shell, and working directory:
+
+```
+2024/10/14 00:49:12 [INFO ] Configured profiles:
+2024/10/14 00:49:12 [INFO ]   projects    http://localhost:8080/?token=2uzc8uFR7o5yUDy9&profile=projects    (shell: /bin/fish | dir: ~/projects)
+2024/10/14 00:49:12 [INFO ]   work        http://localhost:8080/?token=2uzc8uFR7o5yUDy9&profile=work        (shell: /bin/zsh  | dir: ~/work)
+```
+
+Profile names are sorted alphabetically and aligned for readability.
+
+## Debug mode
+
+Passing `--debug` to `b3tty start` enables verbose diagnostic output:
+
+```bash
+b3tty start --debug
+```
+
+On the server side, additional `[DEBUG]` log lines are printed covering startup configuration, incoming request metadata, PTY dimensions, resize events, and WebSocket lifecycle events.
+
+On the browser side, debug mode activates keypress round-trip timing. After each keypress, the time from when the input is sent to the server until xterm.js has finished rendering the PTY response is printed to the browser console:
+
+```
+[b3tty] keypress round-trip: 4.23ms
+```
+
+Debug mode has no effect on normal terminal operation and is intended for development and performance investigation only.

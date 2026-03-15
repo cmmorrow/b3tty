@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"fmt"
-	"log"
 	"os"
 
 	"github.com/cmmorrow/b3tty/src"
@@ -71,20 +69,20 @@ func initConfig() {
 		switch err.(type) {
 		case viper.ConfigFileNotFoundError:
 			if len(cfgFile) > 0 {
-				log.Printf("%s not found\n", cfgFile)
+				src.Warnf("%s not found", cfgFile)
 			}
 		default:
 			f := ""
 			if len(cfgFile) > 0 {
 				f = cfgFile
 			}
-			fmt.Fprintf(os.Stderr, "Error loading config file %s\n", f)
+			src.Errorf("error loading config file %s", f)
 			os.Exit(1)
 		}
 	}
 
 	if len(viper.ConfigFileUsed()) > 0 {
-		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+		src.Infof("using config file: %s", src.Bold(viper.ConfigFileUsed()))
 
 		if viper.IsSet("server.port") {
 			port = viper.GetInt("server.port")
@@ -120,7 +118,7 @@ func initConfig() {
 			themeName = viper.GetString("theme")
 			themeCfg := viper.Sub("themes." + themeName)
 			if themeCfg == nil {
-				fmt.Fprintf(os.Stderr, "cannot find theme %s\n", themeName)
+				src.Errorf("cannot find theme %s", themeName)
 				os.Exit(3)
 			}
 			theme.MapToTheme(themeCfg.AllSettings())

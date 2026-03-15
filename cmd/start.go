@@ -1,14 +1,13 @@
 package cmd
 
 import (
-	"log"
-
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
 	"github.com/cmmorrow/b3tty/src"
 )
 
+var debug bool
 var cursorBlink bool
 var fontFamily string
 var fontSize int
@@ -35,13 +34,14 @@ server is started to prevent a user without access to the shell where b3tty is
 running from accessing the user's shell. This behavior can be disabled through
 configuration. For additional security, b3tty supports TLS over https and wss.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		src.SetDebug(debug)
 		if cfgPath := viper.ConfigFileUsed(); cfgPath != "" {
 			if err := validateConfig(cfgPath); err != nil {
-				log.Fatalf("config validation error: %v", err)
+				src.Fatalf("config validation error: %v", err)
 			}
 		}
 		if err := src.ValidateTheme(&theme); err != nil {
-			log.Fatalf("theme validation error: %v", err)
+			src.Fatalf("theme validation error: %v", err)
 		}
 		src.Profiles = profiles
 		src.InitClient = src.NewClient(&rows, &columns, &cursorBlink, &fontFamily, &fontSize, &theme)
@@ -71,4 +71,5 @@ func init() {
 	startCmd.Flags().StringVar(&keyFile, "key-file", "", "Path to TLS private key file.")
 	startCmd.Flags().BoolVar(&noAuth, "no-auth", false, "Disable API token verification. Using this flag will reduce security posture.")
 	startCmd.Flags().BoolVar(&noBrowser, "no-browser", false, "Disables opening b3tty in the default browser.")
+	startCmd.Flags().BoolVar(&debug, "debug", false, "Enable debug logging.")
 }
