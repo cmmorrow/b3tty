@@ -7,9 +7,44 @@ import (
 	"math"
 	"math/big"
 	"os/exec"
+	"reflect"
+	"regexp"
 	"runtime"
 	"strings"
 )
+
+var (
+	reHexColor   = regexp.MustCompile(`^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$`)
+	reNamedColor = regexp.MustCompile(`^[a-zA-Z]+$`)
+)
+
+// validateThemeColor reports whether s is a valid theme color value. Valid
+// values are an empty string (field not set), a CSS hex color with 3 or 6
+// hex digits (e.g. "#fff" or "#14181d"), or a string of only ASCII letters
+// representing a named CSS color (e.g. "red" or "cornflowerblue").
+func validateThemeColor(s string) bool {
+	if s == "" {
+		return true
+	}
+	return reHexColor.MatchString(s) || reNamedColor.MatchString(s)
+}
+
+// ValidateTheme checks every color field in t against validateThemeColor.
+// It returns an error naming the first invalid field and value, or nil when
+// all fields are valid. Fields are identified by their JSON tag name.
+func ValidateTheme(t *Theme) error {
+	val := reflect.ValueOf(t).Elem()
+	typ := val.Type()
+	for i := 0; i < val.NumField(); i++ {
+		color := val.Field(i).String()
+		if !validateThemeColor(color) {
+			tag := typ.Field(i).Tag.Get("json")
+			name := strings.Split(tag, ",")[0]
+			return fmt.Errorf("invalid theme color for %s: %q", name, color)
+		}
+	}
+	return nil
+}
 
 // validateTerminalDimension reports whether dim is a valid terminal dimension.
 // A valid dimension is a non-negative integer that fits within a uint16 (0–65535),

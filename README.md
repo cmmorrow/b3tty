@@ -28,6 +28,8 @@ The server will only allow connections from localhost or 127.0.0.1 as part of an
 
 By default, when the server starts, the url with a token of 24 randomly generated characters is provided and must be provided to access the b3tty client in the browser. This is to prevent a user without access to the terminal session where b3tty was started from guessing the url. This behavior can be disabled by passing the `--no-auth` flag at start up or setting the `server.no-auth: true` property in the b3tty config.
 
+Each failed token validation incurs an exponential backoff delay before the 403 response is sent: 1s after the first failure, doubling on each subsequent attempt up to a maximum of 30s. The counter resets when a valid token is presented. Backoff is skipped entirely when `--no-auth` is set.
+
 #### Content Security Policy
 
 The server sets a `Content-Security-Policy` header on every page response. Scripts are restricted to same-origin files and a single per-request nonce used for the inline configuration block. `'wasm-unsafe-eval'` is also permitted to support xterm.js's internal use of WebAssembly. Framing by other pages is blocked via `frame-ancestors 'none'`.
@@ -74,7 +76,9 @@ When the b3tty server is started, the output should look something like the outp
 
 ## Configuration
 
-b3tty can be configured via a yaml file specified on startup with the command `b3tty start --config <file path>`. While the server and terminal settings can be configured on start up, some settings such as themes and profiles can only be specified in the config file. The config file is a yaml file and b3tty isn't picky about the file name or path, however, it's recommended to name the file b3tty.yaml and place it in ~/.config/b3tty. An example config yaml file can be seen below:
+b3tty can be configured via a yaml file specified on startup with the command `b3tty start --config <file path>`. While the server and terminal settings can be configured on start up, some settings such as themes and profiles can only be specified in the config file. The config file is a yaml file and b3tty isn't picky about the file name or path, however, it's recommended to name the file b3tty.yaml and place it in ~/.config/b3tty.
+
+When a config file is provided, b3tty validates it on startup before the server starts. Any unknown keys or fields with the wrong data type are reported with the line number where the problem occurs, and the server will not start until the config file is corrected. An example config yaml file can be seen below:
 
 ```yaml
 server:
@@ -121,6 +125,8 @@ themes:
 ## Themes
 
 b3tty allows the look and feel of the browser-based terminal to be customized in the b3tty config file. Themes set the colors used by the terminal representation in the browser. Multiple themes can be defined in the config file but only one theme can be used when the b3tty server is started.
+
+Each color value in a theme must be either a 3- or 6-digit CSS hex color (e.g. `#fff` or `#14181d`) or a letters-only CSS named color (e.g. `red` or `cornflowerblue`). Invalid color values are reported at startup and the server will not start until they are corrected.
 
 ## Profiles
 

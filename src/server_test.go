@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -59,6 +60,7 @@ func newTestTerminalServer() *TerminalServer {
 		orgCols:     DEFAULT_COLS,
 		orgRows:     DEFAULT_ROWS,
 		profileName: "default",
+		authSleep:   func(time.Duration) {}, // no-op: avoid real delays in tests
 	}
 }
 
@@ -583,6 +585,33 @@ func TestFormatCommand(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// authBackoffDelay
+// ---------------------------------------------------------------------------
+
+func TestAuthBackoffDelay(t *testing.T) {
+	tests := []struct {
+		name     string
+		attempts int
+		expected time.Duration
+	}{
+		{"zero attempts returns no delay", 0, 0},
+		{"negative attempts returns no delay", -1, 0},
+		{"1st failure: 1s", 1, 1 * time.Second},
+		{"2nd failure: 2s", 2, 2 * time.Second},
+		{"3rd failure: 4s", 3, 4 * time.Second},
+		{"4th failure: 8s", 4, 8 * time.Second},
+		{"5th failure: 16s", 5, 16 * time.Second},
+		{"6th failure caps at 30s", 6, 30 * time.Second},
+		{"large attempt count caps at 30s", 100, 30 * time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, authBackoffDelay(tt.attempts))
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
 // setSizeHandler
 // ---------------------------------------------------------------------------
 
@@ -734,6 +763,17 @@ func TestSetSizeHandler(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDisplayTermHandler(t *testing.T) {
+	t.Run("non-root paths return 404 without touching auth", func(t *testing.T) {
+		for _, path := range []string{"/favicon.ico", "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png", "/robots.txt"} {
+			ts := newTestTerminalServer()
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			w := httptest.NewRecorder()
+			ts.displayTermHandler(w, req)
+			assert.Equal(t, http.StatusNotFound, w.Code, "expected 404 for %s", path)
+			assert.Equal(t, 0, ts.failedAttempts, "backoff counter must not increment for %s", path)
+		}
+	})
+
 	t.Run("missing token returns 403", func(t *testing.T) {
 		ts := newTestTerminalServer()
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -814,6 +854,38 @@ func TestDisplayTermHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		ts.displayTermHandler(w, req)
 		assert.Equal(t, "default", ts.profileName)
+	})
+
+	t.Run("failed attempt increments counter and is logged", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		req := httptest.NewRequest(http.MethodGet, "/?token=wrong", nil)
+		w := httptest.NewRecorder()
+		var logged string
+		logged = captureLog(func() { ts.displayTermHandler(w, req) })
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Equal(t, 1, ts.failedAttempts)
+		assert.Contains(t, logged, "attempt 1")
+	})
+
+	t.Run("successful auth after failures resets counter", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		ts.failedAttempts = 5
+
+		req := httptest.NewRequest(http.MethodGet, "/?token=test-token-1234", nil)
+		w := httptest.NewRecorder()
+		ts.displayTermHandler(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, 0, ts.failedAttempts)
+	})
+
+	t.Run("no-auth mode: token mismatch skips backoff and counter", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		ts.token = "" // no-auth mode; validateToken always passes with empty server token
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		w := httptest.NewRecorder()
+		ts.displayTermHandler(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, 0, ts.failedAttempts)
 	})
 
 	t.Run("unknown profile param returns empty profile (zero value)", func(t *testing.T) {
