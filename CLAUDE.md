@@ -32,12 +32,13 @@ b3tty is a browser-based terminal emulator. It runs a Go HTTP server that bridge
 - `main.go` — entry point; calls `cmd.Execute()`
 - `cmd/` — CLI layer using Cobra + Viper
   - `root.go` — root command; loads config from `~/.config/b3tty/conf.yaml` (or `/etc/b3tty/`); populates `profiles` map
-  - `start.go` — `b3tty start` subcommand; constructs `src.Client` and `src.Server`, then calls `src.Serve()`
+  - `start.go` — `b3tty start` subcommand; runs config and theme validation, constructs `src.Client` and `src.Server`, then calls `src.Serve()`
+  - `config.go` — typed YAML config structs and `validateConfig`; decodes the config file with `KnownFields(true)` to reject unknown keys and wrong types
   - `defaults.go` — default constants for shell, working directory, title, root
 - `src/` — core server logic
   - `server.go` — HTTP handlers and pty lifecycle; embeds `assets/` and `templates/terminal.tmpl` at compile time
   - `models.go` — data structs: `Client`, `Server`, `TLS`, `Profile`, `Theme`, `TermConfig`
-  - `utils.go` — helpers: token generation, browser open, field name conversion
+  - `utils.go` — helpers: token generation, browser open, field name conversion, theme color validation
 - `src/client/` — frontend source
   - `terminal.ts` — TypeScript module; imports xterm.js addons from `node_modules`, reads `window.B3TTY` for config, implements all terminal logic
   - `validators.ts` — input validation helpers used by `terminal.ts`: `isValidHttpProtocol`, `isValidWsProtocol`, `isValidPort`, `isValidUri`
@@ -49,7 +50,7 @@ b3tty is a browser-based terminal emulator. It runs a Go HTTP server that bridge
   - `xterm.6.0.0.min.css` — xterm.js stylesheet (vendored)
 
 **Request flow:**
-1. Browser `GET /` → `displayTermHandler` validates `?token=`, selects the active profile, builds a `TermConfig` from `InitClient`/`InitServer`, serializes it to JSON, and renders `terminal.tmpl` with `ConfigJSON` and `Profile.Title`
+1. Browser `GET /` → `displayTermHandler` returns 404 immediately for any path other than `/` (prevents browser-initiated probes such as favicon requests from triggering auth logic). For `/`, it validates `?token=`, selects the active profile, builds a `TermConfig` from `InitClient`/`InitServer`, serializes it to JSON, and renders `terminal.tmpl` with `ConfigJSON` and `Profile.Title`
 2. Static assets served from `/assets/` via the embedded `assets/` directory
 3. The page injects `window.B3TTY = <JSON>` then loads `terminal.min.js` as an ES module; the module reads `window.B3TTY`, initializes xterm.js, optionally calls `fitAddon.fit()` to compute cols from the browser window width, then `await`s a `fetch POST /size?cols=N&rows=N` to `setSizeHandler` (which stores `orgCols`/`orgRows`); only after that response resolves does it open `WS /ws`, guaranteeing the pty is sized correctly on first connection
 4. `WS /ws` → `terminalHandler` forks a pty using `creack/pty` sized with `orgCols`/`orgRows`, then runs two goroutines bridging pty output → WebSocket and WebSocket input → pty
@@ -72,6 +73,7 @@ b3tty is a browser-based terminal emulator. It runs a Go HTTP server that bridge
 - `displayTermHandler` sets a `Content-Security-Policy` header on every response: `default-src 'none'`; scripts restricted to same-origin plus a per-request nonce (used for the inline `window.B3TTY` assignment) and `'wasm-unsafe-eval'` (required by xterm.js); `frame-ancestors 'none'`; `base-uri 'self'`
 - `setSizeHandler` enforces CSRF protection via the `Sec-Fetch-Site` fetch-metadata header: requests with a value other than `same-origin` are rejected with 403; absent header (non-browser clients) is allowed
 - Both handlers log a message at `log.Printf` level whenever a 403 or 405 response is returned, including the method, path, and reason
+- `displayTermHandler` applies exponential backoff on consecutive failed token validations: delays are 1s, 2s, 4s, 8s, 16s, capped at 30s. The counter resets on a successful auth. Backoff is skipped entirely when auth is disabled (`NoAuth`). The sleep function is injectable via `TerminalServer.authSleep` so tests run without real delays
 - `buildSizeUrl` and `buildWsUrl` in `terminal.ts` validate their `httpProto`/`wsProtocol`, `uri`, and `port` arguments using helpers from `validators.ts` and throw on invalid input
 
 **Key design notes:**
@@ -81,3 +83,5 @@ b3tty is a browser-based terminal emulator. It runs a Go HTTP server that bridge
 - Profiles are keyed by name; `"default"` is always present; non-default profiles are selected via `?profile=<name>` query param
 - TLS support changes default port from 8080 to 8443 automatically when enabled
 - `make build` always rebuilds the JS bundle via `make client` before compiling Go, so the embedded `terminal.min.js` stays in sync
+- `start.go` runs two validation passes before `src.Serve()`: (1) `validateConfig` (in `cmd/config.go`) decodes the config file into typed structs with `gopkg.in/yaml.v3` and `KnownFields(true)`, catching unknown keys and wrong field types; (2) `src.ValidateTheme` checks every theme color field against `validateThemeColor`, which accepts an empty string, a 3- or 6-digit CSS hex color (`#rgb` / `#rrggbb`), or a letters-only named color. Both pass before calling `src.Serve()`; either failure calls `log.Fatalf`
+- `cmd/config.go` contains only validation structs and `validateConfig`; it is intentionally separate from `src/models.go` to avoid coupling the runtime data model to the config file shape

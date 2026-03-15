@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -55,13 +56,37 @@ var upgrader = websocket.Upgrader{
 // TerminalServer bundles all mutable per-session state used by the HTTP handlers,
 // making them independent of package-level globals and straightforward to test.
 type TerminalServer struct {
-	client      *Client
-	server      *Server
-	profiles    map[string]Profile
-	token       string
-	orgCols     uint16
-	orgRows     uint16
-	profileName string
+	client         *Client
+	server         *Server
+	profiles       map[string]Profile
+	token          string
+	orgCols        uint16
+	orgRows        uint16
+	profileName    string
+	failedAttempts int
+	backoffMu      sync.Mutex
+	// authSleep is the function used to pause on auth failures. It defaults to
+	// time.Sleep and can be replaced in tests with a no-op to avoid real delays.
+	authSleep func(time.Duration)
+}
+
+const (
+	backoffBase = time.Second
+	backoffMax  = 30 * time.Second
+)
+
+// authBackoffDelay returns the delay to impose after n consecutive failed token
+// validations. The delay doubles with each failure (1s, 2s, 4s, …) up to backoffMax.
+func authBackoffDelay(n int) time.Duration {
+	if n <= 0 {
+		return 0
+	}
+	shift := n - 1
+	if shift > 30 {
+		return backoffMax
+	}
+	d := backoffBase << uint(shift)
+	return min(d, backoffMax)
 }
 
 // parseSizeParams reads "cols" and "rows" from q, falling back to DEFAULT_COLS/DEFAULT_ROWS
@@ -133,6 +158,7 @@ func Serve(shouldOpenBrowser bool, useTLS bool) {
 		orgCols:     DEFAULT_COLS,
 		orgRows:     DEFAULT_ROWS,
 		profileName: "default",
+		authSleep:   time.Sleep,
 	}
 
 	var err error
@@ -225,6 +251,15 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 		Title      string
 		Nonce      string
 	}
+	// The terminal is only served at "/". Anything else that falls through the
+	// catch-all mux route (e.g. /favicon.ico, /apple-touch-icon.png fetched
+	// automatically by browsers) gets a plain 404 with no auth logic applied,
+	// so these browser-initiated probes cannot poison the backoff counter.
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+
 	tmpl, err := template.New("b3tty").Parse(templ)
 	if err != nil {
 		log.Fatal(err)
@@ -233,10 +268,26 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	query := r.URL.Query()
 
 	if !validateToken(query, ts.token) {
-		log.Printf("%s %s: forbidden: invalid or missing token", r.Method, r.URL.Path)
+		// Only apply backoff when auth is enabled (token is non-empty). In no-auth
+		// mode ts.token is always "" and validateToken always passes, so this branch
+		// is only reachable in auth mode — but the guard makes the intent explicit.
+		if ts.token != "" {
+			ts.backoffMu.Lock()
+			ts.failedAttempts++
+			delay := authBackoffDelay(ts.failedAttempts)
+			ts.backoffMu.Unlock()
+			log.Printf("%s %s: forbidden: invalid or missing token (attempt %d, delay %s)", r.Method, r.URL.Path, ts.failedAttempts, delay)
+			ts.authSleep(delay)
+		} else {
+			log.Printf("%s %s: forbidden: invalid or missing token", r.Method, r.URL.Path)
+		}
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
+
+	ts.backoffMu.Lock()
+	ts.failedAttempts = 0
+	ts.backoffMu.Unlock()
 
 	ts.profileName = resolveProfileName(query)
 	profile := ts.profiles[ts.profileName]

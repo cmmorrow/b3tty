@@ -1,7 +1,10 @@
 package cmd
 
 import (
+	"log"
+
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 
 	"github.com/cmmorrow/b3tty/src"
 )
@@ -32,6 +35,14 @@ server is started to prevent a user without access to the shell where b3tty is
 running from accessing the user's shell. This behavior can be disabled through
 configuration. For additional security, b3tty supports TLS over https and wss.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		if cfgPath := viper.ConfigFileUsed(); cfgPath != "" {
+			if err := validateConfig(cfgPath); err != nil {
+				log.Fatalf("config validation error: %v", err)
+			}
+		}
+		if err := src.ValidateTheme(&theme); err != nil {
+			log.Fatalf("theme validation error: %v", err)
+		}
 		src.Profiles = profiles
 		src.InitClient = src.NewClient(&rows, &columns, &cursorBlink, &fontFamily, &fontSize, &theme)
 		src.InitServer = src.NewServer(&uri, &port, &noAuth, &src.TLS{CertFilePath: certFile, KeyFilePath: keyFile, Enabled: tls})
