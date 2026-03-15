@@ -114,12 +114,20 @@ export function buildBackgroundStyleContent(
 /**
  * Handles an incoming WebSocket message by writing its content to the terminal.
  * ArrayBuffer messages are decoded as streaming UTF-8; string messages are written directly.
+ * writeCallback, when provided, is passed to term.write and fires after xterm.js has
+ * fully parsed and rendered the data — used by debug timing to mark the end of a round-trip.
  */
-export function handleSocketMessage(event: SocketMessageEvent, decoder: TextDecoder, term: TerminalLike): void {
-    if (event.data instanceof ArrayBuffer) {
-        term.write(decoder.decode(event.data, { stream: true }));
+export function handleSocketMessage(
+    event: SocketMessageEvent,
+    decoder: TextDecoder,
+    term: TerminalLike,
+    writeCallback?: () => void
+): void {
+    const data = event.data instanceof ArrayBuffer ? decoder.decode(event.data, { stream: true }) : event.data;
+    if (writeCallback !== undefined) {
+        term.write(data, writeCallback);
     } else {
-        term.write(event.data);
+        term.write(data);
     }
 }
 
@@ -146,12 +154,22 @@ export function sendResizeMessage(socket: SocketLike, cols: number, rows: number
  * Registers terminal event listeners for keyboard input and the bell.
  * Idempotent — subsequent calls are no-ops once term._initialized is true.
  * bellElement is passed in so the function can be tested without a real DOM.
+ * onBeforeSend, when provided, is called immediately before each socket.send —
+ * used by debug timing to record the keypress timestamp.
  */
-export function initTerm(term: TerminalLike, socket: SocketLike, bellElement: BellElementLike): void {
+export function initTerm(
+    term: TerminalLike,
+    socket: SocketLike,
+    bellElement: BellElementLike,
+    onBeforeSend?: () => void
+): void {
     if (term._initialized) return;
     term._initialized = true;
 
-    term.onData((chunk) => socket.send(chunk));
+    term.onData((chunk) => {
+        if (onBeforeSend !== undefined) onBeforeSend();
+        socket.send(chunk);
+    });
 
     term.onBell(() => {
         bellElement.style.display = "block";
@@ -207,11 +225,31 @@ export async function main(config: TermConfig): Promise<void> {
 
     const decoder = new TextDecoder("utf-8");
 
+    // When debug mode is enabled, measure the round-trip time from the moment
+    // a keypress is sent to the pty to when the response has been rendered by
+    // xterm.js. keypressTime holds the performance.now() snapshot taken just
+    // before socket.send; the write callback computes and logs the delta.
+    let keypressTime: number | null = null;
+    const onBeforeSend = config.debug
+        ? () => {
+              keypressTime = performance.now();
+          }
+        : undefined;
+    const writeCallback = config.debug
+        ? () => {
+              if (keypressTime !== null) {
+                  const elapsed = (performance.now() - keypressTime).toFixed(2);
+                  console.log(`[b3tty] keypress round-trip: ${elapsed}ms`);
+                  keypressTime = null;
+              }
+          }
+        : undefined;
+
     socket.onmessage = (event) => {
         if (socket.readyState !== 1) {
             console.log("websocket not ready!");
         }
-        handleSocketMessage(event as SocketMessageEvent, decoder, term);
+        handleSocketMessage(event as SocketMessageEvent, decoder, term, writeCallback);
     };
 
     socket.onclose = () => handleSocketClose(term, alert);
@@ -219,7 +257,7 @@ export async function main(config: TermConfig): Promise<void> {
     socket.onopen = () => console.log("Socket opened");
 
     const bellElement = document.getElementById("bell")!;
-    initTerm(term, socket, bellElement);
+    initTerm(term, socket, bellElement, onBeforeSend);
 
     if (!config.columns) {
         term.onResize(({ cols, rows }) => {

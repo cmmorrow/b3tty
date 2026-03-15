@@ -56,15 +56,9 @@ func validateTerminalDimension(dim int) bool {
 	return true
 }
 
-// convertToFieldName converts a hyphenated string to a camelCase field name.
-// It splits the input string by hyphens, capitalizes the first letter of each part,
-// and then joins the parts together without spaces.
-//
-// Parameters:
-//   - key: The input string to be converted (e.g., "user-first-name")
-//
-// Returns:
-//   - A string representing the converted field name (e.g., "UserFirstName")
+// convertToFieldName converts a hyphenated string to a PascalCase (UpperCamelCase)
+// Go field name by splitting on hyphens and capitalising the first letter of each
+// part (e.g. "user-first-name" → "UserFirstName").
 func convertToFieldName(key string) string {
 	parts := strings.Split(key, "-")
 	for i, part := range parts {
@@ -73,13 +67,7 @@ func convertToFieldName(key string) string {
 	return strings.Join(parts, "")
 }
 
-// sum calculates the sum of all integers in the given array.
-//
-// Parameters:
-//   - arr: A slice of integers to be summed.
-//
-// Returns:
-//   - An integer representing the sum of all elements in the input array.
+// sum returns the sum of all integers in arr.
 func sum(arr []int) int {
 	total := 0
 	for _, i := range arr {
@@ -88,15 +76,9 @@ func sum(arr []int) int {
 	return total
 }
 
-// openBrowser attempts to open the specified URL in the default web browser
-// based on the operating system.
-//
-// Parameters:
-//   - url: A string representing the URL to be opened in the browser.
-//
-// Returns:
-//   - An error if the browser couldn't be opened or if the platform is unsupported.
-//     Returns nil if the browser was successfully opened.
+// openBrowser attempts to open url in the system default browser using the
+// appropriate OS command. It returns an error if the command fails or the
+// platform is unsupported.
 func openBrowser(url string) error {
 	var err error
 	switch runtime.GOOS {
@@ -115,14 +97,9 @@ func openBrowser(url string) error {
 	return nil
 }
 
-// generateToken generates a random token of the specified length using alphanumeric characters.
-//
-// Parameters:
-//   - length: An integer specifying the desired length of the token.
-//
-// Returns:
-//   - A string containing the generated token.
-//   - An error if there was a problem generating random numbers.
+// generateToken returns a cryptographically random alphanumeric string of the
+// given length. It returns an error if length is negative or if the underlying
+// random number generator fails.
 func generateToken(length int) (string, error) {
 	if length < 0 {
 		return "", errors.New("generate token: length is less than zero")

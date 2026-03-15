@@ -176,6 +176,7 @@ type TermConfig struct {
 	Theme       Theme  `json:"theme"`
 	Uri         string `json:"uri"`
 	Port        int    `json:"port"`
+	Debug       bool   `json:"debug"`
 }
 
 func NewTermConfig(srv *Server, clnt *Client, thm *Theme) *TermConfig {
@@ -189,5 +190,6 @@ func NewTermConfig(srv *Server, clnt *Client, thm *Theme) *TermConfig {
 		Theme:       *thm,
 		Uri:         srv.Uri,
 		Port:        srv.Port,
+		Debug:       debugEnabled,
 	}
 }

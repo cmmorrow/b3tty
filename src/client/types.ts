@@ -32,6 +32,7 @@ export interface TermConfig {
     rows: number;
     columns: number;
     theme: ThemeConfig;
+    debug?: boolean;
 }
 
 export interface ClientConfig {
@@ -53,7 +54,7 @@ export interface BellElementLike {
 
 export interface TerminalLike {
     _initialized?: boolean;
-    write(data: string): void;
+    write(data: string, callback?: () => void): void;
     writeln(data: string): void;
     onData(listener: (data: string) => void): void;
     onBell(listener: () => void): void;
