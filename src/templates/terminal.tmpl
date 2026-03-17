@@ -11,6 +11,7 @@
             <div id="bell" class="bell">🔔</div>
             <div id="terminal"></div>
             <div id="profile">{{ if ne .Title "b3tty" }}Profile: {{ .Title }}{{ end }}</div>
+            <b3tty-dialog id="dialog"></b3tty-dialog>
         </div>
     </body>
     <script nonce="{{ .Nonce }}">window.B3TTY = {{ .ConfigJSON }};</script>

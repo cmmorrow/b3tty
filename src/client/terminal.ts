@@ -13,6 +13,8 @@ import type {
     ThemeConfig,
 } from "./types.ts";
 import { isValidHttpProtocol, isValidWsProtocol, isValidPort, isValidUri } from "./validators.ts";
+import "./components.ts";
+import type { B3ttyDialog } from "./components.ts";
 
 export const THEME_KEYS = [
     "foreground",
@@ -96,19 +98,6 @@ export function buildWsUrl(wsProtocol: string, uri: string, port: number): URL {
     if (!isValidUri(uri)) throw new Error(`Invalid URI: "${uri}"`);
     if (!isValidPort(port)) throw new Error(`Invalid port: ${port}`);
     return new URL(`${wsProtocol}://${uri}:${port}/ws`);
-}
-
-/**
- * Builds the CSS text for the background gradient injected beneath the terminal.
- * The gradient fills the viewport area below the terminal element.
- */
-export function buildBackgroundStyleContent(
-    themeBackground: string,
-    boundingBoxHeight: number,
-    viewportHeight: number
-): string {
-    const percentage = ((boundingBoxHeight / viewportHeight) * 100).toFixed(2);
-    return `#container::after { content: ""; left: 0; right: 0; bottom: 0; height: ${100 - parseFloat(percentage)}%; position: absolute; background: linear-gradient(to bottom, ${themeBackground}, #000000 120%); z-index: 1; }`;
 }
 
 /**
@@ -205,15 +194,7 @@ export async function main(config: TermConfig): Promise<void> {
     }
 
     if (config.theme.background) {
-        const boundingBox = termElement.getBoundingClientRect();
-        const styleContent = buildBackgroundStyleContent(
-            config.theme.background,
-            boundingBox.height,
-            window.innerHeight
-        );
-        const style = document.createElement("style");
-        style.textContent = styleContent;
-        document.head.appendChild(style);
+        document.getElementById("container")!.style.background = config.theme.background;
     }
 
     const sizeUrl = buildSizeUrl(httpProto, config.uri, config.port, term.cols, term.rows);
@@ -252,7 +233,17 @@ export async function main(config: TermConfig): Promise<void> {
         handleSocketMessage(event as SocketMessageEvent, decoder, term, writeCallback);
     };
 
-    socket.onclose = () => handleSocketClose(term, alert);
+    const dialog = document.getElementById("dialog") as unknown as B3ttyDialog;
+    socket.onclose = () => {
+        // Disable and hide the cursor. cursorInactiveStyle "none" hides it
+        // when unfocused; the focus listener ensures a click on the terminal
+        // after close cannot bring the cursor back.
+        term.options.cursorBlink = false;
+        term.options.cursorInactiveStyle = "none";
+        term.blur();
+        term.textarea?.addEventListener("focus", () => term.blur());
+        handleSocketClose(term, (msg) => dialog.show(msg));
+    };
     socket.onerror = (event) => console.log("A socket error occurred: ", event);
     socket.onopen = () => console.log("Socket opened");
 

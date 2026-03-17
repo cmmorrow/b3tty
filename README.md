@@ -16,6 +16,8 @@ b3tty start --help
 
 b3tty uses a client/server model to enable the connection from a web browser to a pseudo terminal. When the server is started, a url where b3tty can be accessed from a web browser is displayed. When the url is visited through a web browser, the server renders an HTML page containing a JSON configuration object (`window.B3TTY`) with the terminal settings, then loads the frontend JavaScript bundle. The frontend determines the width of the browser window to know how many columns to use, then sends that size to the server and waits for confirmation before opening a WebSocket connection. The server then forks a new pseudo terminal process sized to those dimensions. All keyboard input is forwarded over the WebSocket to the pseudo terminal, and any output from the pseudo terminal is sent back and displayed on the page.
 
+When the server closes the WebSocket connection, a modal dialog is displayed in the browser informing the user that the connection has been closed. The terminal cursor is also hidden at this point. Dismissing the modal by clicking OK restores the page to its normal state.
+
 ### A word on security
 
 Because b3tty is opening a connection from a web browser to a new psuedo terminal proccess as the user of b3tty's parent process, it's important to ensure the connection and access to the server are secure. For this reason, b3tty features several security features.
@@ -173,3 +175,12 @@ On the browser side, debug mode activates keypress round-trip timing. After each
 ```
 
 Debug mode has no effect on normal terminal operation and is intended for development and performance investigation only.
+
+## Contributing
+
+Pull requests are welcome. The following checks run automatically on every PR and must pass before merging:
+
+- **Test** — `make test` runs the full Go and bun test suites.
+- **Format** — `make format-check` verifies that all frontend TypeScript source files are formatted with prettier. Run `make format` locally to fix any formatting issues before pushing.
+
+When a PR that updates the `VERSION` file is merged into `main`, a git tag matching the new version number is created automatically.

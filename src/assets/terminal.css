@@ -6,6 +6,17 @@ body {
     background: black;
 }
 
+#container {
+    height: 100%;
+    box-sizing: border-box;
+    padding: 4px;
+    overflow: hidden;
+}
+
+#terminal {
+    height: 100%;
+}
+
 body > div:nth-of-type(2) {
     width: 100% !important;
 }
