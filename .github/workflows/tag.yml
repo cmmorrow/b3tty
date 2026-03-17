@@ -1,0 +1,36 @@
+name: Tag Release
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  tag:
+    name: Create Version Tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check if VERSION changed
+        id: version_check
+        run: |
+          PREV=$(git show HEAD~1:VERSION 2>/dev/null | tr -d '[:space:]' || echo "")
+          CURR=$(cat VERSION | tr -d '[:space:]')
+          if [ "$PREV" != "$CURR" ] && [ -n "$CURR" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "version=v$CURR" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create and push tag
+        if: steps.version_check.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${{ steps.version_check.outputs.version }}"
+          git push origin "${{ steps.version_check.outputs.version }}"

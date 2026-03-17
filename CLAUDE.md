@@ -41,6 +41,7 @@ b3tty is a browser-based terminal emulator. It runs a Go HTTP server that bridge
   - `utils.go` — helpers: token generation, browser open, field name conversion, theme color validation
 - `src/client/` — frontend source
   - `terminal.ts` — TypeScript module; imports xterm.js addons from `node_modules`, reads `window.B3TTY` for config, implements all terminal logic
+  - `components.ts` — web components used by the terminal page; exports the `B3ttyDialog` interface and conditionally defines `B3ttyDialogImpl` (guarded by `typeof HTMLElement !== "undefined"` so the module is safely importable in the bun test environment)
   - `validators.ts` — input validation helpers used by `terminal.ts`: `isValidHttpProtocol`, `isValidWsProtocol`, `isValidPort`, `isValidUri`
   - `types.ts` — shared TypeScript interfaces: `TermConfig`, `ClientConfig`, `ThemeConfig`, and DOM/socket stubs used in tests
   - `package.json` / `bun.lock` — bun project; dependencies are `@xterm/xterm`, `@xterm/addon-fit`, `@xterm/addon-web-links`, `@xterm/addon-image`
@@ -80,8 +81,21 @@ b3tty is a browser-based terminal emulator. It runs a Go HTTP server that bridge
 - xterm.js addons bundled by bun: `FitAddon` (auto-fit cols to browser width when `columns=0`), `WebLinksAddon`, `ImageAddon`
 - After terminal opens, the module `await`s POST `/size` with actual terminal dimensions, then opens the WebSocket — the await ensures the pty is always started with the correct size
 - When `columns=0`: `window resize` → `fitAddon.fit()` → `term.onResize` → sends JSON resize message over the WebSocket; `term.onResize` is registered after the initial `fitAddon.fit()` so startup does not send a spurious resize
-- If a theme background color is set, a gradient `#container::after` rule is injected dynamically via `document.createElement('style')`
+- If a theme background color is set, `#container`'s inline `background` style is set to `config.theme.background` so the padding area matches the terminal background color
 - The `--b3tty-font-size` CSS custom property is set on `document.documentElement` by the JS module; `terminal.css` references it via `var(--b3tty-font-size)`
+- `terminal.ts` imports `components.ts` for side effects (registers `<b3tty-dialog>`) and imports the `B3ttyDialog` interface as a type for casting the dialog element
+- On WebSocket close: `term.options.cursorBlink` is set to `false`, `term.options.cursorInactiveStyle` is set to `"none"`, `term.blur()` is called, and a `focus` event listener is added to `term.textarea` that immediately calls `term.blur()` — together these permanently hide the cursor after the connection ends
+
+**`B3ttyDialog` web component (`src/client/components.ts`):**
+- Registered as `<b3tty-dialog>`; used in `terminal.tmpl` as `<b3tty-dialog id="dialog">`
+- Uses Shadow DOM for style encapsulation; visibility is driven by the presence of the `open` attribute (`:host` is `display: none` by default, `display: block` when `[open]`)
+- `show(message: string)` — sets the `<p>` text content and adds the `open` attribute; `hide()` removes it
+- The backdrop (`position: fixed; inset: 0`) covers the full viewport at `z-index: 10000`, blocking all pointer interaction with the page beneath
+- The class definition is guarded by `typeof HTMLElement !== "undefined"` so importing `components.ts` in the bun test environment does not throw a `ReferenceError`; the exported `B3ttyDialog` is a TypeScript interface (no runtime value) so it is safely importable anywhere
+
+**CSS layout (`src/assets/terminal.css`):**
+- `#container` has `height: 100%; box-sizing: border-box; padding: 4px; overflow: hidden` — constrains the container to exactly the viewport height with a 4 px inset on all sides; `box-sizing: border-box` ensures the padding is subtracted from the content area rather than added to it, preventing overflow
+- `#terminal` has `height: 100%` — fills `#container`'s content area so the xterm.js `FitAddon` computes row count against the padded height (viewport − 8 px), keeping the terminal fully within the viewport with no scrollbar
 
 **Security:**
 - `displayTermHandler` sets a `Content-Security-Policy` header on every response: `default-src 'none'`; scripts restricted to same-origin plus a per-request nonce (used for the inline `window.B3TTY` assignment) and `'wasm-unsafe-eval'` (required by xterm.js); `frame-ancestors 'none'`; `base-uri 'self'`
@@ -92,6 +106,12 @@ b3tty is a browser-based terminal emulator. It runs a Go HTTP server that bridge
 - `buildSizeUrl` and `buildWsUrl` in `terminal.ts` validate their `httpProto`/`wsProtocol`, `uri`, and `port` arguments using helpers from `validators.ts` and throw on invalid input
 - `handleSocketMessage` accepts an optional `writeCallback?: () => void` that is passed to `term.write`; the callback fires after xterm.js finishes rendering — used by debug timing to mark the end of the round-trip
 - `initTerm` accepts an optional `onBeforeSend?: () => void` hook that fires immediately before `socket.send` — used by debug timing to record the keypress timestamp
+
+**CI/CD (`.github/workflows/`):**
+- `ci.yml` — triggered on every pull request targeting `main`; runs two parallel jobs:
+  - `test`: sets up Go (version read from `go.mod`) and bun, installs client dependencies, runs `make test` (Go tests + bun tests)
+  - `format`: sets up bun, installs client dependencies, runs `make format-check` (exits non-zero if any file differs from prettier's output)
+- `tag.yml` — triggered on every push to `main`; uses `fetch-depth: 2` to compare `VERSION` before and after the merge; if the file changed, creates and pushes a `v`-prefixed git tag (e.g. `v0.9.1`) using `github-actions[bot]` as the committer; requires `permissions: contents: write`
 
 **Key design notes:**
 - Version is stored in the `VERSION` file and injected at build time via `-ldflags`

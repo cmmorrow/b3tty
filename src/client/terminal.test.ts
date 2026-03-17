@@ -6,7 +6,6 @@ import {
     buildTermOptions,
     buildSizeUrl,
     buildWsUrl,
-    buildBackgroundStyleContent,
     handleSocketMessage,
     handleSocketClose,
     sendResizeMessage,
@@ -450,56 +449,6 @@ describe("buildWsUrl validation", () => {
 
     it("throws on invalid port", () => {
         expect(() => buildWsUrl("ws", "localhost", 0)).toThrow("Invalid port");
-    });
-});
-
-// ---------------------------------------------------------------------------
-// buildBackgroundStyleContent
-// ---------------------------------------------------------------------------
-
-describe("buildBackgroundStyleContent", () => {
-    it("generates a valid CSS rule string", () => {
-        const result = buildBackgroundStyleContent("#1e1e1e", 600, 1000);
-        expect(result).toContain("#container::after");
-        expect(result).toContain("linear-gradient");
-        expect(result).toContain("#1e1e1e");
-        expect(result).toContain("#000000");
-    });
-
-    it("calculates the remaining height percentage correctly", () => {
-        // Terminal is 800px tall in a 1000px viewport → 80% used → 20% remaining
-        const result = buildBackgroundStyleContent("#000", 800, 1000);
-        expect(result).toContain("height: 20%");
-    });
-
-    it("rounds the percentage to 2 decimal places", () => {
-        // 700 / 900 * 100 = 77.77... → 77.78% used → 22.22% remaining
-        const result = buildBackgroundStyleContent("#000", 700, 900);
-        expect(result).toContain("height: 22.22%");
-    });
-
-    it("produces height: 0% when terminal fills the entire viewport", () => {
-        const result = buildBackgroundStyleContent("#000", 1000, 1000);
-        expect(result).toContain("height: 0%");
-    });
-
-    it("produces height: 100% when terminal has zero height", () => {
-        const result = buildBackgroundStyleContent("#000", 0, 1000);
-        expect(result).toContain("height: 100%");
-    });
-
-    it("embeds the provided background color in the gradient", () => {
-        const result = buildBackgroundStyleContent("rgb(30, 30, 46)", 400, 800);
-        expect(result).toContain("rgb(30, 30, 46)");
-    });
-
-    it("includes required CSS positioning properties", () => {
-        const result = buildBackgroundStyleContent("#fff", 300, 600);
-        expect(result).toContain("position: absolute");
-        expect(result).toContain("left: 0");
-        expect(result).toContain("right: 0");
-        expect(result).toContain("bottom: 0");
-        expect(result).toContain("z-index: 1");
     });
 });
 

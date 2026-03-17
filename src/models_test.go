@@ -110,6 +110,9 @@ func TestApplyToCommand(t *testing.T) {
 	homeDir, err := os.UserHomeDir()
 	assert.NoError(t, err)
 
+	testPath, err := exec.LookPath("test")
+	assert.NoError(t, err)
+
 	testCases := []struct {
 		name     string
 		profile  Profile
@@ -123,7 +126,7 @@ func TestApplyToCommand(t *testing.T) {
 				Shell:            "",
 			},
 			cmd:      exec.Command("test"),
-			expected: &exec.Cmd{Path: "/bin/test", Dir: homeDir, Args: []string{"test"}},
+			expected: &exec.Cmd{Path: testPath, Dir: homeDir, Args: []string{"test"}},
 		},
 		{
 			name: "$HOME WorkingDirectory",
@@ -132,7 +135,7 @@ func TestApplyToCommand(t *testing.T) {
 				Shell:            "",
 			},
 			cmd:      exec.Command("test"),
-			expected: &exec.Cmd{Path: "/bin/test", Dir: homeDir, Args: []string{"test"}},
+			expected: &exec.Cmd{Path: testPath, Dir: homeDir, Args: []string{"test"}},
 		},
 		{
 			name: "Custom WorkingDirectory",
@@ -141,7 +144,7 @@ func TestApplyToCommand(t *testing.T) {
 				Shell:            "",
 			},
 			cmd:      exec.Command("test"),
-			expected: &exec.Cmd{Path: "/bin/test", Dir: "/custom/dir", Args: []string{"test"}},
+			expected: &exec.Cmd{Path: testPath, Dir: "/custom/dir", Args: []string{"test"}},
 		},
 		{
 			name: "WorkingDirectory with ~",
@@ -150,7 +153,7 @@ func TestApplyToCommand(t *testing.T) {
 				Shell:            "",
 			},
 			cmd:      exec.Command("test"),
-			expected: &exec.Cmd{Path: "/bin/test", Dir: filepath.Join(homeDir, "custom"), Args: []string{"test"}},
+			expected: &exec.Cmd{Path: testPath, Dir: filepath.Join(homeDir, "custom"), Args: []string{"test"}},
 		},
 		{
 			name: "Custom Shell",
@@ -159,7 +162,7 @@ func TestApplyToCommand(t *testing.T) {
 				Shell:            "/bin/customsh",
 			},
 			cmd:      exec.Command("test", "-c", "echo"),
-			expected: &exec.Cmd{Path: "/bin/test", Args: []string{"test", "-c", "/bin/customsh"}, Dir: homeDir},
+			expected: &exec.Cmd{Path: testPath, Args: []string{"test", "-c", "/bin/customsh"}, Dir: homeDir},
 		},
 		{
 			name: "Shell with $SHELL",
@@ -168,7 +171,7 @@ func TestApplyToCommand(t *testing.T) {
 				Shell:            "$SHELL",
 			},
 			cmd:      exec.Command("test", "-c", "echo"),
-			expected: &exec.Cmd{Path: "/bin/test", Args: []string{"test", "-c", "echo"}, Dir: homeDir},
+			expected: &exec.Cmd{Path: testPath, Args: []string{"test", "-c", "echo"}, Dir: homeDir},
 		},
 	}
 
