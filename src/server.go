@@ -223,7 +223,7 @@ func Serve(shouldOpenBrowser bool, useTLS bool) {
 			// Pad using the plain name length so ANSI codes in BoldGreen don't
 			// inflate the width and break column alignment.
 			padding := strings.Repeat(" ", maxLen-len(prf))
-			Infof("  %s%s  %s  (shell: %s | dir: %s)", BoldGreen(prf), padding, url, profile.Shell, profile.WorkingDirectory)
+			Infof("  %s%s  %s  (shell: %s | dir: %s)", BoldGreen(prf), padding, Bold(url), profile.Shell, profile.WorkingDirectory)
 		}
 	}
 

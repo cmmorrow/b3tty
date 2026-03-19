@@ -35,6 +35,12 @@ running from accessing the user's shell. This behavior can be disabled through
 configuration. For additional security, b3tty supports TLS over https and wss.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		src.SetDebug(debug)
+		deprecatedFlags := []string{"rows", "columns", "cursor-blink", "font-family", "font-size"}
+		for _, name := range deprecatedFlags {
+			if cmd.Flags().Changed(name) {
+				src.Warnf("--%s is deprecated and will be removed in a future version. Use the config file instead.", name)
+			}
+		}
 		if cfgPath := viper.ConfigFileUsed(); cfgPath != "" {
 			if err := validateConfig(cfgPath); err != nil {
 				src.Fatalf("config validation error: %v", err)

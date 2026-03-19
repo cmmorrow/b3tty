@@ -1,6 +1,8 @@
 export interface ThemeConfig {
     foreground?: string;
     background?: string;
+    cursor?: string;
+    cursorAccent?: string;
     black?: string;
     brightBlack?: string;
     red?: string;
