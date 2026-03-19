@@ -82,6 +82,8 @@ describe("THEME_KEYS", () => {
         const expected = [
             "foreground",
             "background",
+            "cursor",
+            "cursorAccent",
             "black",
             "brightBlack",
             "red",
@@ -104,8 +106,8 @@ describe("THEME_KEYS", () => {
         expect(THEME_KEYS).toEqual(expected);
     });
 
-    it("has 20 entries", () => {
-        expect(THEME_KEYS).toHaveLength(20);
+    it("has 22 entries", () => {
+        expect(THEME_KEYS).toHaveLength(22);
     });
 
     it("contains no duplicate keys", () => {
@@ -140,11 +142,11 @@ describe("buildTheme", () => {
         expect(result).not.toHaveProperty("unknownKey");
     });
 
-    it("includes all 20 keys when every theme value is provided", () => {
+    it("includes all 22 keys when every theme value is provided", () => {
         const full: Record<string, string> = {};
         for (const k of THEME_KEYS) full[k] = "#aabbcc";
         const result = buildTheme(full);
-        expect(Object.keys(result)).toHaveLength(20);
+        expect(Object.keys(result)).toHaveLength(22);
     });
 
     it("preserves the exact color string values", () => {

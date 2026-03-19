@@ -82,7 +82,7 @@ b3tty is a browser-based terminal emulator. It runs a Go HTTP server that bridge
 - After terminal opens, the module `await`s POST `/size` with actual terminal dimensions, then opens the WebSocket — the await ensures the pty is always started with the correct size
 - When `columns=0`: `window resize` → `fitAddon.fit()` → `term.onResize` → sends JSON resize message over the WebSocket; `term.onResize` is registered after the initial `fitAddon.fit()` so startup does not send a spurious resize
 - If a theme background color is set, `#container`'s inline `background` style is set to `config.theme.background` so the padding area matches the terminal background color
-- The `--b3tty-font-size` CSS custom property is set on `document.documentElement` by the JS module; `terminal.css` references it via `var(--b3tty-font-size)`
+- `--b3tty-font-size` and `--b3tty-font-family` CSS custom properties are set on `document.documentElement` at the top of `main()`; both use `px` units for font-size (matching xterm.js's pixel-based `fontSize`) and the font-family value wraps the configured name in CSS quotes (`"${config.fontFamily}", monospace`) so multi-word names like `"Fira Code"` are treated as a single font rather than split into invalid single-word tokens; `terminal.css` references them via `var(--b3tty-font-size, 12px)` and `var(--b3tty-font-family, monospace)` on `#profile`
 - `terminal.ts` imports `components.ts` for side effects (registers `<b3tty-dialog>`) and imports the `B3ttyDialog` interface as a type for casting the dialog element
 - On WebSocket close: `term.options.cursorBlink` is set to `false`, `term.options.cursorInactiveStyle` is set to `"none"`, `term.blur()` is called, and a `focus` event listener is added to `term.textarea` that immediately calls `term.blur()` — together these permanently hide the cursor after the connection ends
 
@@ -92,10 +92,12 @@ b3tty is a browser-based terminal emulator. It runs a Go HTTP server that bridge
 - `show(message: string)` — sets the `<p>` text content and adds the `open` attribute; `hide()` removes it
 - The backdrop (`position: fixed; inset: 0`) covers the full viewport at `z-index: 10000`, blocking all pointer interaction with the page beneath
 - The class definition is guarded by `typeof HTMLElement !== "undefined"` so importing `components.ts` in the bun test environment does not throw a `ReferenceError`; the exported `B3ttyDialog` is a TypeScript interface (no runtime value) so it is safely importable anywhere
+- The `p` and `button` elements inside the shadow DOM use `font-family: var(--b3tty-font-family, sans-serif)`; CSS custom properties inherit across shadow DOM boundaries, so the property set on `document.documentElement` by `main()` is visible inside the component without any extra wiring
 
 **CSS layout (`src/assets/terminal.css`):**
-- `#container` has `height: 100%; box-sizing: border-box; padding: 4px; overflow: hidden` — constrains the container to exactly the viewport height with a 4 px inset on all sides; `box-sizing: border-box` ensures the padding is subtracted from the content area rather than added to it, preventing overflow
-- `#terminal` has `height: 100%` — fills `#container`'s content area so the xterm.js `FitAddon` computes row count against the padded height (viewport − 8 px), keeping the terminal fully within the viewport with no scrollbar
+- `#container` has `height: 100%; box-sizing: border-box; padding: 4px; overflow: hidden; display: flex; flex-direction: column; gap: 4px` — a full-viewport flex column; `box-sizing: border-box` keeps padding inside the height so nothing overflows
+- `#terminal` has `flex: 1; min-height: 0` — grows to fill all remaining space after the profile label; `min-height: 0` is required so a flex child with overflow can shrink below its content size
+- `#profile` is a flex item (not fixed-position) with `font-size: var(--b3tty-font-size, 12px); font-family: var(--b3tty-font-family, monospace); padding: 2px 8px; border: none; align-self: flex-start` — sits in normal flow below the terminal; `main()` applies `color`, `background`, and `borderColor` from the active theme when the element has text content; `#profile:empty { display: none }` collapses the label entirely (reclaiming the gap) for the default profile
 
 **Security:**
 - `displayTermHandler` sets a `Content-Security-Policy` header on every response: `default-src 'none'`; scripts restricted to same-origin plus a per-request nonce (used for the inline `window.B3TTY` assignment) and `'wasm-unsafe-eval'` (required by xterm.js); `frame-ancestors 'none'`; `base-uri 'self'`
@@ -115,10 +117,11 @@ b3tty is a browser-based terminal emulator. It runs a Go HTTP server that bridge
 
 **Key design notes:**
 - Version is stored in the `VERSION` file and injected at build time via `-ldflags`
-- The `Theme.MapToTheme()` method uses reflection to map hyphenated YAML keys (e.g. `bright-red`) to struct fields (e.g. `BrightRed`); `Theme` fields carry JSON tags with camelCase names for direct serialization into `TermConfig`
+- The `Theme.MapToTheme()` method uses reflection to map hyphenated YAML keys (e.g. `bright-red`) to struct fields (e.g. `BrightRed`); `Theme` fields carry JSON tags with camelCase names for direct serialization into `TermConfig`; supported fields include all standard xterm.js `ITheme` colors plus `cursor` (`json:"cursor"`) and `cursorAccent` (`json:"cursorAccent"`) added in addition to the existing palette and selection fields
 - `TermConfig` / `NewTermConfig` in `models.go` is the canonical shape of the config object passed to the browser; it includes a `Debug bool` field (`json:"debug"`) populated from `debugEnabled` so the frontend knows whether to enable timing output
 - Profiles are keyed by name; `"default"` is always present; non-default profiles are selected via `?profile=<name>` query param
 - TLS support changes default port from 8080 to 8443 automatically when enabled
 - `make build` always rebuilds the JS bundle via `make client` before compiling Go, so the embedded `terminal.min.js` stays in sync
 - `start.go` runs two validation passes before `src.Serve()`: (1) `validateConfig` (in `cmd/config.go`) decodes the config file into typed structs with `gopkg.in/yaml.v3` and `KnownFields(true)`, catching unknown keys and wrong field types; (2) `src.ValidateTheme` checks every theme color field against `validateThemeColor`, which accepts an empty string, a 3- or 6-digit CSS hex color (`#rgb` / `#rrggbb`), or a letters-only named color. Both pass before calling `src.Serve()`; either failure calls `log.Fatalf`
+- The flags `--rows`, `--columns`, `--cursor-blink`, `--font-family`, and `--font-size` are deprecated: if any is explicitly set by the user, `start.go` emits a `[WARN ]` message at startup recommending the config file instead. Detection uses `cmd.Flags().Changed(name)` so only explicitly-passed flags trigger the warning, not defaults.
 - `cmd/config.go` contains only validation structs and `validateConfig`; it is intentionally separate from `src/models.go` to avoid coupling the runtime data model to the config file shape

@@ -19,6 +19,8 @@ import type { B3ttyDialog } from "./components.ts";
 export const THEME_KEYS = [
     "foreground",
     "background",
+    "cursor",
+    "cursorAccent",
     "black",
     "brightBlack",
     "red",
@@ -174,7 +176,8 @@ export function initTerm(
 export async function main(config: TermConfig): Promise<void> {
     const { wsProtocol, httpProto } = getProtocols(config.tls);
 
-    document.documentElement.style.setProperty("--b3tty-font-size", `${config.fontSize}pt`);
+    document.documentElement.style.setProperty("--b3tty-font-size", `${config.fontSize}px`);
+    document.documentElement.style.setProperty("--b3tty-font-family", `"${config.fontFamily}", monospace`);
 
     const theme = buildTheme(config.theme);
     const termOptions = buildTermOptions(config, theme);
@@ -195,6 +198,14 @@ export async function main(config: TermConfig): Promise<void> {
 
     if (config.theme.background) {
         document.getElementById("container")!.style.background = config.theme.background;
+    }
+
+    const profileElement = document.getElementById("profile")!;
+    if (profileElement.textContent?.trim()) {
+        const fg = config.theme.foreground || "white";
+        const bg = config.theme.background || "black";
+        profileElement.style.color = fg;
+        profileElement.style.background = bg;
     }
 
     const sizeUrl = buildSizeUrl(httpProto, config.uri, config.port, term.cols, term.rows);

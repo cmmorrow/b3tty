@@ -57,6 +57,8 @@ type themeConfig struct {
 	BrightWhite         string `yaml:"bright-white"`
 	Foreground          string `yaml:"foreground"`
 	Background          string `yaml:"background"`
+	Cursor              string `yaml:"cursor"`
+	CursorAccent        string `yaml:"cursor-accent"`
 	SelectionForeground string `yaml:"selection-foreground"`
 	SelectionBackground string `yaml:"selection-background"`
 }

@@ -124,6 +124,8 @@ func NewProfile(shell string, wd string, root string, title string, commands []s
 type Theme struct {
 	Foreground          string `json:"foreground,omitempty"`
 	Background          string `json:"background,omitempty"`
+	Cursor              string `json:"cursor,omitempty"`
+	CursorAccent        string `json:"cursorAccent,omitempty"`
 	SelectionForeground string `json:"selectionForeground,omitempty"`
 	SelectionBackground string `json:"selectionBackground,omitempty"`
 	Black               string `json:"black,omitempty"`

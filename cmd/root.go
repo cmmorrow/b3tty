@@ -62,8 +62,8 @@ func initConfig() {
 	viper.SetConfigName("conf")
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath("$HOME/.config/b3tty")
+	viper.AddConfigPath("$HOME/.b3tty")
 	viper.AddConfigPath("/etc/b3tty")
-	viper.AddConfigPath("$HOME/repos/b3tty/")
 	viper.SetConfigFile(cfgFile)
 	if err := viper.ReadInConfig(); err != nil {
 		switch err.(type) {

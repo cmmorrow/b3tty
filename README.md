@@ -6,7 +6,7 @@ A browser-based terminal emulator.
 
 b3tty is a terminal emulator accessible entirely from your web browser. It is built using xterm.js which provides the terminal look and feel using Javascript and CSS. A small web server acts as a proxy between a psuedo terminal and the browser, which communicates over web sockets.
 
-The terminal appearance and server can be configured with command-line flags or a configuration yaml file. Use the following command to display available server and terminal configuration options:
+The terminal appearance and server can be configured with a configuration yaml file or command-line flags. Use the following command to display available server and terminal configuration options:
 
 ```bash
 b3tty start --help
@@ -90,7 +90,7 @@ Colors are shown when output is an interactive terminal and suppressed when pipe
 
 ## Configuration
 
-b3tty can be configured via a yaml file specified on startup with the command `b3tty start --config <file path>`. While the server and terminal settings can be configured on start up, some settings such as themes and profiles can only be specified in the config file. The config file is a yaml file and b3tty isn't picky about the file name or path, however, it's recommended to name the file b3tty.yaml and place it in ~/.config/b3tty.
+b3tty can be configured via a yaml file specified on startup with the command `b3tty start --config <file path>`. While basic server settings can be set via command-line flags, terminal appearance settings (`--rows`, `--columns`, `--cursor-blink`, `--font-family`, `--font-size`) are deprecated as flags and should be set in the config file instead — a warning is printed at startup if any of these deprecated flags are used. Themes and profiles can only be specified in the config file. The config file is a yaml file and b3tty isn't picky about the file name or path, however, it's recommended to name the file b3tty.yaml and place it in ~/.config/b3tty.
 
 When a config file is provided, b3tty validates it on startup before the server starts. Any unknown keys or fields with the wrong data type are reported with the line number where the problem occurs, and the server will not start until the config file is corrected. An example config yaml file can be seen below:
 
@@ -132,6 +132,8 @@ themes:
     bright-white: "#feffff"
     foreground: "#dbdbdb"
     background: "#15191e"
+    cursor: "#dbdbdb"
+    cursor-accent: "#15191e"
     selection-foreground: "#000000"
     selection-background: "#bad5fb"
 ```
@@ -142,11 +144,20 @@ b3tty allows the look and feel of the browser-based terminal to be customized in
 
 Each color value in a theme must be either a 3- or 6-digit CSS hex color (e.g. `#fff` or `#14181d`) or a letters-only CSS named color (e.g. `red` or `cornflowerblue`). Invalid color values are reported at startup and the server will not start until they are corrected.
 
+In addition to the standard terminal palette colors, themes support two cursor-specific keys:
+
+| Key | Description |
+|-----|-------------|
+| `cursor` | Color of the terminal cursor |
+| `cursor-accent` | Color of the character beneath the cursor |
+
 ## Profiles
 
 Profiles are used to set the default terminal behavior when navigating to the b3tty url. Profiles allow the working directory and shell to be used to be set when the pseudo terminal is started by the server. The title of the browser tab can also be set to make different profiles easier to distinguish from one another.
 
 Unlike server, terminal, and theme settings, different profiles can be used by different browser tabs (or browser windows) when connecting to the b3tty server. To use a profile defined in the b3tty config file, add the `profile=` query parameter to the end of the b3tty url where the value is the name of the profile to use.
+
+When a non-default profile is active, the profile's title is displayed in a small label below the terminal in the browser. The label uses the configured font family, font size, and theme foreground and background colors. The label is hidden when using the default profile.
 
 When more than one profile is configured, the server lists them on startup with their URL, shell, and working directory:
 
