@@ -157,7 +157,7 @@ Profiles are used to set the default terminal behavior when navigating to the b3
 
 Unlike server, terminal, and theme settings, different profiles can be used by different browser tabs (or browser windows) when connecting to the b3tty server. To use a profile defined in the b3tty config file, add the `profile=` query parameter to the end of the b3tty url where the value is the name of the profile to use.
 
-When a non-default profile is active, the profile's title is displayed in a small label below the terminal in the browser. The label uses the configured font family, font size, and theme foreground and background colors. The label is hidden when using the default profile.
+When a non-default profile is active, the profile's name (its key in the config file) is displayed in a small label below the terminal in the browser. The label uses the configured font family, font size, and theme foreground and background colors. The label is hidden when using the default profile.
 
 When more than one profile is configured, the server lists them on startup with their URL, shell, and working directory:
 
