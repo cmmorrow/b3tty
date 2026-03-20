@@ -277,9 +277,10 @@ func (ts *TerminalServer) setSizeHandler(w http.ResponseWriter, r *http.Request)
 // the TermConfig to JSON, and renders the terminal HTML template.
 func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Request) {
 	type Props struct {
-		ConfigJSON string
-		Title      string
-		Nonce      string
+		ConfigJSON  string
+		Title       string
+		ProfileName string
+		Nonce       string
 	}
 	Debugf(" %s -> %s %s %s", r.RemoteAddr, r.Host, r.Method, r.URL)
 	Debugf("content length: %d", r.ContentLength)
@@ -375,7 +376,7 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	Debugf("config response body: %s", cfgPayload)
 	Debugf("title: %s", profile.Title)
 	Debugf("nonce: %s", nonce)
-	err = tmpl.Execute(w, Props{ConfigJSON: cfgPayload, Title: profile.Title, Nonce: nonce})
+	err = tmpl.Execute(w, Props{ConfigJSON: cfgPayload, Title: profile.Title, ProfileName: ts.profileName, Nonce: nonce})
 	if err != nil {
 		Errorf("response error: %v", err)
 		return

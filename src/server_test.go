@@ -844,7 +844,7 @@ func TestDisplayTermHandler(t *testing.T) {
 		ts.displayTermHandler(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Equal(t, "work", ts.profileName)
-		assert.Contains(t, w.Body.String(), "Work Terminal")
+		assert.Contains(t, w.Body.String(), "work")
 	})
 
 	t.Run("absent profile param resets profileName to 'default'", func(t *testing.T) {
