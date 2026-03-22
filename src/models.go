@@ -144,6 +144,9 @@ type Theme struct {
 	BrightCyan          string `json:"brightCyan,omitempty"`
 	White               string `json:"white,omitempty"`
 	BrightWhite         string `json:"brightWhite,omitempty"`
+	// BackgroundImage is a server-side file path and is intentionally excluded
+	// from JSON serialization to avoid exposing local paths to the browser.
+	BackgroundImage string `json:"-"`
 }
 
 // MapToTheme maps the key-value pairs from the given map to the corresponding
@@ -169,29 +172,31 @@ func (tm *Theme) MapToTheme(m map[string]any) {
 }
 
 type TermConfig struct {
-	TLS         bool   `json:"tls"`
-	CursorBlink bool   `json:"cursorBlink"`
-	FontFamily  string `json:"fontFamily"`
-	FontSize    int    `json:"fontSize"`
-	Rows        int    `json:"rows"`
-	Columns     int    `json:"columns"`
-	Theme       Theme  `json:"theme"`
-	Uri         string `json:"uri"`
-	Port        int    `json:"port"`
-	Debug       bool   `json:"debug"`
+	TLS               bool   `json:"tls"`
+	CursorBlink       bool   `json:"cursorBlink"`
+	FontFamily        string `json:"fontFamily"`
+	FontSize          int    `json:"fontSize"`
+	Rows              int    `json:"rows"`
+	Columns           int    `json:"columns"`
+	Theme             Theme  `json:"theme"`
+	Uri               string `json:"uri"`
+	Port              int    `json:"port"`
+	Debug             bool   `json:"debug"`
+	HasBackgroundImage bool  `json:"backgroundImage"`
 }
 
 func NewTermConfig(srv *Server, clnt *Client, thm *Theme) *TermConfig {
 	return &TermConfig{
-		TLS:         srv.TLS.Enabled,
-		CursorBlink: clnt.CursorBlink,
-		FontFamily:  clnt.FontFamily,
-		FontSize:    clnt.FontSize,
-		Rows:        clnt.Rows,
-		Columns:     clnt.Columns,
-		Theme:       *thm,
-		Uri:         srv.Uri,
-		Port:        srv.Port,
-		Debug:       debugEnabled,
+		TLS:                srv.TLS.Enabled,
+		CursorBlink:        clnt.CursorBlink,
+		FontFamily:         clnt.FontFamily,
+		FontSize:           clnt.FontSize,
+		Rows:               clnt.Rows,
+		Columns:            clnt.Columns,
+		Theme:              *thm,
+		Uri:                srv.Uri,
+		Port:               srv.Port,
+		Debug:              debugEnabled,
+		HasBackgroundImage: thm.BackgroundImage != "",
 	}
 }

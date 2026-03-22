@@ -36,6 +36,10 @@ func ValidateTheme(t *Theme) error {
 	val := reflect.ValueOf(t).Elem()
 	typ := val.Type()
 	for i := 0; i < val.NumField(); i++ {
+		// BackgroundImage is a file path, not a color — skip it.
+		if typ.Field(i).Name == "BackgroundImage" {
+			continue
+		}
 		color := val.Field(i).String()
 		if !validateThemeColor(color) {
 			tag := typ.Field(i).Tag.Get("json")

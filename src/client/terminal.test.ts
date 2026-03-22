@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, mock, spyOn } from "bun:test";
+import { Terminal } from "@xterm/xterm";
 import {
     THEME_KEYS,
     getProtocols,
@@ -10,6 +11,10 @@ import {
     handleSocketClose,
     sendResizeMessage,
     initTerm,
+    hexToRgba,
+    withAlpha,
+    terminalFactory,
+    buildDebugHooks,
 } from "./terminal.ts";
 import { isValidHttpProtocol, isValidWsProtocol, isValidPort, isValidUri, MAX_UINT16 } from "./validators.ts";
 
@@ -40,6 +45,65 @@ function makeMockBellElement() {
         style: { display: "none" },
     };
 }
+
+// ---------------------------------------------------------------------------
+// hexToRgba
+// ---------------------------------------------------------------------------
+
+describe("hexToRgba", () => {
+    it("converts a 6-digit hex color to rgba", () => {
+        expect(hexToRgba("#ff0000", 1)).toBe("rgba(255, 0, 0, 1)");
+    });
+
+    it("converts a 6-digit hex color with given alpha", () => {
+        expect(hexToRgba("#14181d", 0.5)).toBe("rgba(20, 24, 29, 0.5)");
+    });
+
+    it("expands a 3-digit shorthand before converting", () => {
+        expect(hexToRgba("#fff", 0.5)).toBe("rgba(255, 255, 255, 0.5)");
+        expect(hexToRgba("#abc", 1)).toBe("rgba(170, 187, 204, 1)");
+    });
+
+    it("is case-insensitive for hex digits", () => {
+        expect(hexToRgba("#FFFFFF", 0.5)).toBe("rgba(255, 255, 255, 0.5)");
+        expect(hexToRgba("#aAbBcC", 0.5)).toBe("rgba(170, 187, 204, 0.5)");
+    });
+
+    it("falls back to rgba(0,0,0,alpha) for named colors", () => {
+        expect(hexToRgba("red", 0.5)).toBe("rgba(0, 0, 0, 0.5)");
+    });
+
+    it("falls back to rgba(0,0,0,alpha) for empty string", () => {
+        expect(hexToRgba("", 0.5)).toBe("rgba(0, 0, 0, 0.5)");
+    });
+
+    it("falls back to rgba(0,0,0,alpha) for invalid hex", () => {
+        expect(hexToRgba("#gggggg", 0.5)).toBe("rgba(0, 0, 0, 0.5)");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// withAlpha
+// ---------------------------------------------------------------------------
+
+describe("withAlpha", () => {
+    it("converts a hex color to rgba with the given alpha", () => {
+        expect(withAlpha("#14181d", 0.5)).toBe("rgba(20, 24, 29, 0.5)");
+    });
+
+    it("delegates 3-digit hex to hexToRgba", () => {
+        expect(withAlpha("#fff", 0.5)).toBe("rgba(255, 255, 255, 0.5)");
+    });
+
+    it("falls back to rgba(0,0,0,alpha) for a named color", () => {
+        expect(withAlpha("black", 0.5)).toBe("rgba(0, 0, 0, 0.5)");
+        expect(withAlpha("cornflowerblue", 0.5)).toBe("rgba(0, 0, 0, 0.5)");
+    });
+
+    it("falls back to rgba(0,0,0,alpha) for an empty string", () => {
+        expect(withAlpha("", 0.5)).toBe("rgba(0, 0, 0, 0.5)");
+    });
+});
 
 // ---------------------------------------------------------------------------
 // getProtocols
@@ -217,6 +281,21 @@ describe("buildTermOptions", () => {
         const result = buildTermOptions({ ...baseConfig, rows: 40, columns: 120 }, {});
         expect(result.rows).toBe(40);
         expect(result.cols).toBe(120);
+    });
+
+    it("does not set allowTransparency when the third argument is omitted", () => {
+        const result = buildTermOptions(baseConfig, {});
+        expect(result).not.toHaveProperty("allowTransparency");
+    });
+
+    it("does not set allowTransparency when the third argument is false", () => {
+        const result = buildTermOptions(baseConfig, {}, false);
+        expect(result).not.toHaveProperty("allowTransparency");
+    });
+
+    it("sets allowTransparency to true when the third argument is true", () => {
+        const result = buildTermOptions(baseConfig, {}, true);
+        expect(result.allowTransparency).toBe(true);
     });
 });
 
@@ -513,26 +592,46 @@ describe("handleSocketMessage", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleSocketClose", () => {
-    it("writes the [exited] message to the terminal", () => {
+    it("always writes the [exited] message to the terminal", () => {
         const term = makeMockTerm();
         const alertFn = mock((_msg: string) => {});
         handleSocketClose(term, alertFn);
         expect(term.writeln).toHaveBeenCalledWith("[exited]");
     });
 
-    it("calls the alert function with 'Connection closed'", () => {
+    it("writes [exited] even when the close was clean", () => {
+        const term = makeMockTerm();
+        const alertFn = mock((_msg: string) => {});
+        handleSocketClose(term, alertFn, true);
+        expect(term.writeln).toHaveBeenCalledWith("[exited]");
+    });
+
+    it("shows the dialog when wasClean is false (default)", () => {
         const term = makeMockTerm();
         const alertFn = mock((_msg: string) => {});
         handleSocketClose(term, alertFn);
         expect(alertFn).toHaveBeenCalledWith("Connection closed");
     });
 
-    it("calls both writeln and alertFn exactly once", () => {
+    it("shows the dialog when wasClean is explicitly false", () => {
         const term = makeMockTerm();
         const alertFn = mock((_msg: string) => {});
-        handleSocketClose(term, alertFn);
+        handleSocketClose(term, alertFn, false);
+        expect(alertFn).toHaveBeenCalledWith("Connection closed");
+    });
+
+    it("suppresses the dialog when wasClean is true", () => {
+        const term = makeMockTerm();
+        const alertFn = mock((_msg: string) => {});
+        handleSocketClose(term, alertFn, true);
+        expect(alertFn).not.toHaveBeenCalled();
+    });
+
+    it("calls writeln exactly once regardless of wasClean", () => {
+        const term = makeMockTerm();
+        const alertFn = mock((_msg: string) => {});
+        handleSocketClose(term, alertFn, true);
         expect(term.writeln).toHaveBeenCalledTimes(1);
-        expect(alertFn).toHaveBeenCalledTimes(1);
     });
 });
 
@@ -588,6 +687,159 @@ describe("sendResizeMessage", () => {
         const sent = JSON.parse(socket.send.mock.calls[0]![0]);
         expect(sent.cols).toBe(0);
         expect(sent.rows).toBe(0);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// buildDebugHooks
+// ---------------------------------------------------------------------------
+
+describe("buildDebugHooks", () => {
+    it("returns empty object when debug is false", () => {
+        const hooks = buildDebugHooks(false);
+        expect(hooks.onBeforeSend).toBeUndefined();
+        expect(hooks.writeCallback).toBeUndefined();
+    });
+
+    it("returns both hooks when debug is true", () => {
+        const hooks = buildDebugHooks(true);
+        expect(hooks.onBeforeSend).toBeTypeOf("function");
+        expect(hooks.writeCallback).toBeTypeOf("function");
+    });
+
+    it("writeCallback is a no-op when called before onBeforeSend", () => {
+        const { writeCallback } = buildDebugHooks(true);
+        const logSpy = spyOn(console, "log");
+        writeCallback!();
+        expect(logSpy).not.toHaveBeenCalled();
+        logSpy.mockRestore();
+    });
+
+    it("writeCallback logs a round-trip message after onBeforeSend is called", () => {
+        const { onBeforeSend, writeCallback } = buildDebugHooks(true);
+        const logSpy = spyOn(console, "log");
+        onBeforeSend!();
+        writeCallback!();
+        expect(logSpy).toHaveBeenCalledTimes(1);
+        expect(logSpy.mock.calls[0]![0]).toMatch(/\[b3tty\] keypress round-trip: \d+\.\d+ms/);
+        logSpy.mockRestore();
+    });
+
+    it("writeCallback is a no-op on the second call without an intervening onBeforeSend", () => {
+        const { onBeforeSend, writeCallback } = buildDebugHooks(true);
+        const logSpy = spyOn(console, "log");
+        onBeforeSend!();
+        writeCallback!();
+        writeCallback!();
+        expect(logSpy).toHaveBeenCalledTimes(1);
+        logSpy.mockRestore();
+    });
+
+    it("each onBeforeSend/writeCallback pair produces one log entry", () => {
+        const { onBeforeSend, writeCallback } = buildDebugHooks(true);
+        const logSpy = spyOn(console, "log");
+        onBeforeSend!();
+        writeCallback!();
+        onBeforeSend!();
+        writeCallback!();
+        expect(logSpy).toHaveBeenCalledTimes(2);
+        logSpy.mockRestore();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// terminalFactory
+// ---------------------------------------------------------------------------
+
+describe("terminalFactory", () => {
+    const baseConfig = {
+        tls: false,
+        uri: "localhost",
+        port: 8080,
+        fontSize: 14,
+        fontFamily: "monospace",
+        cursorBlink: true,
+        rows: 0,
+        columns: 0,
+        theme: {},
+    };
+
+    it("returns a Terminal instance", () => {
+        const term = terminalFactory(baseConfig);
+        expect(term).toBeInstanceOf(Terminal);
+    });
+
+    it("applies cursorBlink from config", () => {
+        const term = terminalFactory({ ...baseConfig, cursorBlink: false });
+        expect(term.options.cursorBlink).toBe(false);
+    });
+
+    it("applies fontSize from config", () => {
+        const term = terminalFactory({ ...baseConfig, fontSize: 20 });
+        expect(term.options.fontSize).toBe(20);
+    });
+
+    it("applies rows from config when non-zero", () => {
+        const term = terminalFactory({ ...baseConfig, rows: 30 });
+        expect(term.options.rows).toBe(30);
+    });
+
+    it("applies cols from config when non-zero", () => {
+        const term = terminalFactory({ ...baseConfig, columns: 120 });
+        expect(term.options.cols).toBe(120);
+    });
+
+    it("does not set allowTransparency when backgroundImage is absent", () => {
+        const term = terminalFactory(baseConfig);
+        expect(term.options.allowTransparency).toBeFalsy();
+    });
+
+    it("does not set allowTransparency when backgroundImage is false", () => {
+        const term = terminalFactory({ ...baseConfig, backgroundImage: false });
+        expect(term.options.allowTransparency).toBeFalsy();
+    });
+
+    it("sets allowTransparency when backgroundImage is true", () => {
+        const term = terminalFactory({ ...baseConfig, backgroundImage: true });
+        expect(term.options.allowTransparency).toBe(true);
+    });
+
+    it("passes theme colors through to xterm.js when no background image", () => {
+        const term = terminalFactory({
+            ...baseConfig,
+            theme: { foreground: "#ffffff", background: "#14181d" },
+        });
+        expect(term.options.theme?.foreground).toBe("#ffffff");
+        expect(term.options.theme?.background).toBe("#14181d");
+    });
+
+    it("overrides theme background to transparent when backgroundImage is true", () => {
+        const term = terminalFactory({
+            ...baseConfig,
+            backgroundImage: true,
+            theme: { background: "#14181d" },
+        });
+        expect(term.options.theme?.background).toBe("rgba(0, 0, 0, 0)");
+    });
+
+    it("sets background to transparent even when no theme background is configured", () => {
+        const term = terminalFactory({ ...baseConfig, backgroundImage: true, theme: {} });
+        expect(term.options.theme?.background).toBe("rgba(0, 0, 0, 0)");
+    });
+
+    it("preserves non-background theme colors when backgroundImage is true", () => {
+        const term = terminalFactory({
+            ...baseConfig,
+            backgroundImage: true,
+            theme: { foreground: "#ffffff", background: "#14181d" },
+        });
+        expect(term.options.theme?.foreground).toBe("#ffffff");
+    });
+
+    it("includes fallback font families in the fontFamily option", () => {
+        const term = terminalFactory({ ...baseConfig, fontFamily: "Fira Code" });
+        expect(term.options.fontFamily).toContain("Fira Code");
+        expect(term.options.fontFamily).toContain("monospace");
     });
 });
 

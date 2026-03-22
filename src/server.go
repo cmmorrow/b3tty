@@ -231,6 +231,7 @@ func Serve(shouldOpenBrowser bool, useTLS bool) {
 	mux.Handle("/assets/", http.StripPrefix("/", http.FileServer(http.FS(assets))))
 	mux.HandleFunc("/ws", ts.terminalHandler)
 	mux.HandleFunc("/size", ts.setSizeHandler)
+	mux.HandleFunc("/background", ts.backgroundHandler)
 	httpServer := &http.Server{
 		Addr:     addr,
 		Handler:  mux,
@@ -381,6 +382,18 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 		Errorf("response error: %v", err)
 		return
 	}
+}
+
+// backgroundHandler serves the configured background image file, if any.
+// Returns 404 when no background image is configured or the file cannot be found.
+func (ts *TerminalServer) backgroundHandler(w http.ResponseWriter, r *http.Request) {
+	imagePath := ts.client.Theme.BackgroundImage
+	if imagePath == "" {
+		http.NotFound(w, r)
+		return
+	}
+	Debugf("Serving background image %s", imagePath)
+	http.ServeFile(w, r, imagePath)
 }
 
 // terminalHandler upgrades the HTTP connection to a WebSocket, starts the
