@@ -61,6 +61,7 @@ type themeConfig struct {
 	CursorAccent        string `yaml:"cursor-accent"`
 	SelectionForeground string `yaml:"selection-foreground"`
 	SelectionBackground string `yaml:"selection-background"`
+	BackgroundImage     string `yaml:"background-image"`
 }
 
 type profileConfig struct {

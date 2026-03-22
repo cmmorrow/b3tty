@@ -35,6 +35,7 @@ export interface TermConfig {
     columns: number;
     theme: ThemeConfig;
     debug?: boolean;
+    backgroundImage?: boolean;
 }
 
 export interface ClientConfig {

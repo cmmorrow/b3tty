@@ -52,6 +52,27 @@ export function getProtocols(tls: boolean): { wsProtocol: string; httpProto: str
 }
 
 /**
+ * Converts a CSS hex color (#rgb or #rrggbb) to an rgba() string with the given alpha.
+ * Falls back to rgba(0, 0, 0, alpha) for any input that is not a valid hex color.
+ */
+export function hexToRgba(hex: string, alpha: number): string {
+    const full = hex.replace(/^#([0-9a-fA-F])([0-9a-fA-F])([0-9a-fA-F])$/, "#$1$1$2$2$3$3");
+    const m = full.match(/^#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/);
+    if (!m) return `rgba(0, 0, 0, ${alpha})`;
+    return `rgba(${parseInt(m[1]!, 16)}, ${parseInt(m[2]!, 16)}, ${parseInt(m[3]!, 16)}, ${alpha})`;
+}
+
+/**
+ * Returns a semi-transparent version of color at the given alpha (0–1).
+ * Hex colors (#rgb / #rrggbb) are converted to rgba(); named CSS colors fall
+ * back to rgba(0, 0, 0, alpha) since their RGB values are not known at runtime.
+ */
+export function withAlpha(color: string, alpha: number): string {
+    if (color.startsWith("#")) return hexToRgba(color, alpha);
+    return `rgba(0, 0, 0, ${alpha})`;
+}
+
+/**
  * Extracts defined theme color values from the config's theme object.
  * Only keys present in THEME_KEYS with truthy values are included.
  */
@@ -66,13 +87,20 @@ export function buildTheme(themeConfig: ThemeConfig): ITheme {
 
 /**
  * Builds the xterm.js Terminal options object from the b3tty config and resolved theme.
+ * Pass allowTransparency=true when a background image is active so xterm.js renders
+ * its canvas with a transparent background, letting the page background show through.
  */
-export function buildTermOptions(config: ClientConfig, theme: ITheme): ITerminalOptions & ITerminalInitOnlyOptions {
+export function buildTermOptions(
+    config: ClientConfig,
+    theme: ITheme,
+    allowTransparency = false
+): ITerminalOptions & ITerminalInitOnlyOptions {
     const options: ITerminalOptions & ITerminalInitOnlyOptions = {
         cursorBlink: config.cursorBlink,
         fontFamily: `${config.fontFamily}, Menlo, DejaVu Sans Mono, Ubuntu Mono, Inconsolata, Fira, monospace`,
         fontSize: config.fontSize,
     };
+    if (allowTransparency) options.allowTransparency = true;
     if (config.rows) options.rows = config.rows;
     if (config.columns) options.cols = config.columns;
     if (Object.keys(theme).length > 0) options.theme = theme;
@@ -123,13 +151,41 @@ export function handleSocketMessage(
 }
 
 /**
- * Handles a WebSocket close event by writing an exit notice and alerting the user.
- * alertFn is injectable to allow testing without a real browser alert.
+ * Handles a WebSocket close event by writing an exit notice to the terminal.
+ * The "Connection closed" dialog is shown only when wasClean is false, indicating
+ * an unexpected drop rather than a server- or client-initiated close handshake.
+ * alertFn is injectable for testing.
  */
-export function handleSocketClose(term: TerminalLike, alertFn: (msg: string) => void): void {
+export function handleSocketClose(term: TerminalLike, alertFn: (msg: string) => void, wasClean = false): void {
     console.log("Socket closed");
     term.writeln("[exited]");
-    alertFn("Connection closed");
+    if (!wasClean) {
+        alertFn("Connection closed");
+    }
+}
+
+/**
+ * Builds the optional debug timing hooks used to measure keypress round-trip latency.
+ * When debug is false both fields are undefined, adding no overhead to normal operation.
+ * onBeforeSend fires immediately before socket.send; writeCallback fires after xterm.js
+ * finishes rendering the PTY response. keypressTime is captured in the closure so the
+ * two hooks share state without leaking it into main().
+ */
+export function buildDebugHooks(debug: boolean): { onBeforeSend?: () => void; writeCallback?: () => void } {
+    if (!debug) return {};
+    let keypressTime: number | null = null;
+    return {
+        onBeforeSend: () => {
+            keypressTime = performance.now();
+        },
+        writeCallback: () => {
+            if (keypressTime !== null) {
+                const elapsed = (performance.now() - keypressTime).toFixed(2);
+                console.log(`[b3tty] keypress round-trip: ${elapsed}ms`);
+                keypressTime = null;
+            }
+        },
+    };
 }
 
 /**
@@ -139,6 +195,29 @@ export function sendResizeMessage(socket: SocketLike, cols: number, rows: number
     if (socket.readyState === 1) {
         socket.send(JSON.stringify({ type: "resize", cols, rows }));
     }
+}
+
+/**
+ * Constructs and returns a configured xterm.js Terminal from the given TermConfig.
+ *
+ * Builds the xterm.js theme from config.theme. When a background image is active,
+ * the theme's background color is overridden to fully transparent so the canvas
+ * does not add a second color layer on top of the body-level tint. Terminal
+ * options (font, dimensions, cursor behavior, transparency) are derived via
+ * buildTermOptions. The returned Terminal is ready to be mounted with term.open().
+ */
+export function terminalFactory(config: TermConfig): Terminal {
+    const theme = buildTheme(config.theme);
+
+    if (config.backgroundImage) {
+        // The body provides a single uniform tint over the background image, so
+        // xterm.js cell backgrounds must be fully transparent to avoid adding a
+        // second layer of color that would make the terminal darker than the gap.
+        theme.background = withAlpha("#000", 0);
+    }
+    const termOptions = buildTermOptions(config, theme, !!config.backgroundImage);
+
+    return new Terminal(termOptions);
 }
 
 /**
@@ -171,18 +250,55 @@ export function initTerm(
 }
 
 /**
+ * Applies all config-driven styles to the page: CSS custom properties for font,
+ * the container/body background (solid colour or background-image tint), and the
+ * profile label colours. Kept separate from main() so DOM-style concerns don't
+ * obscure the connection setup flow.
+ */
+function applyPageStyles(config: TermConfig): void {
+    document.documentElement.style.setProperty("--b3tty-font-size", `${config.fontSize}px`);
+    document.documentElement.style.setProperty("--b3tty-font-family", `"${config.fontFamily}", monospace`);
+
+    if (config.backgroundImage) {
+        const bgColor = withAlpha(config.theme.background || "", 0.5);
+        document.body.style.background = `linear-gradient(${bgColor}, ${bgColor}), url('/background') center / cover fixed no-repeat`;
+        const style = document.createElement("style");
+        style.textContent = `#terminal .xterm-viewport { background-color: transparent !important; }`;
+        document.head.appendChild(style);
+    } else if (config.theme.background) {
+        document.getElementById("container")!.style.background = config.theme.background;
+    }
+
+    const profileElement = document.getElementById("profile")!;
+    if (profileElement.textContent?.trim()) {
+        profileElement.style.color = config.theme.foreground || "white";
+        if (!config.backgroundImage) {
+            profileElement.style.background = config.theme.background || "black";
+        }
+    }
+}
+
+/**
+ * Permanently disables and hides the terminal cursor after the WebSocket closes.
+ * cursorInactiveStyle "none" hides the cursor when the terminal loses focus; the
+ * focus listener ensures a subsequent click cannot briefly restore it.
+ */
+function disableCursor(term: Terminal): void {
+    term.options.cursorBlink = false;
+    term.options.cursorInactiveStyle = "none";
+    term.blur();
+    term.textarea?.addEventListener("focus", () => term.blur());
+}
+
+/**
  * Main entry point. Wires together all terminal, WebSocket, and DOM interactions.
  */
 export async function main(config: TermConfig): Promise<void> {
     const { wsProtocol, httpProto } = getProtocols(config.tls);
 
-    document.documentElement.style.setProperty("--b3tty-font-size", `${config.fontSize}px`);
-    document.documentElement.style.setProperty("--b3tty-font-family", `"${config.fontFamily}", monospace`);
+    applyPageStyles(config);
 
-    const theme = buildTheme(config.theme);
-    const termOptions = buildTermOptions(config, theme);
-
-    const term = new Terminal(termOptions);
+    const term = terminalFactory(config);
     const termElement = document.getElementById("terminal")!;
     term.open(termElement);
 
@@ -196,18 +312,6 @@ export async function main(config: TermConfig): Promise<void> {
         fitAddon.fit();
     }
 
-    if (config.theme.background) {
-        document.getElementById("container")!.style.background = config.theme.background;
-    }
-
-    const profileElement = document.getElementById("profile")!;
-    if (profileElement.textContent?.trim()) {
-        const fg = config.theme.foreground || "white";
-        const bg = config.theme.background || "black";
-        profileElement.style.color = fg;
-        profileElement.style.background = bg;
-    }
-
     const sizeUrl = buildSizeUrl(httpProto, config.uri, config.port, term.cols, term.rows);
     await fetch(sizeUrl, { method: "POST" });
 
@@ -216,26 +320,7 @@ export async function main(config: TermConfig): Promise<void> {
     socket.binaryType = "arraybuffer";
 
     const decoder = new TextDecoder("utf-8");
-
-    // When debug mode is enabled, measure the round-trip time from the moment
-    // a keypress is sent to the pty to when the response has been rendered by
-    // xterm.js. keypressTime holds the performance.now() snapshot taken just
-    // before socket.send; the write callback computes and logs the delta.
-    let keypressTime: number | null = null;
-    const onBeforeSend = config.debug
-        ? () => {
-              keypressTime = performance.now();
-          }
-        : undefined;
-    const writeCallback = config.debug
-        ? () => {
-              if (keypressTime !== null) {
-                  const elapsed = (performance.now() - keypressTime).toFixed(2);
-                  console.log(`[b3tty] keypress round-trip: ${elapsed}ms`);
-                  keypressTime = null;
-              }
-          }
-        : undefined;
+    const { onBeforeSend, writeCallback } = buildDebugHooks(!!config.debug);
 
     socket.onmessage = (event) => {
         if (socket.readyState !== 1) {
@@ -245,15 +330,9 @@ export async function main(config: TermConfig): Promise<void> {
     };
 
     const dialog = document.getElementById("dialog") as unknown as B3ttyDialog;
-    socket.onclose = () => {
-        // Disable and hide the cursor. cursorInactiveStyle "none" hides it
-        // when unfocused; the focus listener ensures a click on the terminal
-        // after close cannot bring the cursor back.
-        term.options.cursorBlink = false;
-        term.options.cursorInactiveStyle = "none";
-        term.blur();
-        term.textarea?.addEventListener("focus", () => term.blur());
-        handleSocketClose(term, (msg) => dialog.show(msg));
+    socket.onclose = (event) => {
+        disableCursor(term);
+        handleSocketClose(term, (msg) => dialog.show(msg), event.wasClean);
     };
     socket.onerror = (event) => console.log("A socket error occurred: ", event);
     socket.onopen = () => console.log("Socket opened");

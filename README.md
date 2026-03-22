@@ -1,6 +1,6 @@
 # b3tty
 
-A browser-based terminal emulator.
+A better, browser-based terminal emulator.
 
 ## Description
 
@@ -12,11 +12,28 @@ The terminal appearance and server can be configured with a configuration yaml f
 b3tty start --help
 ```
 
+### Features
+
+#### Themes
+Customize the terminal's color palette with named themes defined in the config file. Themes support the full 16-color ANSI palette plus foreground, background, cursor, cursor-accent, and selection colors. Multiple themes can be defined in a single config file; one is active at startup. All color values are validated at startup — invalid colors are reported with the line number and the server will not start until they are corrected.
+
+#### Background images
+A theme can optionally specify a path to a background image file. When set, the image is served by b3tty and displayed behind the terminal. The container, terminal canvas, and profile label all use a 50% transparent color tint so foreground text remains readable against any image.
+
+#### Profiles
+Profiles let you pre-configure the shell, working directory, and browser tab title for different use cases. Each profile is a named entry in the config file and is selected at connection time with a `?profile=<name>` query parameter. When more than one profile is configured, the server lists each profile's URL, shell, and working directory at startup. Profiles can also run a sequence of commands automatically when the pseudo terminal opens.
+
+#### Auto-fit and resizing
+When `columns` is set to `0` (the default), the terminal width is automatically fit to the browser window. The frontend measures the available width after the page loads and sends the computed dimensions to the server before opening the WebSocket, so the pseudo terminal is sized correctly from the very first byte. Live resizing is also supported: dragging the browser window triggers a resize that is sent to the server over the WebSocket and applied to the running pseudo terminal.
+
+#### Inline image rendering
+xterm.js's ImageAddon is bundled and active by default, enabling terminals that emit sixel or iTerm2 inline image sequences (such as `imgcat`) to render images directly inside the browser terminal.
+
 ### Architecture
 
 b3tty uses a client/server model to enable the connection from a web browser to a pseudo terminal. When the server is started, a url where b3tty can be accessed from a web browser is displayed. When the url is visited through a web browser, the server renders an HTML page containing a JSON configuration object (`window.B3TTY`) with the terminal settings, then loads the frontend JavaScript bundle. The frontend determines the width of the browser window to know how many columns to use, then sends that size to the server and waits for confirmation before opening a WebSocket connection. The server then forks a new pseudo terminal process sized to those dimensions. All keyboard input is forwarded over the WebSocket to the pseudo terminal, and any output from the pseudo terminal is sent back and displayed on the page.
 
-When the server closes the WebSocket connection, a modal dialog is displayed in the browser informing the user that the connection has been closed. The terminal cursor is also hidden at this point. Dismissing the modal by clicking OK restores the page to its normal state.
+When the WebSocket connection closes unexpectedly (e.g. a network drop), a modal dialog is displayed in the browser informing the user that the connection has been closed. The terminal cursor is also hidden at this point. Dismissing the modal by clicking OK restores the page to its normal state. Clean closes — such as the shell process exiting normally — write `[exited]` to the terminal but suppress the dialog.
 
 ### A word on security
 
@@ -137,6 +154,83 @@ themes:
     selection-foreground: "#000000"
     selection-background: "#bad5fb"
 ```
+
+### Config file schema
+
+The config file is a YAML document with five top-level keys. All keys are optional; omitting a section leaves those settings at their defaults.
+
+#### `server`
+
+Controls how the HTTP/WebSocket server is started.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `tls` | bool | `false` | Enable HTTPS/WSS. Requires `cert-file` and `key-file`. Changes the default port from 8080 to 8443 when `true`. |
+| `cert-file` | string | `""` | Path to the TLS certificate file. Required when `tls: true`. |
+| `key-file` | string | `""` | Path to the TLS private key file. Required when `tls: true`. |
+| `no-auth` | bool | `false` | Disable the access-token requirement. Reduces security posture — use only in trusted environments. |
+| `no-browser` | bool | `false` | Suppress automatically opening b3tty in the default browser on startup. |
+| `port` | int | `8080` (`8443` with TLS) | The TCP port the server listens on. |
+
+#### `terminal`
+
+Controls the appearance and dimensions of the terminal.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `font-family` | string | `"monospace"` | The font used in the terminal. Multi-word names (e.g. `"Fira Code"`) are supported. Note: the font must be available in the browser. |
+| `font-size` | int | `14` | Terminal font size in pixels. |
+| `cursor-blink` | bool | `true` | Whether the terminal cursor blinks. May not work in all browsers. |
+| `rows` | int | `24` | Number of terminal rows. |
+| `columns` | int | `0` | Number of terminal columns. `0` means auto-fit to the browser window width. |
+
+#### `theme`
+
+A string naming which entry under `themes` to activate, e.g. `theme: "my-theme"`. Omit this key (or leave it empty) to use the default xterm.js colors.
+
+#### `themes`
+
+A map of named theme objects. Each key is an arbitrary theme name; the value is an object whose fields set terminal colors. All fields are optional strings; omitting a field keeps the xterm.js default for that color.
+
+Color values must be a 3- or 6-digit CSS hex color (e.g. `#fff` or `#14181d`) or a letters-only CSS named color (e.g. `red` or `cornflowerblue`). Invalid values are rejected at startup.
+
+| Key | Description |
+|-----|-------------|
+| `foreground` | Default text color |
+| `background` | Terminal background color |
+| `cursor` | Cursor color |
+| `cursor-accent` | Color of the character beneath the cursor |
+| `selection-foreground` | Text color inside a selection |
+| `selection-background` | Background color of a selection |
+| `black` | ANSI color 0 |
+| `bright-black` | ANSI color 8 (bright black / dark grey) |
+| `red` | ANSI color 1 |
+| `bright-red` | ANSI color 9 |
+| `green` | ANSI color 2 |
+| `bright-green` | ANSI color 10 |
+| `yellow` | ANSI color 3 |
+| `bright-yellow` | ANSI color 11 |
+| `blue` | ANSI color 4 |
+| `bright-blue` | ANSI color 12 |
+| `magenta` | ANSI color 5 |
+| `bright-magenta` | ANSI color 13 |
+| `cyan` | ANSI color 6 |
+| `bright-cyan` | ANSI color 14 |
+| `white` | ANSI color 7 |
+| `bright-white` | ANSI color 15 |
+| `background-image` | Absolute path to a background image file on the server. When set, the container, terminal, and profile label backgrounds become 50% transparent so the image is visible behind the terminal text. |
+
+#### `profiles`
+
+A map of named profile objects. Each key is an arbitrary profile name used in the `?profile=` query parameter. All fields are optional strings unless noted.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `shell` | string | `$SHELL` | Path to the shell binary to launch (e.g. `/bin/fish`). Must not contain spaces. |
+| `working-directory` | string | `$HOME` | The working directory for the shell. Supports `~` and `~/…` expansion. |
+| `title` | string | `"b3tty"` | Browser tab title shown when this profile is active. |
+| `commands` | list of strings | `[]` | Commands to run in the pseudo terminal immediately after it opens. Each entry is a shell command string. |
+| `root` | string | `"/"` | The HTTP root path the server is mounted under. |
 
 ## Themes
 
