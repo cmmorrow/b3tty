@@ -14,20 +14,14 @@ b3tty start --help
 
 ### Features
 
-#### Themes
-Customize the terminal's color palette with named themes defined in the config file. Themes support the full 16-color ANSI palette plus foreground, background, cursor, cursor-accent, and selection colors. Multiple themes can be defined in a single config file; one is active at startup. All color values are validated at startup — invalid colors are reported with the line number and the server will not start until they are corrected.
-
-#### Background images
-A theme can optionally specify a path to a background image file. When set, the image is served by b3tty and displayed behind the terminal. The container, terminal canvas, and profile label all use a 50% transparent color tint so foreground text remains readable against any image.
-
-#### Profiles
-Profiles let you pre-configure the shell, working directory, and browser tab title for different use cases. Each profile is a named entry in the config file and is selected at connection time with a `?profile=<name>` query parameter. When more than one profile is configured, the server lists each profile's URL, shell, and working directory at startup. Profiles can also run a sequence of commands automatically when the pseudo terminal opens.
-
-#### Auto-fit and resizing
-When `columns` is set to `0` (the default), the terminal width is automatically fit to the browser window. The frontend measures the available width after the page loads and sends the computed dimensions to the server before opening the WebSocket, so the pseudo terminal is sized correctly from the very first byte. Live resizing is also supported: dragging the browser window triggers a resize that is sent to the server over the WebSocket and applied to the running pseudo terminal.
-
-#### Inline image rendering
-xterm.js's ImageAddon is bundled and active by default, enabling terminals that emit sixel or iTerm2 inline image sequences (such as `imgcat`) to render images directly inside the browser terminal.
+* Customizable themes
+* User defined profiles
+* Mouse support
+* Auto-fit and resizing
+* Background image support
+* Inline image rendering
+* URL links
+* TLS support
 
 ### Architecture
 
@@ -104,6 +98,14 @@ Log output uses level prefixes to make it easier to identify the nature of each 
 | `[DEBUG]` | Magenta    | Verbose diagnostics, only shown with `--debug`   |
 
 Colors are shown when output is an interactive terminal and suppressed when piped or redirected.
+
+## First-run setup
+
+When b3tty starts and no config file is found, it opens a theme selector in the browser instead of the terminal. The selector presents two built-in themes — **Dark** and **Light** — as visual previews, along with a **No theme** option to skip and configure one manually later.
+
+Selecting a theme and clicking **OK** writes a `conf.yaml` file to `~/.config/b3tty/` with the chosen theme and immediately reloads the page to start the terminal. Choosing **No theme** skips config file creation and starts the terminal with the default xterm.js colors.
+
+Once a config file exists, the setup page is never shown again. To return to the theme selector, delete or move the config file before restarting b3tty.
 
 ## Configuration
 

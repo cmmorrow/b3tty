@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, mock, spyOn } from "bun:test";
 import { Terminal } from "@xterm/xterm";
+import type { ITerminalInitOnlyOptions, ITerminalOptions } from "@xterm/xterm";
 import {
     THEME_KEYS,
     getProtocols,
@@ -781,12 +782,12 @@ describe("terminalFactory", () => {
 
     it("applies rows from config when non-zero", () => {
         const term = terminalFactory({ ...baseConfig, rows: 30 });
-        expect(term.options.rows).toBe(30);
+        expect((term.options as ITerminalOptions & ITerminalInitOnlyOptions).rows).toBe(30);
     });
 
     it("applies cols from config when non-zero", () => {
         const term = terminalFactory({ ...baseConfig, columns: 120 });
-        expect(term.options.cols).toBe(120);
+        expect((term.options as ITerminalOptions & ITerminalInitOnlyOptions).cols).toBe(120);
     });
 
     it("does not set allowTransparency when backgroundImage is absent", () => {

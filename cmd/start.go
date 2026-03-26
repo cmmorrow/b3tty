@@ -52,6 +52,7 @@ configuration. For additional security, b3tty supports TLS over https and wss.`,
 		src.Profiles = profiles
 		src.InitClient = src.NewClient(&rows, &columns, &cursorBlink, &fontFamily, &fontSize, &theme)
 		src.InitServer = src.NewServer(&uri, &port, &noAuth, &src.TLS{CertFilePath: certFile, KeyFilePath: keyFile, Enabled: tls})
+		src.InitServer.FirstRun = !configFileFound
 		if tls {
 			// Remap the default TLS port
 			if port == 8080 {

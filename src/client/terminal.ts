@@ -251,8 +251,8 @@ export function initTerm(
 
 /**
  * Applies all config-driven styles to the page: CSS custom properties for font,
- * the container/body background (solid colour or background-image tint), and the
- * profile label colours. Kept separate from main() so DOM-style concerns don't
+ * the container/body background (solid color or background-image tint), and the
+ * profile label colors. Kept separate from main() so DOM-style concerns don't
  * obscure the connection setup flow.
  */
 function applyPageStyles(config: TermConfig): void {
