@@ -32,9 +32,10 @@ func NewClient(rows *int, columns *int, blink *bool, fontFamily *string, fontSiz
 }
 
 type Server struct {
-	Uri    string
-	Port   int
-	NoAuth bool
+	Uri      string
+	Port     int
+	NoAuth   bool
+	FirstRun bool
 	TLS
 }
 

@@ -12,12 +12,13 @@ var Version = "latest"
 
 var cfgFile string
 var profiles map[string]src.Profile
+var configFileFound bool
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Version: Version,
 	Use:     "b3tty",
-	Short:   ".... but browser based TTY!",
+	Short:   "A better, browser based TTY",
 	Long: `b3tty is a terminal emulator accessible entirely from your web browser. It is
 built using xterm.js which provides the terminal look and feel using Javascript
 and CSS. A small web server acts as a proxy between a psuedo terminal and the
@@ -50,7 +51,7 @@ func init() {
 	// Cobra supports persistent flags, which, if defined here,
 	// will be global for your application.
 
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file to use")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "b3tty config file to use")
 	viper.BindPFlags(startCmd.Flags())
 }
 
@@ -80,6 +81,8 @@ func initConfig() {
 			os.Exit(1)
 		}
 	}
+
+	configFileFound = viper.ConfigFileUsed() != "" || cfgFile != ""
 
 	if len(viper.ConfigFileUsed()) > 0 {
 		src.Infof("using config file: %s", src.Bold(viper.ConfigFileUsed()))

@@ -6,7 +6,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,6 +29,42 @@ var assets embed.FS
 
 //go:embed templates/terminal.tmpl
 var templ string
+
+//go:embed templates/setup.tmpl
+var setupTempl string
+
+//go:embed default_themes/b3tty_dark.json
+var defaultDarkThemeJSON []byte
+
+//go:embed default_themes/b3tty_light.json
+var defaultLightThemeJSON []byte
+
+// defaultDarkTheme and defaultLightTheme are the colour maps used both to
+// update ts.client.Theme in memory (via MapToTheme) and to write the YAML
+// config file. Keys use the hyphenated form expected by MapToTheme.
+var defaultDarkTheme = mustUnmarshalTheme(defaultDarkThemeJSON)
+var defaultLightTheme = mustUnmarshalTheme(defaultLightThemeJSON)
+
+// mustUnmarshalTheme decodes a JSON theme file into a map[string]any.
+// It panics on error since theme files are embedded at compile time and
+// must always be valid.
+func mustUnmarshalTheme(data []byte) map[string]any {
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		panic("failed to parse embedded theme JSON: " + err.Error())
+	}
+	return m
+}
+
+// buildConfigYAML produces a conf.yaml string for the given theme name and colour map.
+func buildConfigYAML(themeName string, colors map[string]any) string {
+	var sb strings.Builder
+	sb.WriteString("theme: " + themeName + "\nthemes:\n  " + themeName + ":\n")
+	for k, v := range colors {
+		sb.WriteString("    " + k + ": \"" + v.(string) + "\"\n")
+	}
+	return sb.String()
+}
 
 var InitClient *Client
 var InitServer *Server
@@ -64,6 +102,7 @@ type TerminalServer struct {
 	orgRows        uint16
 	profileName    string
 	failedAttempts int
+	firstRun       bool
 	backoffMu      sync.Mutex
 	// authSleep is the function used to pause on auth failures. It defaults to
 	// time.Sleep and can be replaced in tests with a no-op to avoid real delays.
@@ -159,6 +198,7 @@ func Serve(shouldOpenBrowser bool, useTLS bool) {
 		orgCols:     DEFAULT_COLS,
 		orgRows:     DEFAULT_ROWS,
 		profileName: "default",
+		firstRun:    InitServer.FirstRun,
 		authSleep:   time.Sleep,
 	}
 
@@ -232,6 +272,8 @@ func Serve(shouldOpenBrowser bool, useTLS bool) {
 	mux.HandleFunc("/ws", ts.terminalHandler)
 	mux.HandleFunc("/size", ts.setSizeHandler)
 	mux.HandleFunc("/background", ts.backgroundHandler)
+	mux.HandleFunc("/theme", ts.themeHandler)
+	mux.HandleFunc("/save-config", ts.saveConfigHandler)
 	httpServer := &http.Server{
 		Addr:     addr,
 		Handler:  mux,
@@ -295,12 +337,6 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	Debug("Parsing HTML template....")
-	tmpl, err := template.New("b3tty").Parse(templ)
-	if err != nil {
-		Fatal(err)
-	}
-
 	query := r.URL.Query()
 
 	if !validateToken(query, ts.token) {
@@ -327,6 +363,17 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	ts.failedAttempts = 0
 	Debug("requesting mutex unlock")
 	ts.backoffMu.Unlock()
+
+	if ts.firstRun {
+		ts.renderSetupPage(w)
+		return
+	}
+
+	Debug("Parsing HTML template....")
+	tmpl, err := template.New("b3tty").Parse(templ)
+	if err != nil {
+		Fatal(err)
+	}
 
 	ts.profileName = resolveProfileName(query)
 	Debugf("resolved profile name: %s", ts.profileName)
@@ -382,6 +429,148 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 		Errorf("response error: %v", err)
 		return
 	}
+}
+
+// renderSetupPage renders the theme selection setup page.
+func (ts *TerminalServer) renderSetupPage(w http.ResponseWriter) {
+	csp := "default-src 'none'; " +
+		"script-src 'self' 'wasm-unsafe-eval'; " +
+		"style-src 'self' 'unsafe-inline'; " +
+		"connect-src 'self'; " +
+		"img-src 'self'; " +
+		"font-src 'self'; " +
+		"frame-ancestors 'none'; " +
+		"base-uri 'self'"
+	w.Header().Set("Content-Security-Policy", csp)
+
+	tmpl, err := template.New("setup").Parse(setupTempl)
+	if err != nil {
+		Fatal(err)
+	}
+	if err = tmpl.Execute(w, nil); err != nil {
+		Errorf("setup response error: %v", err)
+	}
+}
+
+// themePaletteResponse is the JSON shape returned by themeHandler and consumed
+// by the B3ttyThemeSelector component to build palette preview cards.
+type themePaletteResponse struct {
+	Bg     string   `json:"bg"`
+	Fg     string   `json:"fg"`
+	SelBg  string   `json:"selBg"`
+	Normal []string `json:"normal"`
+	Bright []string `json:"bright"`
+}
+
+// themeNormalOrder and themeBrightOrder define the ANSI display order used by
+// the palette preview in the theme selector component.
+var themeNormalOrder = []string{"black", "red", "yellow", "green", "cyan", "blue", "magenta", "white"}
+var themeBrightOrder = []string{"bright-black", "bright-red", "bright-yellow", "bright-green", "bright-cyan", "bright-blue", "bright-magenta", "bright-white"}
+
+// themeHandler serves a GET /theme?name=<dark|light> request and returns a
+// themePaletteResponse JSON payload shaped for the B3ttyThemeSelector component.
+func (ts *TerminalServer) themeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var colors map[string]any
+	switch r.URL.Query().Get("name") {
+	case "dark":
+		colors = defaultDarkTheme
+	case "light":
+		colors = defaultLightTheme
+	default:
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	str := func(key string) string {
+		v, _ := colors[key].(string)
+		return v
+	}
+	normal := make([]string, len(themeNormalOrder))
+	for i, key := range themeNormalOrder {
+		normal[i] = str(key)
+	}
+	bright := make([]string, len(themeBrightOrder))
+	for i, key := range themeBrightOrder {
+		bright[i] = str(key)
+	}
+
+	resp := themePaletteResponse{
+		Bg:     str("background"),
+		Fg:     str("foreground"),
+		SelBg:  str("selection-background"),
+		Normal: normal,
+		Bright: bright,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		Errorf("theme response error: %v", err)
+	}
+}
+
+// saveConfigHandler accepts a POST request with a JSON body containing a "theme"
+// field ("dark", "light", or "skip"). For dark/light, it writes a default config
+// file to $HOME/.config/b3tty/conf.yaml. Sets firstRun to false on success.
+func (ts *TerminalServer) saveConfigHandler(w http.ResponseWriter, r *http.Request) {
+	if !ts.firstRun {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != "POST" {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
+		Warnf("%s %s: forbidden: cross-origin request from Sec-Fetch-Site %q", r.Method, r.URL.Path, site)
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	var req struct {
+		Theme string `json:"theme"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	var themeColors map[string]any
+	switch req.Theme {
+	case "dark":
+		themeColors = defaultDarkTheme
+	case "light":
+		themeColors = defaultLightTheme
+	}
+
+	if themeColors != nil {
+		if err := writeDefaultConfig(req.Theme, themeColors); err != nil {
+			Errorf("failed to write config: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		ts.client.Theme.MapToTheme(themeColors)
+		Infof("created default %s theme config", req.Theme)
+	}
+
+	ts.firstRun = false
+	w.WriteHeader(http.StatusOK)
+}
+
+// writeDefaultConfig writes a default theme config file to $HOME/.config/b3tty/conf.yaml.
+func writeDefaultConfig(themeName string, colors map[string]any) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	configDir := filepath.Join(home, ".config", "b3tty")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return err
+	}
+	configPath := filepath.Join(configDir, "conf.yaml")
+	return os.WriteFile(configPath, []byte(buildConfigYAML(themeName, colors)), 0644)
 }
 
 // backgroundHandler serves the configured background image file, if any.
