@@ -1,6 +1,7 @@
 package src
 
 import (
+	"fmt"
 	"net/url"
 	"os"
 	"os/exec"
@@ -173,17 +174,17 @@ func (tm *Theme) MapToTheme(m map[string]any) {
 }
 
 type TermConfig struct {
-	TLS               bool   `json:"tls"`
-	CursorBlink       bool   `json:"cursorBlink"`
-	FontFamily        string `json:"fontFamily"`
-	FontSize          int    `json:"fontSize"`
-	Rows              int    `json:"rows"`
-	Columns           int    `json:"columns"`
-	Theme             Theme  `json:"theme"`
-	Uri               string `json:"uri"`
-	Port              int    `json:"port"`
-	Debug             bool   `json:"debug"`
-	HasBackgroundImage bool  `json:"backgroundImage"`
+	TLS                bool   `json:"tls"`
+	CursorBlink        bool   `json:"cursorBlink"`
+	FontFamily         string `json:"fontFamily"`
+	FontSize           int    `json:"fontSize"`
+	Rows               int    `json:"rows"`
+	Columns            int    `json:"columns"`
+	Theme              Theme  `json:"theme"`
+	Uri                string `json:"uri"`
+	Port               int    `json:"port"`
+	Debug              bool   `json:"debug"`
+	HasBackgroundImage bool   `json:"backgroundImage"`
 }
 
 func NewTermConfig(srv *Server, clnt *Client, thm *Theme) *TermConfig {
@@ -200,4 +201,68 @@ func NewTermConfig(srv *Server, clnt *Client, thm *Theme) *TermConfig {
 		Debug:              debugEnabled,
 		HasBackgroundImage: thm.BackgroundImage != "",
 	}
+}
+
+type CSPHeader struct {
+	Name   string
+	Values []string
+}
+
+func (ch *CSPHeader) Set(values ...string) *CSPHeader {
+	var vals []string
+	for _, value := range values {
+		vals = append(vals, value)
+	}
+	ch.Values = vals
+	return ch
+}
+
+func (ch *CSPHeader) Add(value string) *CSPHeader {
+	ch.Values = append(ch.Values, value)
+	return ch
+}
+
+func (ch CSPHeader) String() string {
+	var vals []string
+	for _, value := range ch.Values {
+		vals = append(vals, fmt.Sprintf("'%s'", value))
+	}
+	return fmt.Sprintf("%s %s;", ch.Name, strings.Join(vals, " "))
+}
+
+func NewCSPHeader(name string, values ...string) *CSPHeader {
+	return &CSPHeader{
+		Name:   name,
+		Values: values,
+	}
+}
+
+type CSPHeaders struct {
+	Headers map[string]*CSPHeader
+}
+
+func (chs CSPHeaders) Get(key string) *CSPHeader {
+	return chs.Headers[key]
+}
+
+func (chs CSPHeaders) Add(key string, header *CSPHeader) *CSPHeaders {
+	chs.Headers[key] = header
+	return &chs
+}
+
+func (chs CSPHeaders) String() string {
+	var vals []string
+	for _, values := range chs.Headers {
+		vals = append(vals, values.String())
+	}
+	return strings.Join(vals, " ")
+}
+
+func NewCSPHeders(headers ...*CSPHeader) *CSPHeaders {
+	cspHeaders := CSPHeaders{}
+	cspHeaders.Headers = make(map[string]*CSPHeader)
+	for _, csp := range headers {
+		cspHeaders.Add(csp.Name, csp)
+	}
+	return &cspHeaders
 }

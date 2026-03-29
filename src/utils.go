@@ -2,6 +2,7 @@ package src
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -18,11 +19,22 @@ var (
 	reNamedColor = regexp.MustCompile(`^[a-zA-Z]+$`)
 )
 
+// mustUnmarshalTheme decodes a JSON theme file into a map[string]any.
+// It panics on error since theme files are embedded at compile time and
+// must always be valid.
+func mustUnmarshalTheme(data []byte) map[string]any {
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		panic("failed to parse embedded theme JSON: " + err.Error())
+	}
+	return m
+}
+
 // validateThemeColor reports whether s is a valid theme color value. Valid
 // values are an empty string (field not set), a CSS hex color with 3 or 6
 // hex digits (e.g. "#fff" or "#14181d"), or a string of only ASCII letters
 // representing a named CSS color (e.g. "red" or "cornflowerblue").
-func validateThemeColor(s string) bool {
+func ValidateThemeColor(s string) bool {
 	if s == "" {
 		return true
 	}
@@ -41,7 +53,7 @@ func ValidateTheme(t *Theme) error {
 			continue
 		}
 		color := val.Field(i).String()
-		if !validateThemeColor(color) {
+		if !ValidateThemeColor(color) {
 			tag := typ.Field(i).Tag.Get("json")
 			name := strings.Split(tag, ",")[0]
 			return fmt.Errorf("invalid theme color for %s: %q", name, color)
@@ -119,4 +131,10 @@ func generateToken(length int) (string, error) {
 		result[i] = charset[randomInt.Int64()]
 	}
 	return string(result), nil
+}
+
+// validateToken reports whether the token query parameter matches the expected server
+// token.
+func validateToken(q string, serverToken string) bool {
+	return q == serverToken
 }
