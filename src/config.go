@@ -1,13 +1,18 @@
-package cmd
+package src
 
 import (
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
+
+const CONFIG_FILE_NAME = "conf.yaml"
+const DOT_CONFIG_PATH = ".config"
+const B3TTY_CONFIG_PATH = "b3tty"
 
 // The following types mirror the YAML config file structure. They exist solely
 // for structural and type validation at startup and are intentionally separate
@@ -72,11 +77,48 @@ type profileConfig struct {
 	Root             string   `yaml:"root"`
 }
 
-// validateConfig opens the YAML file at path, decodes it into typed structs
+// buildConfigYAML produces a conf.yaml string for the given theme name and color map.
+// Keys in colors use the hyphenated form expected by MapToTheme (e.g. "bright-red").
+func buildConfigYAML(themeName string, colors map[string]any) string {
+	themeColors := make(map[string]string, len(colors))
+	for k, v := range colors {
+		if s, ok := v.(string); ok && ValidateThemeColor(s) {
+			themeColors[k] = s
+		}
+	}
+	cfg := struct {
+		Theme  string                       `yaml:"theme"`
+		Themes map[string]map[string]string `yaml:"themes"`
+	}{
+		Theme:  themeName,
+		Themes: map[string]map[string]string{themeName: themeColors},
+	}
+	out, err := yaml.Marshal(cfg)
+	if err != nil {
+		panic("buildConfigYAML: " + err.Error())
+	}
+	return string(out)
+}
+
+// WriteDefaultConfig writes a default theme config file to $HOME/.config/b3tty/conf.yaml.
+func WriteDefaultConfig(themeName string, colors map[string]any) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	configDir := filepath.Join(home, DOT_CONFIG_PATH, B3TTY_CONFIG_PATH)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return err
+	}
+	configPath := filepath.Join(configDir, CONFIG_FILE_NAME)
+	return os.WriteFile(configPath, []byte(buildConfigYAML(themeName, colors)), 0644)
+}
+
+// ValidateConfig opens the YAML file at path, decodes it into typed structs
 // with KnownFields(true) enabled, and returns a descriptive error (including
 // the line number from the YAML parser) if any field has the wrong type or any
 // unrecognised key is present.
-func validateConfig(path string) error {
+func ValidateConfig(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("cannot open config file: %w", err)

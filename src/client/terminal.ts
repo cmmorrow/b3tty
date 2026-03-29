@@ -302,15 +302,15 @@ export async function main(config: TermConfig): Promise<void> {
     const termElement = document.getElementById("terminal")!;
     term.open(termElement);
 
-    term.loadAddon(new WebLinksAddon());
-    term.loadAddon(new ImageAddon());
-
     let fitAddon: FitAddon | undefined;
     if (!config.columns) {
         fitAddon = new FitAddon();
         term.loadAddon(fitAddon);
         fitAddon.fit();
     }
+
+    term.loadAddon(new WebLinksAddon());
+    term.loadAddon(new ImageAddon());
 
     const sizeUrl = buildSizeUrl(httpProto, config.uri, config.port, term.cols, term.rows);
     await fetch(sizeUrl, { method: "POST" });

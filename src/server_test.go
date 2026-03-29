@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
 	"testing"
 	"time"
 
@@ -187,78 +186,6 @@ func TestParseSizeParams(t *testing.T) {
 			cols, rows := parseSizeParams(tt.query)
 			assert.Equal(t, tt.expectedCols, cols, "cols mismatch")
 			assert.Equal(t, tt.expectedRows, rows, "rows mismatch")
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
-// validateToken
-// ---------------------------------------------------------------------------
-
-func TestValidateToken(t *testing.T) {
-	tests := []struct {
-		name        string
-		queryToken  string
-		serverToken string
-		expected    bool
-	}{
-		{
-			name:        "matching tokens pass",
-			queryToken:  "abc123",
-			serverToken: "abc123",
-			expected:    true,
-		},
-		{
-			name:        "mismatched tokens are rejected",
-			queryToken:  "wrong",
-			serverToken: "abc123",
-			expected:    false,
-		},
-		{
-			name:        "no-auth mode: both empty strings match",
-			queryToken:  "",
-			serverToken: "",
-			expected:    true,
-		},
-		{
-			name:        "token present but server has no-auth empty token",
-			queryToken:  "sometoken",
-			serverToken: "",
-			expected:    false,
-		},
-		{
-			name:        "token absent but server expects a token",
-			queryToken:  "",
-			serverToken: "expected",
-			expected:    false,
-		},
-		{
-			name:        "case-sensitive: differing case is rejected",
-			queryToken:  "ABC123",
-			serverToken: "abc123",
-			expected:    false,
-		},
-		{
-			name:        "long token matches correctly",
-			queryToken:  strings.Repeat("x", 256),
-			serverToken: strings.Repeat("x", 256),
-			expected:    true,
-		},
-		{
-			name:        "token with special characters matches",
-			queryToken:  "t0k!@#$%",
-			serverToken: "t0k!@#$%",
-			expected:    true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			q := url.Values{}
-			if tt.queryToken != "" {
-				q.Set("token", tt.queryToken)
-			}
-			assert.Equal(t, tt.expected, validateToken(q, tt.serverToken))
 		})
 	}
 }

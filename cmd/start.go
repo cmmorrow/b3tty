@@ -42,7 +42,7 @@ configuration. For additional security, b3tty supports TLS over https and wss.`,
 			}
 		}
 		if cfgPath := viper.ConfigFileUsed(); cfgPath != "" {
-			if err := validateConfig(cfgPath); err != nil {
+			if err := src.ValidateConfig(cfgPath); err != nil {
 				src.Fatalf("config validation error: %v", err)
 			}
 		}

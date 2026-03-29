@@ -6,9 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,6 +18,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const DEFAULT_PROFILE_NAME = "default"
 const DEFAULT_COLS = 80
 const DEFAULT_ROWS = 24
 const BUFFER_SIZE = 4096
@@ -44,27 +43,6 @@ var defaultLightThemeJSON []byte
 // config file. Keys use the hyphenated form expected by MapToTheme.
 var defaultDarkTheme = mustUnmarshalTheme(defaultDarkThemeJSON)
 var defaultLightTheme = mustUnmarshalTheme(defaultLightThemeJSON)
-
-// mustUnmarshalTheme decodes a JSON theme file into a map[string]any.
-// It panics on error since theme files are embedded at compile time and
-// must always be valid.
-func mustUnmarshalTheme(data []byte) map[string]any {
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
-		panic("failed to parse embedded theme JSON: " + err.Error())
-	}
-	return m
-}
-
-// buildConfigYAML produces a conf.yaml string for the given theme name and colour map.
-func buildConfigYAML(themeName string, colors map[string]any) string {
-	var sb strings.Builder
-	sb.WriteString("theme: " + themeName + "\nthemes:\n  " + themeName + ":\n")
-	for k, v := range colors {
-		sb.WriteString("    " + k + ": \"" + v.(string) + "\"\n")
-	}
-	return sb.String()
-}
 
 var InitClient *Client
 var InitServer *Server
@@ -143,20 +121,13 @@ func parseSizeParams(q url.Values) (uint16, uint16) {
 	return uint16(cols), uint16(rows)
 }
 
-// validateToken reports whether the token query parameter matches the expected server
-// token. When serverToken is the empty string (no-auth mode) the check always passes
-// because q.Get returns "" for an absent parameter, which matches the empty server token.
-func validateToken(q url.Values, serverToken string) bool {
-	return q.Get("token") == serverToken
-}
-
 // resolveProfileName returns the value of the "profile" query parameter when present,
 // or "default" when the parameter is absent or empty.
 func resolveProfileName(q url.Values) string {
 	if p := q.Get("profile"); p != "" {
 		return p
 	}
-	return "default"
+	return DEFAULT_PROFILE_NAME
 }
 
 // buildConfigJSON serialises a TermConfig derived from the given server, client, and
@@ -187,6 +158,19 @@ func formatCommand(command string) []byte {
 	return []byte(strings.TrimSpace(command) + "\n")
 }
 
+func GetCSPHeaders() CSPHeaders {
+	header := NewCSPHeders(
+		NewCSPHeader("default-src", "none"),
+		NewCSPHeader("script-src", "self", "wasm-unsafe-eval"),
+		NewCSPHeader("style-src", "self", "unsafe-inline"),
+		NewCSPHeader("connect-src", "self"),
+		NewCSPHeader("img-src", "self"),
+		NewCSPHeader("frame-ancestors", "none"),
+		NewCSPHeader("base-uri", "self"),
+	)
+	return *header
+}
+
 // Serve wires up the HTTP mux and starts the server. It creates a TerminalServer from
 // the package-level InitClient, InitServer, and Profiles variables set by the cmd layer.
 func Serve(shouldOpenBrowser bool, useTLS bool) {
@@ -197,7 +181,7 @@ func Serve(shouldOpenBrowser bool, useTLS bool) {
 		profiles:    Profiles,
 		orgCols:     DEFAULT_COLS,
 		orgRows:     DEFAULT_ROWS,
-		profileName: "default",
+		profileName: DEFAULT_PROFILE_NAME,
 		firstRun:    InitServer.FirstRun,
 		authSleep:   time.Sleep,
 	}
@@ -245,7 +229,7 @@ func Serve(shouldOpenBrowser bool, useTLS bool) {
 		// Collect and sort non-default profile names for consistent output.
 		names := make([]string, 0, len(ts.profiles)-1)
 		for prf := range ts.profiles {
-			if prf != "default" {
+			if prf != DEFAULT_PROFILE_NAME {
 				names = append(names, prf)
 			}
 		}
@@ -339,7 +323,7 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 
 	query := r.URL.Query()
 
-	if !validateToken(query, ts.token) {
+	if !validateToken(query.Get("token"), ts.token) {
 		// Only apply backoff when auth is enabled (token is non-empty). In no-auth
 		// mode ts.token is always "" and validateToken always passes, so this branch
 		// is only reachable in auth mode — but the guard makes the intent explicit.
@@ -410,15 +394,9 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	//   iframe on any other page.
 	// base-uri 'self': blocks <base> tag injection that could redirect relative
 	//   URLs to an attacker-controlled origin.
-	csp := "default-src 'none'; " +
-		"script-src 'self' 'wasm-unsafe-eval' 'nonce-" + nonce + "'; " +
-		"style-src 'self' 'unsafe-inline'; " +
-		"connect-src 'self'; " +
-		"img-src 'self'; " +
-		"font-src 'self'; " +
-		"frame-ancestors 'none'; " +
-		"base-uri 'self'"
-	w.Header().Set("Content-Security-Policy", csp)
+	csp := GetCSPHeaders()
+	csp.Get("script-src").Add("nonce-" + nonce)
+	w.Header().Set("Content-Security-Policy", csp.String())
 
 	cfgPayload := string(cfgJSON)
 	Debugf("config response body: %s", cfgPayload)
@@ -433,15 +411,8 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 
 // renderSetupPage renders the theme selection setup page.
 func (ts *TerminalServer) renderSetupPage(w http.ResponseWriter) {
-	csp := "default-src 'none'; " +
-		"script-src 'self' 'wasm-unsafe-eval'; " +
-		"style-src 'self' 'unsafe-inline'; " +
-		"connect-src 'self'; " +
-		"img-src 'self'; " +
-		"font-src 'self'; " +
-		"frame-ancestors 'none'; " +
-		"base-uri 'self'"
-	w.Header().Set("Content-Security-Policy", csp)
+	csp := GetCSPHeaders()
+	w.Header().Set("Content-Security-Policy", csp.String())
 
 	tmpl, err := template.New("setup").Parse(setupTempl)
 	if err != nil {
@@ -546,7 +517,7 @@ func (ts *TerminalServer) saveConfigHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	if themeColors != nil {
-		if err := writeDefaultConfig(req.Theme, themeColors); err != nil {
+		if err := WriteDefaultConfig(req.Theme, themeColors); err != nil {
 			Errorf("failed to write config: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
@@ -557,20 +528,6 @@ func (ts *TerminalServer) saveConfigHandler(w http.ResponseWriter, r *http.Reque
 
 	ts.firstRun = false
 	w.WriteHeader(http.StatusOK)
-}
-
-// writeDefaultConfig writes a default theme config file to $HOME/.config/b3tty/conf.yaml.
-func writeDefaultConfig(themeName string, colors map[string]any) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-	configDir := filepath.Join(home, ".config", "b3tty")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		return err
-	}
-	configPath := filepath.Join(configDir, "conf.yaml")
-	return os.WriteFile(configPath, []byte(buildConfigYAML(themeName, colors)), 0644)
 }
 
 // backgroundHandler serves the configured background image file, if any.

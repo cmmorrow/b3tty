@@ -186,6 +186,194 @@ func TestApplyToCommand(t *testing.T) {
 	}
 }
 
+func TestNewCSPHeader(t *testing.T) {
+	testCases := []struct {
+		name           string
+		directiveName  string
+		values         []string
+		expectedName   string
+		expectedValues []string
+	}{
+		{
+			name:           "Single value",
+			directiveName:  "script-src",
+			values:         []string{"self"},
+			expectedName:   "script-src",
+			expectedValues: []string{"self"},
+		},
+		{
+			name:           "Multiple values",
+			directiveName:  "script-src",
+			values:         []string{"self", "wasm-unsafe-eval"},
+			expectedName:   "script-src",
+			expectedValues: []string{"self", "wasm-unsafe-eval"},
+		},
+		{
+			name:           "No values",
+			directiveName:  "default-src",
+			values:         []string{},
+			expectedName:   "default-src",
+			expectedValues: []string{},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewCSPHeader(tc.directiveName, tc.values...)
+			assert.Equal(t, tc.expectedName, h.Name)
+			assert.Equal(t, tc.expectedValues, h.Values)
+		})
+	}
+}
+
+func TestCSPHeaderAdd(t *testing.T) {
+	t.Run("Add to existing values", func(t *testing.T) {
+		h := NewCSPHeader("script-src", "self")
+		result := h.Add("wasm-unsafe-eval")
+		assert.Equal(t, []string{"self", "wasm-unsafe-eval"}, h.Values)
+		assert.Same(t, h, result)
+	})
+
+	t.Run("Add to empty values", func(t *testing.T) {
+		h := NewCSPHeader("script-src")
+		h.Add("self")
+		assert.Equal(t, []string{"self"}, h.Values)
+	})
+
+	t.Run("Add multiple times chains correctly", func(t *testing.T) {
+		h := NewCSPHeader("script-src", "self")
+		h.Add("wasm-unsafe-eval").Add("nonce-abc123")
+		assert.Equal(t, []string{"self", "wasm-unsafe-eval", "nonce-abc123"}, h.Values)
+	})
+}
+
+func TestCSPHeaderSet(t *testing.T) {
+	t.Run("Replaces existing values", func(t *testing.T) {
+		h := NewCSPHeader("script-src", "self", "wasm-unsafe-eval")
+		result := h.Set("none")
+		assert.Equal(t, []string{"none"}, h.Values)
+		assert.Same(t, h, result)
+	})
+
+	t.Run("Set with multiple values", func(t *testing.T) {
+		h := NewCSPHeader("script-src", "self")
+		h.Set("none", "unsafe-inline")
+		assert.Equal(t, []string{"none", "unsafe-inline"}, h.Values)
+	})
+
+	t.Run("Set with no values clears existing", func(t *testing.T) {
+		h := NewCSPHeader("script-src", "self")
+		h.Set()
+		assert.Empty(t, h.Values)
+	})
+}
+
+func TestCSPHeaderString(t *testing.T) {
+	testCases := []struct {
+		name     string
+		header   *CSPHeader
+		expected string
+	}{
+		{
+			name:     "Single value",
+			header:   NewCSPHeader("default-src", "none"),
+			expected: "default-src 'none';",
+		},
+		{
+			name:     "Multiple values",
+			header:   NewCSPHeader("script-src", "self", "wasm-unsafe-eval"),
+			expected: "script-src 'self' 'wasm-unsafe-eval';",
+		},
+		{
+			name:     "No values",
+			header:   NewCSPHeader("default-src"),
+			expected: "default-src ;",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, tc.header.String())
+		})
+	}
+}
+
+func TestNewCSPHeaders(t *testing.T) {
+	t.Run("Creates with multiple headers", func(t *testing.T) {
+		chs := NewCSPHeders(
+			NewCSPHeader("default-src", "none"),
+			NewCSPHeader("script-src", "self"),
+		)
+		assert.Len(t, chs.Headers, 2)
+		assert.NotNil(t, chs.Headers["default-src"])
+		assert.NotNil(t, chs.Headers["script-src"])
+	})
+
+	t.Run("Creates empty when no headers provided", func(t *testing.T) {
+		chs := NewCSPHeders()
+		assert.Empty(t, chs.Headers)
+	})
+}
+
+func TestCSPHeadersGet(t *testing.T) {
+	t.Run("Returns pointer to map element", func(t *testing.T) {
+		chs := NewCSPHeders(NewCSPHeader("script-src", "self"))
+		h := chs.Get("script-src")
+		assert.NotNil(t, h)
+		// Mutating the returned pointer must be reflected in the map.
+		h.Add("wasm-unsafe-eval")
+		assert.Equal(t, []string{"self", "wasm-unsafe-eval"}, chs.Headers["script-src"].Values)
+	})
+
+	t.Run("Returns nil for missing key", func(t *testing.T) {
+		chs := NewCSPHeders()
+		assert.Nil(t, chs.Get("script-src"))
+	})
+}
+
+func TestCSPHeadersAdd(t *testing.T) {
+	t.Run("Adds a new header", func(t *testing.T) {
+		chs := NewCSPHeders()
+		chs.Add("img-src", NewCSPHeader("img-src", "self"))
+		assert.NotNil(t, chs.Headers["img-src"])
+		assert.Equal(t, []string{"self"}, chs.Headers["img-src"].Values)
+	})
+
+	t.Run("Overwrites existing header", func(t *testing.T) {
+		chs := NewCSPHeders(NewCSPHeader("img-src", "self"))
+		chs.Add("img-src", NewCSPHeader("img-src", "none"))
+		assert.Equal(t, []string{"none"}, chs.Headers["img-src"].Values)
+	})
+}
+
+func TestCSPHeadersString(t *testing.T) {
+	t.Run("Contains all directives", func(t *testing.T) {
+		chs := NewCSPHeders(
+			NewCSPHeader("default-src", "none"),
+			NewCSPHeader("script-src", "self"),
+			NewCSPHeader("img-src", "self"),
+		)
+		result := chs.String()
+		assert.Contains(t, result, "default-src 'none';")
+		assert.Contains(t, result, "script-src 'self';")
+		assert.Contains(t, result, "img-src 'self';")
+	})
+
+	t.Run("Empty headers produces empty string", func(t *testing.T) {
+		chs := NewCSPHeders()
+		assert.Empty(t, chs.String())
+	})
+}
+
+func TestGetCSPHeadersMutationViaGet(t *testing.T) {
+	// Regression: Get must return a pointer to the live map entry so that
+	// adding a nonce to script-src is reflected in the final CSP string.
+	chs := GetCSPHeaders()
+	chs.Get("script-src").Add("nonce-abc123")
+	result := chs.String()
+	assert.Contains(t, result, "'nonce-abc123'")
+}
+
 func TestMapToTheme(t *testing.T) {
 	assert := assert.New(t)
 
