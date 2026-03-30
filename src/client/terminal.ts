@@ -345,8 +345,10 @@ export async function main(config: TermConfig): Promise<void> {
             sendResizeMessage(socket, cols, rows);
         });
 
+        let resizeTimer: ReturnType<typeof setTimeout>;
         window.addEventListener("resize", () => {
-            fitAddon!.fit();
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(() => fitAddon!.fit(), 100);
         });
     }
 }

@@ -23,38 +23,6 @@ b3tty start --help
 * URL links
 * TLS support
 
-### Architecture
-
-b3tty uses a client/server model to enable the connection from a web browser to a pseudo terminal. When the server is started, a url where b3tty can be accessed from a web browser is displayed. When the url is visited through a web browser, the server renders an HTML page containing a JSON configuration object (`window.B3TTY`) with the terminal settings, then loads the frontend JavaScript bundle. The frontend determines the width of the browser window to know how many columns to use, then sends that size to the server and waits for confirmation before opening a WebSocket connection. The server then forks a new pseudo terminal process sized to those dimensions. All keyboard input is forwarded over the WebSocket to the pseudo terminal, and any output from the pseudo terminal is sent back and displayed on the page.
-
-When the WebSocket connection closes unexpectedly (e.g. a network drop), a modal dialog is displayed in the browser informing the user that the connection has been closed. The terminal cursor is also hidden at this point. Dismissing the modal by clicking OK restores the page to its normal state. Clean closes — such as the shell process exiting normally — write `[exited]` to the terminal but suppress the dialog.
-
-### A word on security
-
-Because b3tty is opening a connection from a web browser to a new psuedo terminal proccess as the user of b3tty's parent process, it's important to ensure the connection and access to the server are secure. For this reason, b3tty features several security features.
-
-#### Origin check
-
-The server will only allow connections from localhost or 127.0.0.1 as part of an origin check. This is to prevent opening a remote connection to a b3tty server. If access to remote machine is needed, run betty locally then SSH into the remove machine from b3tty.
-
-#### Access token
-
-By default, when the server starts, the url with a token of 24 randomly generated characters is provided and must be provided to access the b3tty client in the browser. This is to prevent a user without access to the terminal session where b3tty was started from guessing the url. This behavior can be disabled by passing the `--no-auth` flag at start up or setting the `server.no-auth: true` property in the b3tty config.
-
-Each failed token validation incurs an exponential backoff delay before the 403 response is sent: 1s after the first failure, doubling on each subsequent attempt up to a maximum of 30s. The counter resets when a valid token is presented. Backoff is skipped entirely when `--no-auth` is set.
-
-#### Content Security Policy
-
-The server sets a `Content-Security-Policy` header on every page response. Scripts are restricted to same-origin files and a single per-request nonce used for the inline configuration block. `'wasm-unsafe-eval'` is also permitted to support xterm.js's internal use of WebAssembly. Framing by other pages is blocked via `frame-ancestors 'none'`.
-
-#### CSRF protection
-
-The `POST /size` endpoint (used by the frontend to communicate terminal dimensions before opening the WebSocket) is protected against cross-site request forgery. Requests that carry a `Sec-Fetch-Site` header with a value other than `same-origin` are rejected. This header is set automatically by browsers and cannot be overridden by page scripts.
-
-#### TLS
-
-The connection between the client and server can be secured over TLS. Using TLS will change the protocol from http and ws to https and wss as well as change the default port from 8080 to 8443. TLS can be enabled by passing the `--tls`, `--cert-file`, and `--key-file` flags on start up or by setting the `server.tls: true`, `server.cert-file: <file path>`, and `server.key-file: <file path>` properties in the b3tty config.
-
 ## Installation
 
 **NOTE: b3tty is not compatible with Windows.**
@@ -109,7 +77,7 @@ Once a config file exists, the setup page is never shown again. To return to the
 
 ## Configuration
 
-b3tty can be configured via a yaml file specified on startup with the command `b3tty start --config <file path>`. While basic server settings can be set via command-line flags, terminal appearance settings (`--rows`, `--columns`, `--cursor-blink`, `--font-family`, `--font-size`) are deprecated as flags and should be set in the config file instead — a warning is printed at startup if any of these deprecated flags are used. Themes and profiles can only be specified in the config file. The config file is a yaml file and b3tty isn't picky about the file name or path, however, it's recommended to name the file b3tty.yaml and place it in ~/.config/b3tty.
+b3tty can be configured via a yaml file specified on startup with the command `b3tty start --config <file path>`. Themes, profiles, font, font size, cursor blink, and terminal dimensions can only be specified in the config file. The config file is a yaml file and b3tty isn't picky about the file name or path, however, it's recommended to name the file b3tty.yaml and place it in ~/.config/b3tty.
 
 When a config file is provided, b3tty validates it on startup before the server starts. Any unknown keys or fields with the wrong data type are reported with the line number where the problem occurs, and the server will not start until the config file is corrected. An example config yaml file can be seen below:
 
@@ -282,6 +250,38 @@ On the browser side, debug mode activates keypress round-trip timing. After each
 ```
 
 Debug mode has no effect on normal terminal operation and is intended for development and performance investigation only.
+
+## Architecture
+
+b3tty uses a client/server model to enable the connection from a web browser to a pseudo terminal. When the server is started, a url where b3tty can be accessed from a web browser is displayed. When the url is visited through a web browser, the server renders an HTML page containing a JSON configuration object (`window.B3TTY`) with the terminal settings, then loads the frontend JavaScript bundle. The frontend determines the width of the browser window to know how many columns to use, then sends that size to the server and waits for confirmation before opening a WebSocket connection. The server then forks a new pseudo terminal process sized to those dimensions. All keyboard input is forwarded over the WebSocket to the pseudo terminal, and any output from the pseudo terminal is sent back and displayed on the page.
+
+When the WebSocket connection closes unexpectedly (e.g. a network drop), a modal dialog is displayed in the browser informing the user that the connection has been closed. The terminal cursor is also hidden at this point. Dismissing the modal by clicking OK restores the page to its normal state. Clean closes — such as the shell process exiting normally — write `[exited]` to the terminal but suppress the dialog.
+
+### A word on security
+
+Because b3tty is opening a connection from a web browser to a new psuedo terminal proccess as the user of b3tty's parent process, it's important to ensure the connection and access to the server are secure. For this reason, b3tty features several security features.
+
+#### Origin check
+
+The server will only allow connections from localhost or 127.0.0.1 as part of an origin check. This is to prevent opening a remote connection to a b3tty server. If access to remote machine is needed, run betty locally then SSH into the remove machine from b3tty.
+
+#### Access token
+
+By default, when the server starts, the url with a token of 24 randomly generated characters is provided and must be provided to access the b3tty client in the browser. This is to prevent a user without access to the terminal session where b3tty was started from guessing the url. This behavior can be disabled by passing the `--no-auth` flag at start up or setting the `server.no-auth: true` property in the b3tty config.
+
+Each failed token validation incurs an exponential backoff delay before the 403 response is sent: 1s after the first failure, doubling on each subsequent attempt up to a maximum of 30s. The counter resets when a valid token is presented. Backoff is skipped entirely when `--no-auth` is set.
+
+#### Content Security Policy
+
+The server sets a `Content-Security-Policy` header on every page response. Scripts are restricted to same-origin files and a single per-request nonce used for the inline configuration block. `'wasm-unsafe-eval'` is also permitted to support xterm.js's internal use of WebAssembly. Framing by other pages is blocked via `frame-ancestors 'none'`.
+
+#### CSRF protection
+
+The `POST /size` endpoint (used by the frontend to communicate terminal dimensions before opening the WebSocket) is protected against cross-site request forgery. Requests that carry a `Sec-Fetch-Site` header with a value other than `same-origin` are rejected. This header is set automatically by browsers and cannot be overridden by page scripts.
+
+#### TLS
+
+The connection between the client and server can be secured over TLS. Using TLS will change the protocol from http and ws to https and wss as well as change the default port from 8080 to 8443. TLS can be enabled by passing the `--tls`, `--cert-file`, and `--key-file` flags on start up or by setting the `server.tls: true`, `server.cert-file: <file path>`, and `server.key-file: <file path>` properties in the b3tty config.
 
 ## Contributing
 

@@ -35,12 +35,6 @@ running from accessing the user's shell. This behavior can be disabled through
 configuration. For additional security, b3tty supports TLS over https and wss.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		src.SetDebug(debug)
-		deprecatedFlags := []string{"rows", "columns", "cursor-blink", "font-family", "font-size"}
-		for _, name := range deprecatedFlags {
-			if cmd.Flags().Changed(name) {
-				src.Warnf("--%s is deprecated and will be removed in a future version. Use the config file instead.", name)
-			}
-		}
 		if cfgPath := viper.ConfigFileUsed(); cfgPath != "" {
 			if err := src.ValidateConfig(cfgPath); err != nil {
 				src.Fatalf("config validation error: %v", err)
@@ -66,13 +60,18 @@ configuration. For additional security, b3tty supports TLS over https and wss.`,
 func init() {
 	rootCmd.AddCommand(startCmd)
 
-	uri = "localhost"
+	// Setting these parameters from the command-line has been deprecated but can still
+	// be set from a config file.
+	uri = DEFAULT_URI
+	cursorBlink = DEFAULT_CURSOR_BLINK
+	fontFamily = DEFAULT_FONT_FAMILY
+	fontSize = DEFAULT_FONT_SIZE
+	startCmd.Flags().IntVar(&rows, "rows", DEFAULT_ROWS, "The number of lines displayed by the TTY.")
+	startCmd.Flags().IntVar(&columns, "columns", DEFAULT_COLS, "The character number width of the TTY. If 0, auto fit to the browser window size. (default 0)")
+	startCmd.Flags().MarkHidden("rows")
+	startCmd.Flags().MarkHidden("columns")
+
 	startCmd.Flags().IntVar(&port, "port", 8080, "The port b3tty is accessible from. If using TLS, the default port is 8443.")
-	startCmd.Flags().IntVar(&rows, "rows", 24, "The number of lines displayed by the TTY.")
-	startCmd.Flags().IntVar(&columns, "columns", 0, "The character number width of the TTY. If 0, auto fit to the browser window size. (default 0)")
-	startCmd.Flags().BoolVar(&cursorBlink, "cursor-blink", true, "Enables cursor blink in the browser. May not work in all situations.")
-	startCmd.Flags().StringVar(&fontFamily, "font-family", "monospace", "The default font to use. NOTE: Some browsers do not support custom fonts.")
-	startCmd.Flags().IntVar(&fontSize, "font-size", 14, "The terminal text size.")
 	startCmd.Flags().BoolVar(&tls, "tls", false, "Enable HTTPS via TLS. Requires cert-file and key-file to be provided.")
 	startCmd.Flags().StringVar(&certFile, "cert-file", "", "Path to TLS certificate file.")
 	startCmd.Flags().StringVar(&keyFile, "key-file", "", "Path to TLS private key file.")

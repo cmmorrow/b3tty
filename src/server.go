@@ -259,9 +259,12 @@ func Serve(shouldOpenBrowser bool, useTLS bool) {
 	mux.HandleFunc("/theme", ts.themeHandler)
 	mux.HandleFunc("/save-config", ts.saveConfigHandler)
 	httpServer := &http.Server{
-		Addr:     addr,
-		Handler:  mux,
-		ErrorLog: NewWarnLogger(),
+		Addr:         addr,
+		Handler:      mux,
+		ErrorLog:     NewWarnLogger(),
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 	Debugf("use TLS: %v", useTLS)
 	if useTLS {
@@ -349,11 +352,12 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	ts.backoffMu.Unlock()
 
 	if ts.firstRun {
+		Debug("serving first run page....")
 		ts.renderSetupPage(w)
 		return
 	}
 
-	Debug("Parsing HTML template....")
+	Debug("parsing HTML template....")
 	tmpl, err := template.New("b3tty").Parse(templ)
 	if err != nil {
 		Fatal(err)
@@ -442,6 +446,7 @@ var themeBrightOrder = []string{"bright-black", "bright-red", "bright-yellow", "
 // themePaletteResponse JSON payload shaped for the B3ttyThemeSelector component.
 func (ts *TerminalServer) themeHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "GET" {
+		Warnf("%s %s: method not allowed: %s", r.Method, r.URL.Path, r.Method)
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
@@ -452,6 +457,7 @@ func (ts *TerminalServer) themeHandler(w http.ResponseWriter, r *http.Request) {
 	case "light":
 		colors = defaultLightTheme
 	default:
+		Warn("theme name must be light or dark")
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -491,6 +497,7 @@ func (ts *TerminalServer) saveConfigHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if r.Method != "POST" {
+		Warnf("%s %s: method not allowed: %s", r.Method, r.URL.Path, r.Method)
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
@@ -503,7 +510,8 @@ func (ts *TerminalServer) saveConfigHandler(w http.ResponseWriter, r *http.Reque
 	var req struct {
 		Theme string `json:"theme"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil {
+		Warn("request body size exceeding limit")
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -517,6 +525,7 @@ func (ts *TerminalServer) saveConfigHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	if themeColors != nil {
+		Debug("writing config file....")
 		if err := WriteDefaultConfig(req.Theme, themeColors); err != nil {
 			Errorf("failed to write config: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -613,6 +622,10 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 			}
 			if msgType == websocket.TextMessage {
 				if cols, rows, ok := parseResizeMessage(message); ok {
+					if cols == 0 || rows == 0 {
+						Warnf("ignoring resize to invalid dimensions: cols=%d rows=%d", cols, rows)
+						continue
+					}
 					Debugf("resizing to %d, %d", cols, rows)
 					pty.Setsize(ptmx, &pty.Winsize{Cols: cols, Rows: rows})
 					continue
@@ -667,6 +680,8 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	// Keep the connection open
-	select {}
+	// Wait for the PTY session to end. The output goroutine closes done
+	// when the PTY exits; waiting here lets the deferred ws.Close() and
+	// ptmx.Close() run on exit rather than leaking this goroutine forever.
+	<-done
 }
