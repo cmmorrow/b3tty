@@ -38,7 +38,7 @@ if (typeof HTMLElement !== "undefined") {
                     p {
                         margin: 0;
                         color: #111;
-                        font-family: var(--b3tty-font-family, sans-serif);
+                        font-family: sans-serif;
                         font-size: 14px;
                     }
                     button {
@@ -48,7 +48,7 @@ if (typeof HTMLElement !== "undefined") {
                         background: #bbb;
                         cursor: pointer;
                         font-size: 14px;
-                        font-family: var(--b3tty-font-family, sans-serif);
+                        font-family: sans-serif;
                     }
                     button:hover {
                         background: #a8a8a8;

@@ -85,7 +85,7 @@ func initConfig() {
 	configFileFound = viper.ConfigFileUsed() != "" || cfgFile != ""
 
 	if len(viper.ConfigFileUsed()) > 0 {
-		src.Infof("using config file: %s", src.Bold(viper.ConfigFileUsed()))
+		src.Infof("using config file: %s", viper.ConfigFileUsed())
 
 		if viper.IsSet("server.port") {
 			port = viper.GetInt("server.port")
