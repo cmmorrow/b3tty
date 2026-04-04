@@ -16,6 +16,7 @@ b3tty start --help
 
 * Customizable themes
 * User defined profiles
+* In-browser menu bar for switching themes and profiles at runtime
 * Mouse support
 * Auto-fit and resizing
 * Background image support
@@ -204,7 +205,7 @@ A map of named profile objects. Each key is an arbitrary profile name used in th
 
 ## Themes
 
-b3tty allows the look and feel of the browser-based terminal to be customized in the b3tty config file. Themes set the colors used by the terminal representation in the browser. Multiple themes can be defined in the config file but only one theme can be used when the b3tty server is started.
+b3tty allows the look and feel of the browser-based terminal to be customized in the b3tty config file. Themes set the colors used by the terminal representation in the browser. Multiple themes can be defined in the config file. One theme is active at startup (set by the `theme` key), and additional themes can be switched to at runtime using the **Themes** menu in the menu bar without reloading the page. Selecting the already-active theme from the menu is a no-op and does not make a network request.
 
 Each color value in a theme must be either a 3- or 6-digit CSS hex color (e.g. `#fff` or `#14181d`) or a letters-only CSS named color (e.g. `red` or `cornflowerblue`). Invalid color values are reported at startup and the server will not start until they are corrected.
 
@@ -219,7 +220,7 @@ In addition to the standard terminal palette colors, themes support two cursor-s
 
 Profiles are used to set the default terminal behavior when navigating to the b3tty url. Profiles allow the working directory and shell to be used to be set when the pseudo terminal is started by the server. The title of the browser tab can also be set to make different profiles easier to distinguish from one another.
 
-Unlike server, terminal, and theme settings, different profiles can be used by different browser tabs (or browser windows) when connecting to the b3tty server. To use a profile defined in the b3tty config file, add the `profile=` query parameter to the end of the b3tty url where the value is the name of the profile to use.
+Unlike server, terminal, and theme settings, different profiles can be used by different browser tabs (or browser windows) when connecting to the b3tty server. To use a profile defined in the b3tty config file, add the `profile=` query parameter to the end of the b3tty url where the value is the name of the profile to use. When more than one profile is configured, a **Profiles** menu also appears in the menu bar; selecting a profile from it opens that profile in a new browser tab.
 
 When a non-default profile is active, the profile's name (its key in the config file) is displayed in a small label below the terminal in the browser. The label uses the configured font family, font size, and theme foreground and background colors. The label is hidden when using the default profile.
 
@@ -232,6 +233,22 @@ When more than one profile is configured, the server lists them on startup with 
 ```
 
 Profile names are sorted alphabetically and aligned for readability.
+
+## Menu bar
+
+The menu bar is a browser-side control strip that appears at the top of the terminal page when at least one theme or one non-default profile is configured. It is always present in the DOM but completely hidden when there is nothing to show.
+
+**Appearance and interaction:**
+- When collapsed, only a thin trigger strip is visible at the top of the viewport.
+- Hovering over the trigger slides the full menu bar into view.
+- The menu bar automatically hides after 5 seconds of inactivity, or immediately when you click outside it.
+- When the menu bar opens or closes, the terminal resizes to fill the available space.
+
+**Themes menu** — visible when more than one theme is defined in the config file. Selecting a theme applies it immediately without reloading the page.
+
+**Profiles menu** — visible when more than one profile is configured. Selecting a profile opens that profile in a new browser tab.
+
+**Colors** — the menu bar uses the terminal's foreground color as its background and the terminal's background color as its text color, so it contrasts naturally with the active theme. When the theme is changed via the Themes menu, the menu bar colors update automatically to match.
 
 ## Debug mode
 

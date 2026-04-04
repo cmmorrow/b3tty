@@ -790,14 +790,14 @@ describe("terminalFactory", () => {
         expect((term.options as ITerminalOptions & ITerminalInitOnlyOptions).cols).toBe(120);
     });
 
-    it("does not set allowTransparency when backgroundImage is absent", () => {
+    it("sets allowTransparency when backgroundImage is absent", () => {
         const term = terminalFactory(baseConfig);
-        expect(term.options.allowTransparency).toBeFalsy();
+        expect(term.options.allowTransparency).toBeTruthy();
     });
 
-    it("does not set allowTransparency when backgroundImage is false", () => {
+    it("sets allowTransparency when backgroundImage is false", () => {
         const term = terminalFactory({ ...baseConfig, backgroundImage: false });
-        expect(term.options.allowTransparency).toBeFalsy();
+        expect(term.options.allowTransparency).toBeTruthy();
     });
 
     it("sets allowTransparency when backgroundImage is true", () => {
