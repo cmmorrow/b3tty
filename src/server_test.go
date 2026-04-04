@@ -259,13 +259,13 @@ func TestBuildConfigJSON(t *testing.T) {
 	thm := &Theme{Foreground: "#ffffff", Background: "#000000"}
 
 	t.Run("returns valid JSON", func(t *testing.T) {
-		data, err := buildConfigJSON(srv, clnt, thm)
+		data, err := buildConfigJSON(srv, clnt, thm, nil, nil, "")
 		require.NoError(t, err)
 		assert.True(t, json.Valid(data))
 	})
 
 	t.Run("JSON contains expected scalar fields", func(t *testing.T) {
-		data, err := buildConfigJSON(srv, clnt, thm)
+		data, err := buildConfigJSON(srv, clnt, thm, nil, nil, "")
 		require.NoError(t, err)
 
 		var result map[string]any
@@ -282,7 +282,7 @@ func TestBuildConfigJSON(t *testing.T) {
 	})
 
 	t.Run("JSON embeds theme colours", func(t *testing.T) {
-		data, err := buildConfigJSON(srv, clnt, thm)
+		data, err := buildConfigJSON(srv, clnt, thm, nil, nil, "")
 		require.NoError(t, err)
 
 		var result map[string]any
@@ -296,7 +296,7 @@ func TestBuildConfigJSON(t *testing.T) {
 
 	t.Run("TLS enabled is reflected in JSON", func(t *testing.T) {
 		tlsSrv := &Server{Uri: "example.com", Port: 8443, TLS: TLS{Enabled: true}}
-		data, err := buildConfigJSON(tlsSrv, clnt, thm)
+		data, err := buildConfigJSON(tlsSrv, clnt, thm, nil, nil, "")
 		require.NoError(t, err)
 
 		var result map[string]any
@@ -306,7 +306,7 @@ func TestBuildConfigJSON(t *testing.T) {
 
 	t.Run("empty theme produces valid JSON", func(t *testing.T) {
 		emptyTheme := &Theme{}
-		data, err := buildConfigJSON(srv, clnt, emptyTheme)
+		data, err := buildConfigJSON(srv, clnt, emptyTheme, nil, nil, "")
 		require.NoError(t, err)
 		assert.True(t, json.Valid(data))
 	})
@@ -852,5 +852,326 @@ func TestDisplayTermHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		ts.displayTermHandler(w, req)
 		assert.Contains(t, w.Body.String(), `"tls":true`)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// themePaletteHandler
+// ---------------------------------------------------------------------------
+
+func TestThemePaletteHandler(t *testing.T) {
+	t.Run("POST is rejected with 405", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		req := httptest.NewRequest(http.MethodPost, "/theme?name=dark", nil)
+		w := httptest.NewRecorder()
+		logged := captureLog(func() { ts.themePaletteHandler(w, req) })
+		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+		assert.Contains(t, logged, "method not allowed")
+	})
+
+	t.Run("DELETE is rejected with 405", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		req := httptest.NewRequest(http.MethodDelete, "/theme?name=dark", nil)
+		w := httptest.NewRecorder()
+		logged := captureLog(func() { ts.themePaletteHandler(w, req) })
+		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+		assert.Contains(t, logged, "method not allowed")
+	})
+
+	t.Run("GET with unknown name returns 400", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		req := httptest.NewRequest(http.MethodGet, "/theme?name=unknown", nil)
+		w := httptest.NewRecorder()
+		logged := captureLog(func() { ts.themePaletteHandler(w, req) })
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, logged, "light or dark")
+	})
+
+	t.Run("GET with missing name returns 400", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		req := httptest.NewRequest(http.MethodGet, "/theme", nil)
+		w := httptest.NewRecorder()
+		logged := captureLog(func() { ts.themePaletteHandler(w, req) })
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, logged, "light or dark")
+	})
+
+	t.Run("GET name=dark returns 200 with application/json", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		req := httptest.NewRequest(http.MethodGet, "/theme?name=dark", nil)
+		w := httptest.NewRecorder()
+		ts.themePaletteHandler(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Header().Get("Content-Type"), "application/json")
+	})
+
+	t.Run("GET name=dark returns valid JSON", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		req := httptest.NewRequest(http.MethodGet, "/theme?name=dark", nil)
+		w := httptest.NewRecorder()
+		ts.themePaletteHandler(w, req)
+		assert.True(t, json.Valid(w.Body.Bytes()))
+	})
+
+	t.Run("GET name=dark returns correct bg, fg, selBg, and cursor", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		req := httptest.NewRequest(http.MethodGet, "/theme?name=dark", nil)
+		w := httptest.NewRecorder()
+		ts.themePaletteHandler(w, req)
+
+		var resp themePaletteResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "#1e1e1e", resp.Bg)
+		assert.Equal(t, "#d4d4d4", resp.Fg)
+		assert.Equal(t, "#474747", resp.SelBg)
+		assert.Equal(t, "#aeafad", resp.Cursor)
+	})
+
+	t.Run("GET name=dark returns 8-element normal array in ANSI display order", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		req := httptest.NewRequest(http.MethodGet, "/theme?name=dark", nil)
+		w := httptest.NewRecorder()
+		ts.themePaletteHandler(w, req)
+
+		var resp themePaletteResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		// Order: black, red, yellow, green, cyan, blue, magenta, white
+		expected := []string{"#1e1e1e", "#f44747", "#dcdcaa", "#608b4e", "#56b6c2", "#569cd6", "#c678dd", "#d4d4d4"}
+		assert.Equal(t, expected, resp.Normal)
+	})
+
+	t.Run("GET name=dark returns 8-element bright array in ANSI display order", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		req := httptest.NewRequest(http.MethodGet, "/theme?name=dark", nil)
+		w := httptest.NewRecorder()
+		ts.themePaletteHandler(w, req)
+
+		var resp themePaletteResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		// Order: bright-black, bright-red, bright-yellow, bright-green, bright-cyan, bright-blue, bright-magenta, bright-white
+		expected := []string{"#808080", "#f44747", "#dcdcaa", "#608b4e", "#56b6c2", "#569cd6", "#c678dd", "#ffffff"}
+		assert.Equal(t, expected, resp.Bright)
+	})
+
+	t.Run("GET name=light returns 200 with correct bg, fg, selBg, and cursor", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		req := httptest.NewRequest(http.MethodGet, "/theme?name=light", nil)
+		w := httptest.NewRecorder()
+		ts.themePaletteHandler(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp themePaletteResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "#fafafa", resp.Bg)
+		assert.Equal(t, "#383a42", resp.Fg)
+		assert.Equal(t, "#bad5fb", resp.SelBg)
+		assert.Equal(t, "#526fff", resp.Cursor)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// themeConfigHandler
+// ---------------------------------------------------------------------------
+
+func TestThemeConfigHandler(t *testing.T) {
+	solarizedTheme := Theme{
+		Foreground: "#657b83",
+		Background: "#002b36",
+		Cursor:     "#839496",
+	}
+	imageTheme := Theme{
+		Foreground:      "#ffffff",
+		Background:      "#000000",
+		BackgroundImage: "/path/to/bg.jpg",
+	}
+
+	newTS := func() *TerminalServer {
+		ts := newTestTerminalServer()
+		ts.themes = map[string]Theme{
+			"solarized": solarizedTheme,
+			"image":     imageTheme,
+		}
+		return ts
+	}
+
+	t.Run("DELETE is rejected with 405", func(t *testing.T) {
+		ts := newTS()
+		req := httptest.NewRequest(http.MethodDelete, "/theme-config?name=solarized", nil)
+		w := httptest.NewRecorder()
+		logged := captureLog(func() { ts.themeConfigHandler(w, req) })
+		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+		assert.Contains(t, logged, "method not allowed")
+	})
+
+	t.Run("PUT is rejected with 405", func(t *testing.T) {
+		ts := newTS()
+		req := httptest.NewRequest(http.MethodPut, "/theme-config?name=solarized", nil)
+		w := httptest.NewRecorder()
+		logged := captureLog(func() { ts.themeConfigHandler(w, req) })
+		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+		assert.Contains(t, logged, "method not allowed")
+	})
+
+	t.Run("GET with missing name returns 400", func(t *testing.T) {
+		ts := newTS()
+		req := httptest.NewRequest(http.MethodGet, "/theme-config", nil)
+		w := httptest.NewRecorder()
+		logged := captureLog(func() { ts.themeConfigHandler(w, req) })
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, logged, "missing name")
+	})
+
+	t.Run("GET with unknown name returns 404", func(t *testing.T) {
+		ts := newTS()
+		req := httptest.NewRequest(http.MethodGet, "/theme-config?name=nonexistent", nil)
+		w := httptest.NewRecorder()
+		ts.themeConfigHandler(w, req)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("GET with valid name returns 200 with application/json", func(t *testing.T) {
+		ts := newTS()
+		req := httptest.NewRequest(http.MethodGet, "/theme-config?name=solarized", nil)
+		w := httptest.NewRecorder()
+		ts.themeConfigHandler(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Header().Get("Content-Type"), "application/json")
+	})
+
+	t.Run("GET returns correct theme colors", func(t *testing.T) {
+		ts := newTS()
+		req := httptest.NewRequest(http.MethodGet, "/theme-config?name=solarized", nil)
+		w := httptest.NewRecorder()
+		ts.themeConfigHandler(w, req)
+
+		var resp themeConfigResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "#657b83", resp.Foreground)
+		assert.Equal(t, "#002b36", resp.Background)
+		assert.Equal(t, "#839496", resp.Cursor)
+	})
+
+	t.Run("GET returns hasBackgroundImage=false when no background image", func(t *testing.T) {
+		ts := newTS()
+		req := httptest.NewRequest(http.MethodGet, "/theme-config?name=solarized", nil)
+		w := httptest.NewRecorder()
+		ts.themeConfigHandler(w, req)
+
+		var resp themeConfigResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.False(t, resp.HasBackgroundImage)
+	})
+
+	t.Run("GET returns hasBackgroundImage=true when background image is set", func(t *testing.T) {
+		ts := newTS()
+		req := httptest.NewRequest(http.MethodGet, "/theme-config?name=image", nil)
+		w := httptest.NewRecorder()
+		ts.themeConfigHandler(w, req)
+
+		var resp themeConfigResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.True(t, resp.HasBackgroundImage)
+	})
+
+	t.Run("GET does not mutate ts.client.Theme", func(t *testing.T) {
+		ts := newTS()
+		original := ts.client.Theme
+		req := httptest.NewRequest(http.MethodGet, "/theme-config?name=solarized", nil)
+		w := httptest.NewRecorder()
+		ts.themeConfigHandler(w, req)
+		assert.Equal(t, original, ts.client.Theme)
+	})
+
+	t.Run("POST with valid name returns 200 and activates theme", func(t *testing.T) {
+		ts := newTS()
+		req := httptest.NewRequest(http.MethodPost, "/theme-config?name=solarized", nil)
+		w := httptest.NewRecorder()
+		ts.themeConfigHandler(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, solarizedTheme, ts.client.Theme)
+	})
+
+	t.Run("POST with same-origin Sec-Fetch-Site is allowed", func(t *testing.T) {
+		ts := newTS()
+		req := httptest.NewRequest(http.MethodPost, "/theme-config?name=solarized", nil)
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		w := httptest.NewRecorder()
+		ts.themeConfigHandler(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, solarizedTheme, ts.client.Theme)
+	})
+
+	t.Run("POST with cross-site Sec-Fetch-Site returns 403 and does not mutate theme", func(t *testing.T) {
+		ts := newTS()
+		original := ts.client.Theme
+		req := httptest.NewRequest(http.MethodPost, "/theme-config?name=solarized", nil)
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		w := httptest.NewRecorder()
+		logged := captureLog(func() { ts.themeConfigHandler(w, req) })
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, logged, "forbidden")
+		assert.Equal(t, original, ts.client.Theme)
+	})
+
+	t.Run("POST with same-site Sec-Fetch-Site returns 403 and does not mutate theme", func(t *testing.T) {
+		ts := newTS()
+		original := ts.client.Theme
+		req := httptest.NewRequest(http.MethodPost, "/theme-config?name=solarized", nil)
+		req.Header.Set("Sec-Fetch-Site", "same-site")
+		w := httptest.NewRecorder()
+		logged := captureLog(func() { ts.themeConfigHandler(w, req) })
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, logged, "forbidden")
+		assert.Equal(t, original, ts.client.Theme)
+	})
+
+	t.Run("POST without Sec-Fetch-Site (non-browser client) is allowed", func(t *testing.T) {
+		ts := newTS()
+		req := httptest.NewRequest(http.MethodPost, "/theme-config?name=solarized", nil)
+		w := httptest.NewRecorder()
+		ts.themeConfigHandler(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, solarizedTheme, ts.client.Theme)
+	})
+
+	t.Run("POST with missing name returns 400 and does not mutate theme", func(t *testing.T) {
+		ts := newTS()
+		original := ts.client.Theme
+		req := httptest.NewRequest(http.MethodPost, "/theme-config", nil)
+		w := httptest.NewRecorder()
+		logged := captureLog(func() { ts.themeConfigHandler(w, req) })
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, logged, "missing name")
+		assert.Equal(t, original, ts.client.Theme)
+	})
+
+	t.Run("POST with unknown name returns 404 and does not mutate theme", func(t *testing.T) {
+		ts := newTS()
+		original := ts.client.Theme
+		req := httptest.NewRequest(http.MethodPost, "/theme-config?name=nonexistent", nil)
+		w := httptest.NewRecorder()
+		ts.themeConfigHandler(w, req)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Equal(t, original, ts.client.Theme)
+	})
+
+	t.Run("POST response contains activated theme colors", func(t *testing.T) {
+		ts := newTS()
+		req := httptest.NewRequest(http.MethodPost, "/theme-config?name=solarized", nil)
+		w := httptest.NewRecorder()
+		ts.themeConfigHandler(w, req)
+
+		var resp themeConfigResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "#657b83", resp.Foreground)
+		assert.Equal(t, "#002b36", resp.Background)
+	})
+
+	t.Run("BackgroundImage path is not exposed in JSON response", func(t *testing.T) {
+		ts := newTS()
+		req := httptest.NewRequest(http.MethodGet, "/theme-config?name=image", nil)
+		w := httptest.NewRecorder()
+		ts.themeConfigHandler(w, req)
+		assert.NotContains(t, w.Body.String(), "/path/to/bg.jpg")
 	})
 }

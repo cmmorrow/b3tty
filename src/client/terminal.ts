@@ -5,6 +5,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { ImageAddon } from "@xterm/addon-image";
 import type {
     TermConfig,
+    ThemeActivateResponse,
     BellElementLike,
     SocketLike,
     SocketMessageEvent,
@@ -14,7 +15,7 @@ import type {
 } from "./types.ts";
 import { isValidHttpProtocol, isValidWsProtocol, isValidPort, isValidUri } from "./validators.ts";
 import "./components.ts";
-import type { B3ttyDialog } from "./components.ts";
+import type { B3ttyDialog, B3ttyMenuBar } from "./components.ts";
 
 export const THEME_KEYS = [
     "foreground",
@@ -215,7 +216,9 @@ export function terminalFactory(config: TermConfig): Terminal {
         // second layer of color that would make the terminal darker than the gap.
         theme.background = withAlpha("#000", 0);
     }
-    const termOptions = buildTermOptions(config, theme, !!config.backgroundImage);
+    // Always enable transparency so themes with background images can be switched
+    // to at runtime without requiring a page reload.
+    const termOptions = buildTermOptions(config, theme, true);
 
     return new Terminal(termOptions);
 }
@@ -250,6 +253,40 @@ export function initTerm(
 }
 
 /**
+ * Applies theme-driven background and profile label styles to the page.
+ * Called on initial load and on theme change. When hasBackgroundImage is true,
+ * the body receives a semi-transparent gradient tint over the background image
+ * and the xterm viewport is made transparent; otherwise the container gets a
+ * solid background color and the body/style-element overrides are cleared.
+ */
+function applyThemeStyles(theme: { background?: string; foreground?: string }, hasBackgroundImage: boolean): void {
+    const containerEl = document.getElementById("container")!;
+
+    if (hasBackgroundImage) {
+        const bgColor = withAlpha(theme.background || "", 0.5);
+        document.body.style.background = `linear-gradient(${bgColor}, ${bgColor}), url('/background') center / cover fixed no-repeat`;
+        let bgStyle = document.getElementById("b3tty-bg-style") as HTMLStyleElement | null;
+        if (!bgStyle) {
+            bgStyle = document.createElement("style");
+            bgStyle.id = "b3tty-bg-style";
+            document.head.appendChild(bgStyle);
+        }
+        bgStyle.textContent = `#terminal .xterm-viewport { background-color: transparent !important; }`;
+        containerEl.style.background = "";
+    } else {
+        document.body.style.background = "";
+        document.getElementById("b3tty-bg-style")?.remove();
+        containerEl.style.background = theme.background || "";
+    }
+
+    const profileEl = document.getElementById("profile")!;
+    if (profileEl.textContent?.trim()) {
+        profileEl.style.color = theme.foreground || "white";
+        profileEl.style.background = hasBackgroundImage ? "" : theme.background || "black";
+    }
+}
+
+/**
  * Applies all config-driven styles to the page: CSS custom properties for font,
  * the container/body background (solid color or background-image tint), and the
  * profile label colors. Kept separate from main() so DOM-style concerns don't
@@ -258,24 +295,51 @@ export function initTerm(
 function applyPageStyles(config: TermConfig): void {
     document.documentElement.style.setProperty("--b3tty-font-size", `${config.fontSize}px`);
     document.documentElement.style.setProperty("--b3tty-font-family", `"${config.fontFamily}", monospace`);
+    applyThemeStyles(config.theme, !!config.backgroundImage);
+}
 
-    if (config.backgroundImage) {
-        const bgColor = withAlpha(config.theme.background || "", 0.5);
-        document.body.style.background = `linear-gradient(${bgColor}, ${bgColor}), url('/background') center / cover fixed no-repeat`;
-        const style = document.createElement("style");
-        style.textContent = `#terminal .xterm-viewport { background-color: transparent !important; }`;
-        document.head.appendChild(style);
-    } else if (config.theme.background) {
-        document.getElementById("container")!.style.background = config.theme.background;
-    }
+/**
+ * Handles a b3tty-theme-change event by fetching the new theme config from the server,
+ * applying it to the terminal and page styles, and updating the menu bar colors.
+ * activeTheme is a ref object whose `current` field tracks the last successfully applied
+ * theme name; if the selected name matches the current value the handler returns early
+ * without making a network request. `current` is updated after each successful change.
+ */
+export async function handleThemeChange(
+    e: Event,
+    term: Terminal,
+    menuBar: B3ttyMenuBar,
+    activeTheme: { current: string }
+): Promise<void> {
+    const { name } = (e as CustomEvent<{ name: string }>).detail;
+    if (name === activeTheme.current) return;
+    const res = await fetch(`/theme-config?name=${encodeURIComponent(name)}`, { method: "POST" });
+    if (!res.ok) return;
+    const newTheme = (await res.json()) as ThemeActivateResponse;
 
-    const profileElement = document.getElementById("profile")!;
-    if (profileElement.textContent?.trim()) {
-        profileElement.style.color = config.theme.foreground || "white";
-        if (!config.backgroundImage) {
-            profileElement.style.background = config.theme.background || "black";
-        }
+    const builtTheme = buildTheme(newTheme);
+    if (newTheme.hasBackgroundImage) {
+        builtTheme.background = withAlpha(newTheme.background || "#000", 0);
     }
+    term.options.theme = builtTheme;
+
+    applyThemeStyles(newTheme, newTheme.hasBackgroundImage);
+    menuBar.updateColors({
+        bg: newTheme.foreground || "white",
+        fg: newTheme.background || "black",
+    });
+    activeTheme.current = name;
+}
+
+/**
+ * Handles a b3tty-profile-change event by opening the selected profile in a new tab,
+ * preserving any existing query parameters.
+ */
+export function handleProfileChange(e: Event): void {
+    const { name } = (e as CustomEvent<{ name: string }>).detail;
+    const params = new URLSearchParams(window.location.search);
+    params.set("profile", name);
+    window.open(`/?${params.toString()}`, "_blank");
 }
 
 /**
@@ -339,6 +403,22 @@ export async function main(config: TermConfig): Promise<void> {
 
     const bellElement = document.getElementById("bell")!;
     initTerm(term, socket, bellElement, onBeforeSend);
+
+    const menuBarEl = document.getElementById("menubar");
+    if (menuBarEl && (config.themeNames?.length || config.profileNames?.length)) {
+        const menuBar = menuBarEl as unknown as B3ttyMenuBar;
+        menuBar.setup(config.themeNames ?? [], config.profileNames ?? [], {
+            bg: config.theme.foreground || "white",
+            fg: config.theme.background || "black",
+        });
+
+        menuBarEl.addEventListener("b3tty-menubar-open", () => requestAnimationFrame(() => fitAddon?.fit()));
+        menuBarEl.addEventListener("b3tty-menubar-close", () => requestAnimationFrame(() => fitAddon?.fit()));
+
+        const activeTheme = { current: config.activeTheme ?? "" };
+        menuBarEl.addEventListener("b3tty-theme-change", (e) => handleThemeChange(e, term, menuBar, activeTheme));
+        menuBarEl.addEventListener("b3tty-profile-change", handleProfileChange);
+    }
 
     if (!config.columns) {
         term.onResize(({ cols, rows }) => {

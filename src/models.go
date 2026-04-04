@@ -174,20 +174,23 @@ func (tm *Theme) MapToTheme(m map[string]any) {
 }
 
 type TermConfig struct {
-	TLS                bool   `json:"tls"`
-	CursorBlink        bool   `json:"cursorBlink"`
-	FontFamily         string `json:"fontFamily"`
-	FontSize           int    `json:"fontSize"`
-	Rows               int    `json:"rows"`
-	Columns            int    `json:"columns"`
-	Theme              Theme  `json:"theme"`
-	Uri                string `json:"uri"`
-	Port               int    `json:"port"`
-	Debug              bool   `json:"debug"`
-	HasBackgroundImage bool   `json:"backgroundImage"`
+	TLS                bool     `json:"tls"`
+	CursorBlink        bool     `json:"cursorBlink"`
+	FontFamily         string   `json:"fontFamily"`
+	FontSize           int      `json:"fontSize"`
+	Rows               int      `json:"rows"`
+	Columns            int      `json:"columns"`
+	Theme              Theme    `json:"theme"`
+	Uri                string   `json:"uri"`
+	Port               int      `json:"port"`
+	Debug              bool     `json:"debug"`
+	HasBackgroundImage bool     `json:"backgroundImage"`
+	ThemeNames         []string `json:"themeNames"`
+	ProfileNames       []string `json:"profileNames"`
+	ActiveTheme        string   `json:"activeTheme"`
 }
 
-func NewTermConfig(srv *Server, clnt *Client, thm *Theme) *TermConfig {
+func NewTermConfig(srv *Server, clnt *Client, thm *Theme, themeNames []string, profileNames []string, activeTheme string) *TermConfig {
 	return &TermConfig{
 		TLS:                srv.TLS.Enabled,
 		CursorBlink:        clnt.CursorBlink,
@@ -200,14 +203,43 @@ func NewTermConfig(srv *Server, clnt *Client, thm *Theme) *TermConfig {
 		Port:               srv.Port,
 		Debug:              debugEnabled,
 		HasBackgroundImage: thm.BackgroundImage != "",
+		ThemeNames:         themeNames,
+		ProfileNames:       profileNames,
+		ActiveTheme:        activeTheme,
 	}
 }
 
+// themePaletteResponse is the JSON shape returned by themePaletteHandler and consumed
+// by the B3ttyThemeSelector component to build palette preview cards.
+type themePaletteResponse struct {
+	Bg     string   `json:"bg"`
+	Fg     string   `json:"fg"`
+	SelBg  string   `json:"selBg"`
+	Cursor string   `json:"cursor"`
+	Normal []string `json:"normal"`
+	Bright []string `json:"bright"`
+}
+
+// themeConfigResponse is the JSON shape returned by themeConfigHandler. It embeds
+// all Theme color fields (BackgroundImage is excluded via json:"-") and adds a
+// HasBackgroundImage boolean so the client knows whether to enable background-image
+// mode without receiving the server-side file path.
+type themeConfigResponse struct {
+	Theme
+	HasBackgroundImage bool `json:"hasBackgroundImage"`
+}
+
+// CSPHeader represents a single Content-Security-Policy directive, consisting of
+// a directive name (e.g. "script-src") and one or more source values
+// (e.g. "self", "nonce-abc123"). Values are rendered without surrounding quotes
+// in Add/Set but wrapped in single quotes by String() to produce valid CSP syntax.
 type CSPHeader struct {
 	Name   string
 	Values []string
 }
 
+// Set replaces all source values for this directive with the provided values,
+// discarding any previously assigned values. Returns the receiver for chaining.
 func (ch *CSPHeader) Set(values ...string) *CSPHeader {
 	var vals []string
 	for _, value := range values {
@@ -217,11 +249,16 @@ func (ch *CSPHeader) Set(values ...string) *CSPHeader {
 	return ch
 }
 
+// Add appends a single source value to this directive. Returns the receiver for
+// chaining. Mutations are reflected in any CSPHeaders map that holds a pointer
+// to this CSPHeader.
 func (ch *CSPHeader) Add(value string) *CSPHeader {
 	ch.Values = append(ch.Values, value)
 	return ch
 }
 
+// String renders the directive as a CSP-formatted string, e.g.
+// "script-src 'self' 'nonce-abc123';". Each value is wrapped in single quotes.
 func (ch CSPHeader) String() string {
 	var vals []string
 	for _, value := range ch.Values {
@@ -230,6 +267,8 @@ func (ch CSPHeader) String() string {
 	return fmt.Sprintf("%s %s;", ch.Name, strings.Join(vals, " "))
 }
 
+// NewCSPHeader constructs a CSPHeader with the given directive name and initial
+// source values.
 func NewCSPHeader(name string, values ...string) *CSPHeader {
 	return &CSPHeader{
 		Name:   name,
@@ -237,19 +276,32 @@ func NewCSPHeader(name string, values ...string) *CSPHeader {
 	}
 }
 
+// CSPHeaders is a collection of CSPHeader directives keyed by directive name.
+// Directive pointers are stored in the map, so mutations via Get().Add() or
+// Get().Set() are reflected in the CSPHeaders value without re-inserting the
+// directive. Use String() to serialize the full policy for use in a
+// Content-Security-Policy response header.
 type CSPHeaders struct {
 	Headers map[string]*CSPHeader
 }
 
+// Get returns a pointer to the CSPHeader for the given directive name, or nil
+// if no such directive exists. Mutating the returned pointer updates the entry
+// in place, which is reflected in subsequent calls to String().
 func (chs CSPHeaders) Get(key string) *CSPHeader {
 	return chs.Headers[key]
 }
 
+// Add inserts or replaces the directive stored under key. Returns a pointer to
+// the (possibly updated) CSPHeaders for chaining.
 func (chs CSPHeaders) Add(key string, header *CSPHeader) *CSPHeaders {
 	chs.Headers[key] = header
 	return &chs
 }
 
+// String serializes all directives into a single Content-Security-Policy header
+// value, with each directive separated by a space. Directive order is not
+// guaranteed because the underlying storage is a map.
 func (chs CSPHeaders) String() string {
 	var vals []string
 	for _, values := range chs.Headers {
@@ -258,6 +310,8 @@ func (chs CSPHeaders) String() string {
 	return strings.Join(vals, " ")
 }
 
+// NewCSPHeders constructs a CSPHeaders collection from the provided directives,
+// keyed by each directive's Name field.
 func NewCSPHeders(headers ...*CSPHeader) *CSPHeaders {
 	cspHeaders := CSPHeaders{}
 	cspHeaders.Headers = make(map[string]*CSPHeader)

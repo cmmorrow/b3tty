@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"os"
+	"strings"
 
 	"github.com/cmmorrow/b3tty/src"
 	"github.com/spf13/cobra"
@@ -125,6 +126,33 @@ func initConfig() {
 				os.Exit(3)
 			}
 			theme.MapToTheme(themeCfg.AllSettings())
+			src.ActiveThemeName = strings.ToLower(themeName)
+		}
+
+		if viper.IsSet("themes") {
+			src.Themes = make(map[string]src.Theme)
+			for name := range viper.GetStringMap("themes") {
+				var t src.Theme
+				if themeCfg := viper.Sub("themes." + name); themeCfg != nil {
+					t.MapToTheme(themeCfg.AllSettings())
+				}
+				src.Themes[name] = t
+			}
+		}
+
+		// Guarantee the active theme is always in src.Themes. viper's
+		// GetStringMap can return an empty map for a single-entry themes
+		// section in some YAML parser versions, which would leave the active
+		// theme absent from the menu bar list even though it is fully loaded.
+		// Use strings.ToLower to match the keys GetStringMap already stored.
+		if themeName != "" {
+			if src.Themes == nil {
+				src.Themes = make(map[string]src.Theme)
+			}
+			lowerName := strings.ToLower(themeName)
+			if _, exists := src.Themes[lowerName]; !exists {
+				src.Themes[lowerName] = theme
+			}
 		}
 
 		if viper.IsSet("profiles") {

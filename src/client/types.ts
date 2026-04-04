@@ -36,6 +36,13 @@ export interface TermConfig {
     theme: ThemeConfig;
     debug?: boolean;
     backgroundImage?: boolean;
+    themeNames?: string[];
+    profileNames?: string[];
+    activeTheme?: string;
+}
+
+export interface ThemeActivateResponse extends ThemeConfig {
+    hasBackgroundImage: boolean;
 }
 
 export interface ClientConfig {

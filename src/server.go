@@ -47,6 +47,8 @@ var defaultLightTheme = mustUnmarshalTheme(defaultLightThemeJSON)
 var InitClient *Client
 var InitServer *Server
 var Profiles map[string]Profile
+var Themes map[string]Theme
+var ActiveThemeName string
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:    BUFFER_SIZE,
@@ -75,10 +77,12 @@ type TerminalServer struct {
 	client         *Client
 	server         *Server
 	profiles       map[string]Profile
+	themes         map[string]Theme
 	token          string
 	orgCols        uint16
 	orgRows        uint16
 	profileName    string
+	activeTheme    string
 	failedAttempts int
 	firstRun       bool
 	backoffMu      sync.Mutex
@@ -130,10 +134,11 @@ func resolveProfileName(q url.Values) string {
 	return DEFAULT_PROFILE_NAME
 }
 
-// buildConfigJSON serialises a TermConfig derived from the given server, client, and
-// theme into JSON. The returned bytes are ready to embed in the HTML template.
-func buildConfigJSON(srv *Server, clnt *Client, thm *Theme) ([]byte, error) {
-	cfg := NewTermConfig(srv, clnt, thm)
+// buildConfigJSON serialises a TermConfig derived from the given server, client, theme,
+// and available theme/profile name lists into JSON. The returned bytes are ready to
+// embed in the HTML template.
+func buildConfigJSON(srv *Server, clnt *Client, thm *Theme, themeNames []string, profileNames []string, activeTheme string) ([]byte, error) {
+	cfg := NewTermConfig(srv, clnt, thm, themeNames, profileNames, activeTheme)
 	return json.Marshal(cfg)
 }
 
@@ -158,6 +163,41 @@ func formatCommand(command string) []byte {
 	return []byte(strings.TrimSpace(command) + "\n")
 }
 
+// GetCSPHeaders returns the baseline Content-Security-Policy directives used by
+// b3tty's HTTP handlers. The returned CSPHeaders value contains the following
+// directives:
+//
+//   - default-src 'none'
+//   - script-src 'self' 'wasm-unsafe-eval' (callers must add a per-request nonce)
+//   - style-src 'self' 'unsafe-inline'
+//   - connect-src 'self'
+//   - img-src 'self'
+//   - frame-ancestors 'none'
+//   - base-uri 'self'
+//
+// script-src: allow same-origin module scripts plus the one inline script
+//
+//	that sets window.B3TTY, identified by its per-request nonce.
+//	'wasm-unsafe-eval' is required for xterm.js which uses WebAssembly
+//	internally; it is more targeted than 'unsafe-eval' and does not permit
+//	JS eval().
+//
+// style-src:  allow same-origin stylesheets plus 'unsafe-inline' for the
+//
+//	dynamic <style> element the JS injects for theme background gradients.
+//
+// connect-src 'self': covers same-origin fetch and ws:/wss: connections.
+// frame-ancestors 'none': prevents the terminal from being embedded in an
+//
+//	iframe on any other page.
+//
+// base-uri 'self': blocks <base> tag injection that could redirect relative
+//
+//	URLs to an attacker-controlled origin.
+//
+// Callers that render HTML (e.g. displayTermHandler) should call
+// csp.Get("script-src").Add("nonce-<value>") on the returned value to inject a
+// per-request nonce before writing the CSP header to the response.
 func GetCSPHeaders() CSPHeaders {
 	header := NewCSPHeders(
 		NewCSPHeader("default-src", "none"),
@@ -179,9 +219,11 @@ func Serve(shouldOpenBrowser bool, useTLS bool) {
 		client:      InitClient,
 		server:      InitServer,
 		profiles:    Profiles,
+		themes:      Themes,
 		orgCols:     DEFAULT_COLS,
 		orgRows:     DEFAULT_ROWS,
 		profileName: DEFAULT_PROFILE_NAME,
+		activeTheme: ActiveThemeName,
 		firstRun:    InitServer.FirstRun,
 		authSleep:   time.Sleep,
 	}
@@ -256,7 +298,8 @@ func Serve(shouldOpenBrowser bool, useTLS bool) {
 	mux.HandleFunc("/ws", ts.terminalHandler)
 	mux.HandleFunc("/size", ts.setSizeHandler)
 	mux.HandleFunc("/background", ts.backgroundHandler)
-	mux.HandleFunc("/theme", ts.themeHandler)
+	mux.HandleFunc("/theme", ts.themePaletteHandler)
+	mux.HandleFunc("/theme-config", ts.themeConfigHandler)
 	mux.HandleFunc("/save-config", ts.saveConfigHandler)
 	httpServer := &http.Server{
 		Addr:         addr,
@@ -306,7 +349,7 @@ func (ts *TerminalServer) setSizeHandler(w http.ResponseWriter, r *http.Request)
 // displayTermHandler validates the auth token, selects the active profile, serialises
 // the TermConfig to JSON, and renders the terminal HTML template.
 func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Request) {
-	type Props struct {
+	type TemplateProps struct {
 		ConfigJSON  string
 		Title       string
 		ProfileName string
@@ -335,6 +378,7 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 			ts.backoffMu.Lock()
 			ts.failedAttempts++
 			delay := authBackoffDelay(ts.failedAttempts)
+			Debug("requesting mutex unlock")
 			ts.backoffMu.Unlock()
 			Warnf("%s %s: forbidden: invalid or missing token (attempt %d, delay %s)", r.Method, r.URL.Path, ts.failedAttempts, delay)
 			ts.authSleep(delay)
@@ -367,8 +411,22 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	Debugf("resolved profile name: %s", ts.profileName)
 	profile := ts.profiles[ts.profileName]
 
+	themeNames := make([]string, 0, len(ts.themes))
+	for name := range ts.themes {
+		themeNames = append(themeNames, name)
+	}
+	sort.Strings(themeNames)
+	Debugf("Theme names: %s", strings.Join(themeNames, ", "))
+
+	profileNames := make([]string, 0, len(ts.profiles))
+	for name := range ts.profiles {
+		profileNames = append(profileNames, name)
+	}
+	sort.Strings(profileNames)
+	Debugf("Profile names: %s", strings.Join(profileNames, ", "))
+
 	thm := ts.client.Theme
-	cfgJSON, err := buildConfigJSON(ts.server, ts.client, &thm)
+	cfgJSON, err := buildConfigJSON(ts.server, ts.client, &thm, themeNames, profileNames, ts.activeTheme)
 	if err != nil {
 		Errorf("config serialization error: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -382,22 +440,6 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Content-Security-Policy is set as an HTTP header (not a <meta> tag) so
-	// that it is enforced by the browser before any page content is parsed and
-	// cannot be modified by injected content.
-	//
-	// script-src: allow same-origin module scripts plus the one inline script
-	//   that sets window.B3TTY, identified by its per-request nonce.
-	//   'wasm-unsafe-eval' is required for xterm.js which uses WebAssembly
-	//   internally; it is more targeted than 'unsafe-eval' and does not permit
-	//   JS eval().
-	// style-src:  allow same-origin stylesheets plus 'unsafe-inline' for the
-	//   dynamic <style> element the JS injects for theme background gradients.
-	// connect-src 'self': covers same-origin fetch and ws:/wss: connections.
-	// frame-ancestors 'none': prevents the terminal from being embedded in an
-	//   iframe on any other page.
-	// base-uri 'self': blocks <base> tag injection that could redirect relative
-	//   URLs to an attacker-controlled origin.
 	csp := GetCSPHeaders()
 	csp.Get("script-src").Add("nonce-" + nonce)
 	w.Header().Set("Content-Security-Policy", csp.String())
@@ -406,7 +448,7 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	Debugf("config response body: %s", cfgPayload)
 	Debugf("title: %s", profile.Title)
 	Debugf("nonce: %s", nonce)
-	err = tmpl.Execute(w, Props{ConfigJSON: cfgPayload, Title: profile.Title, ProfileName: ts.profileName, Nonce: nonce})
+	err = tmpl.Execute(w, TemplateProps{ConfigJSON: cfgPayload, Title: profile.Title, ProfileName: ts.profileName, Nonce: nonce})
 	if err != nil {
 		Errorf("response error: %v", err)
 		return
@@ -427,24 +469,14 @@ func (ts *TerminalServer) renderSetupPage(w http.ResponseWriter) {
 	}
 }
 
-// themePaletteResponse is the JSON shape returned by themeHandler and consumed
-// by the B3ttyThemeSelector component to build palette preview cards.
-type themePaletteResponse struct {
-	Bg     string   `json:"bg"`
-	Fg     string   `json:"fg"`
-	SelBg  string   `json:"selBg"`
-	Normal []string `json:"normal"`
-	Bright []string `json:"bright"`
-}
-
 // themeNormalOrder and themeBrightOrder define the ANSI display order used by
 // the palette preview in the theme selector component.
 var themeNormalOrder = []string{"black", "red", "yellow", "green", "cyan", "blue", "magenta", "white"}
 var themeBrightOrder = []string{"bright-black", "bright-red", "bright-yellow", "bright-green", "bright-cyan", "bright-blue", "bright-magenta", "bright-white"}
 
-// themeHandler serves a GET /theme?name=<dark|light> request and returns a
+// themePaletteHandler serves a GET /theme?name=<dark|light> request and returns a
 // themePaletteResponse JSON payload shaped for the B3ttyThemeSelector component.
-func (ts *TerminalServer) themeHandler(w http.ResponseWriter, r *http.Request) {
+func (ts *TerminalServer) themePaletteHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "GET" {
 		Warnf("%s %s: method not allowed: %s", r.Method, r.URL.Path, r.Method)
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -479,12 +511,62 @@ func (ts *TerminalServer) themeHandler(w http.ResponseWriter, r *http.Request) {
 		Bg:     str("background"),
 		Fg:     str("foreground"),
 		SelBg:  str("selection-background"),
+		Cursor: str("cursor"),
 		Normal: normal,
 		Bright: bright,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		Errorf("theme response error: %v", err)
+	}
+}
+
+// themeConfigHandler serves GET and POST /theme-config?name=<themename>.
+//
+// GET returns the full theme color config and hasBackgroundImage flag without
+// side effects.
+//
+// POST additionally activates the named theme on the server (updating
+// ts.client.Theme) so that the /background endpoint immediately serves the
+// correct image and subsequent page loads receive the new theme. POST requires
+// a same-origin Sec-Fetch-Site header to prevent CSRF.
+func (ts *TerminalServer) themeConfigHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET", "POST":
+	default:
+		Warnf("%s %s: method not allowed: %s", r.Method, r.URL.Path, r.Method)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if r.Method == "POST" {
+		if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
+			Warnf("%s %s: forbidden: cross-origin request from Sec-Fetch-Site %q", r.Method, r.URL.Path, site)
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+	}
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		Warnf("%s %s: bad request: missing name parameter", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	theme, ok := ts.themes[name]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method == "POST" {
+		ts.client.Theme = theme
+		ts.activeTheme = name
+	}
+	resp := themeConfigResponse{
+		Theme:              theme,
+		HasBackgroundImage: theme.BackgroundImage != "",
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		Errorf("theme-config response error: %v", err)
 	}
 }
 
