@@ -121,11 +121,13 @@ func parseSizeParams(q url.Values) (uint16, uint16) {
 	return uint16(cols), uint16(rows)
 }
 
-// resolveProfileName returns the value of the "profile" query parameter when present,
-// or "default" when the parameter is absent or empty.
-func resolveProfileName(q url.Values) string {
+// resolveProfileName returns the value of the "profile" query parameter when present
+// and corresponding to a known profile, or DEFAULT_PROFILE_NAME otherwise.
+func resolveProfileName(q url.Values, profiles map[string]interface{}) string {
 	if p := q.Get("profile"); p != "" {
-		return p
+		if _, ok := profiles[p]; ok {
+			return p
+		}
 	}
 	return DEFAULT_PROFILE_NAME
 }
@@ -420,7 +422,7 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 		Fatal(err)
 	}
 
-	ts.ProfileName = resolveProfileName(query)
+	ts.ProfileName = resolveProfileName(query, ts.Profiles)
 	Debugf("resolved profile name: %s", ts.ProfileName)
 	profile := ts.Profiles[ts.ProfileName]
 
