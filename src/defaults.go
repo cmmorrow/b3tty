@@ -1,4 +1,4 @@
-package cmd
+package src
 
 const DEFAULT_TITLE = "b3tty"
 const DEFAULT_ROOT = "/"
@@ -10,3 +10,7 @@ const DEFAULT_COLS = 0
 const DEFAULT_FONT_FAMILY = "na"
 const DEFAULT_FONT_SIZE = 14
 const DEFAULT_CURSOR_BLINK = true
+const DEFAULT_PROFILE_NAME = "default"
+const BUFFER_SIZE = 4096
+const MAX_REQUEST_BODY_SIZE = 4096
+const TOKEN_LENGTH = 24

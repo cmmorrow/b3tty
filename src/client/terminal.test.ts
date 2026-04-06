@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, mock, spyOn } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import { Terminal } from "@xterm/xterm";
 import type { ITerminalInitOnlyOptions, ITerminalOptions } from "@xterm/xterm";
 import {
@@ -16,8 +16,11 @@ import {
     withAlpha,
     terminalFactory,
     buildDebugHooks,
+    requireElement,
 } from "./terminal.ts";
 import { isValidHttpProtocol, isValidWsProtocol, isValidPort, isValidUri, MAX_UINT16 } from "./validators.ts";
+import { isB3ttyDialog, isB3ttyMenuBar } from "./components.ts";
+import { isThemeActivateResponse } from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Shared mock factories
@@ -927,5 +930,214 @@ describe("initTerm", () => {
         expect(socket.send.mock.calls[0]![0]).toBe("a");
         expect(socket.send.mock.calls[1]![0]).toBe("b");
         expect(socket.send.mock.calls[2]![0]).toBe("c");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// requireElement
+// ---------------------------------------------------------------------------
+
+describe("requireElement", () => {
+    let savedDocument: unknown;
+
+    beforeEach(() => {
+        savedDocument = (globalThis as Record<string, unknown>)["document"];
+    });
+
+    afterEach(() => {
+        (globalThis as Record<string, unknown>)["document"] = savedDocument;
+    });
+
+    it("returns the element when getElementById finds it", () => {
+        const el = { id: "terminal" } as unknown as HTMLElement;
+        (globalThis as Record<string, unknown>)["document"] = {
+            getElementById: (id: string) => (id === "terminal" ? el : null),
+        };
+        expect(requireElement("terminal")).toBe(el);
+    });
+
+    it("throws when getElementById returns null", () => {
+        (globalThis as Record<string, unknown>)["document"] = {
+            getElementById: () => null,
+        };
+        expect(() => requireElement("missing")).toThrow("Required element #missing not found");
+    });
+
+    it("includes the element id in the error message", () => {
+        (globalThis as Record<string, unknown>)["document"] = {
+            getElementById: () => null,
+        };
+        expect(() => requireElement("dialog")).toThrow("#dialog");
+        expect(() => requireElement("bell")).toThrow("#bell");
+    });
+
+    it("returns different elements for different ids", () => {
+        const elA = { id: "a" } as unknown as HTMLElement;
+        const elB = { id: "b" } as unknown as HTMLElement;
+        (globalThis as Record<string, unknown>)["document"] = {
+            getElementById: (id: string) => (id === "a" ? elA : id === "b" ? elB : null),
+        };
+        expect(requireElement("a")).toBe(elA);
+        expect(requireElement("b")).toBe(elB);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// isB3ttyDialog
+// ---------------------------------------------------------------------------
+
+describe("isB3ttyDialog", () => {
+    it("returns true when the element has both show and hide methods", () => {
+        const el = { show: () => {}, hide: () => {} } as unknown as Element;
+        expect(isB3ttyDialog(el)).toBe(true);
+    });
+
+    it("returns false when show is missing", () => {
+        const el = { hide: () => {} } as unknown as Element;
+        expect(isB3ttyDialog(el)).toBe(false);
+    });
+
+    it("returns false when hide is missing", () => {
+        const el = { show: () => {} } as unknown as Element;
+        expect(isB3ttyDialog(el)).toBe(false);
+    });
+
+    it("returns false when both methods are missing", () => {
+        const el = {} as unknown as Element;
+        expect(isB3ttyDialog(el)).toBe(false);
+    });
+
+    it("returns false when show is a non-function value", () => {
+        const el = { show: "not a function", hide: () => {} } as unknown as Element;
+        expect(isB3ttyDialog(el)).toBe(false);
+    });
+
+    it("returns false when hide is a non-function value", () => {
+        const el = { show: () => {}, hide: 42 } as unknown as Element;
+        expect(isB3ttyDialog(el)).toBe(false);
+    });
+
+    it("narrows the type so show and hide are callable after the guard passes", () => {
+        const shown: string[] = [];
+        const el = {
+            show: (msg: string) => {
+                shown.push(msg);
+            },
+            hide: () => {},
+        } as unknown as Element;
+        if (isB3ttyDialog(el)) {
+            el.show("Connection closed");
+        }
+        expect(shown).toEqual(["Connection closed"]);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// isB3ttyMenuBar
+// ---------------------------------------------------------------------------
+
+describe("isB3ttyMenuBar", () => {
+    it("returns true when the element has both setup and updateColors methods", () => {
+        const el = { setup: () => {}, updateColors: () => {} } as unknown as Element;
+        expect(isB3ttyMenuBar(el)).toBe(true);
+    });
+
+    it("returns false when setup is missing", () => {
+        const el = { updateColors: () => {} } as unknown as Element;
+        expect(isB3ttyMenuBar(el)).toBe(false);
+    });
+
+    it("returns false when updateColors is missing", () => {
+        const el = { setup: () => {} } as unknown as Element;
+        expect(isB3ttyMenuBar(el)).toBe(false);
+    });
+
+    it("returns false when both methods are missing", () => {
+        const el = {} as unknown as Element;
+        expect(isB3ttyMenuBar(el)).toBe(false);
+    });
+
+    it("returns false when setup is a non-function value", () => {
+        const el = { setup: "not a function", updateColors: () => {} } as unknown as Element;
+        expect(isB3ttyMenuBar(el)).toBe(false);
+    });
+
+    it("returns false when updateColors is a non-function value", () => {
+        const el = { setup: () => {}, updateColors: true } as unknown as Element;
+        expect(isB3ttyMenuBar(el)).toBe(false);
+    });
+
+    it("narrows the type so setup and updateColors are callable after the guard passes", () => {
+        const calls: string[] = [];
+        const el = {
+            setup: () => {
+                calls.push("setup");
+            },
+            updateColors: () => {
+                calls.push("updateColors");
+            },
+        } as unknown as Element;
+        if (isB3ttyMenuBar(el)) {
+            el.setup([], [], { bg: "black", fg: "white" });
+            el.updateColors({ bg: "white", fg: "black" });
+        }
+        expect(calls).toEqual(["setup", "updateColors"]);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// isThemeActivateResponse
+// ---------------------------------------------------------------------------
+
+describe("isThemeActivateResponse", () => {
+    it("returns true for a valid response with hasBackgroundImage true", () => {
+        expect(isThemeActivateResponse({ hasBackgroundImage: true })).toBe(true);
+    });
+
+    it("returns true for a valid response with hasBackgroundImage false", () => {
+        expect(isThemeActivateResponse({ hasBackgroundImage: false })).toBe(true);
+    });
+
+    it("returns true when additional theme color fields are present", () => {
+        expect(
+            isThemeActivateResponse({
+                hasBackgroundImage: false,
+                foreground: "#ffffff",
+                background: "#000000",
+                cursor: "#cccccc",
+            })
+        ).toBe(true);
+    });
+
+    it("returns false for null", () => {
+        expect(isThemeActivateResponse(null)).toBe(false);
+    });
+
+    it("returns false for undefined", () => {
+        expect(isThemeActivateResponse(undefined)).toBe(false);
+    });
+
+    it("returns false for a plain string", () => {
+        expect(isThemeActivateResponse("dark")).toBe(false);
+    });
+
+    it("returns false for a number", () => {
+        expect(isThemeActivateResponse(42)).toBe(false);
+    });
+
+    it("returns false when hasBackgroundImage is absent", () => {
+        expect(isThemeActivateResponse({ foreground: "#ffffff" })).toBe(false);
+    });
+
+    it("returns false when hasBackgroundImage is a string instead of a boolean", () => {
+        expect(isThemeActivateResponse({ hasBackgroundImage: "true" })).toBe(false);
+    });
+
+    it("returns false when hasBackgroundImage is a number", () => {
+        expect(isThemeActivateResponse({ hasBackgroundImage: 1 })).toBe(false);
+    });
+
+    it("returns false for an empty object", () => {
+        expect(isThemeActivateResponse({})).toBe(false);
     });
 });

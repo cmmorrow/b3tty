@@ -45,6 +45,18 @@ export interface ThemeActivateResponse extends ThemeConfig {
     hasBackgroundImage: boolean;
 }
 
+/**
+ * Runtime type guard for ThemeActivateResponse. Validates the minimum required shape
+ * of a parsed JSON response before it is used as a ThemeActivateResponse.
+ */
+export function isThemeActivateResponse(val: unknown): val is ThemeActivateResponse {
+    return (
+        typeof val === "object" &&
+        val !== null &&
+        typeof (val as Record<string, unknown>)["hasBackgroundImage"] === "boolean"
+    );
+}
+
 export interface ClientConfig {
     cursorBlink: boolean;
     fontFamily: string;

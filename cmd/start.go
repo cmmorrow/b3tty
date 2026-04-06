@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"time"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
@@ -43,17 +45,28 @@ configuration. For additional security, b3tty supports TLS over https and wss.`,
 		if err := src.ValidateTheme(&theme); err != nil {
 			src.Fatalf("theme validation error: %v", err)
 		}
-		src.Profiles = profiles
-		src.InitClient = src.NewClient(&rows, &columns, &cursorBlink, &fontFamily, &fontSize, &theme)
-		src.InitServer = src.NewServer(&uri, &port, &noAuth, &src.TLS{CertFilePath: certFile, KeyFilePath: keyFile, Enabled: tls})
-		src.InitServer.FirstRun = !configFileFound
+		if !src.ValidatePortNumber(port) {
+			src.Fatalf("port number must be 1 - 65535")
+		}
 		if tls {
 			// Remap the default TLS port
 			if port == 8080 {
-				src.InitServer.Port = 8443
+				port = 8443
 			}
 		}
-		src.Serve(!noBrowser, tls)
+		ts := src.TerminalServer{
+			Client:      src.NewClient(&rows, &columns, &cursorBlink, &fontFamily, &fontSize, &theme),
+			Server:      src.NewServer(&uri, &port, &noAuth, &src.TLS{CertFilePath: certFile, KeyFilePath: keyFile, Enabled: tls}),
+			Profiles:    profiles,
+			Themes:      themes,
+			OrgCols:     src.DEFAULT_COLS,
+			OrgRows:     src.DEFAULT_ROWS,
+			ProfileName: src.DEFAULT_PROFILE_NAME,
+			ActiveTheme: activeThemeName,
+			FirstRun:    !configFileFound,
+			AuthSleep:   time.Sleep,
+		}
+		src.Serve(&ts, !noBrowser, tls)
 	},
 }
 
@@ -62,12 +75,12 @@ func init() {
 
 	// Setting these parameters from the command-line has been deprecated but can still
 	// be set from a config file.
-	uri = DEFAULT_URI
-	cursorBlink = DEFAULT_CURSOR_BLINK
-	fontFamily = DEFAULT_FONT_FAMILY
-	fontSize = DEFAULT_FONT_SIZE
-	startCmd.Flags().IntVar(&rows, "rows", DEFAULT_ROWS, "The number of lines displayed by the TTY.")
-	startCmd.Flags().IntVar(&columns, "columns", DEFAULT_COLS, "The character number width of the TTY. If 0, auto fit to the browser window size. (default 0)")
+	uri = src.DEFAULT_URI
+	cursorBlink = src.DEFAULT_CURSOR_BLINK
+	fontFamily = src.DEFAULT_FONT_FAMILY
+	fontSize = src.DEFAULT_FONT_SIZE
+	startCmd.Flags().IntVar(&rows, "rows", src.DEFAULT_ROWS, "The number of lines displayed by the TTY.")
+	startCmd.Flags().IntVar(&columns, "columns", src.DEFAULT_COLS, "The character number width of the TTY. If 0, auto fit to the browser window size. (default 0)")
 	startCmd.Flags().MarkHidden("rows")
 	startCmd.Flags().MarkHidden("columns")
 

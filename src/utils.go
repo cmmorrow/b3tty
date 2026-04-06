@@ -12,6 +12,9 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 var (
@@ -72,13 +75,22 @@ func validateTerminalDimension(dim int) bool {
 	return true
 }
 
+// ValidatePortNumber reports whether port is a valid TCP/UDP port number (1–65535).
+func ValidatePortNumber(port int) bool {
+	if port < 1 || port > 65535 {
+		return false
+	}
+	return true
+}
+
 // convertToFieldName converts a hyphenated string to a PascalCase (UpperCamelCase)
 // Go field name by splitting on hyphens and capitalising the first letter of each
 // part (e.g. "user-first-name" → "UserFirstName").
 func convertToFieldName(key string) string {
+	caser := cases.Title(language.English)
 	parts := strings.Split(key, "-")
 	for i, part := range parts {
-		parts[i] = strings.Title(part)
+		parts[i] = caser.String(part)
 	}
 	return strings.Join(parts, "")
 }

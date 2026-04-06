@@ -25,6 +25,24 @@ export interface B3ttyMenuBar {
     updateColors(colors: MenuBarColors): void;
 }
 
+/**
+ * Returns true when el exposes the B3ttyDialog contract (show/hide methods).
+ * Use this instead of `as unknown as B3ttyDialog` to preserve type safety.
+ */
+export function isB3ttyDialog(el: Element): el is HTMLElement & B3ttyDialog {
+    const r = el as unknown as Record<string, unknown>;
+    return typeof r["show"] === "function" && typeof r["hide"] === "function";
+}
+
+/**
+ * Returns true when el exposes the B3ttyMenuBar contract (setup/updateColors methods).
+ * Use this instead of `as unknown as B3ttyMenuBar` to preserve type safety.
+ */
+export function isB3ttyMenuBar(el: Element): el is HTMLElement & B3ttyMenuBar {
+    const r = el as unknown as Record<string, unknown>;
+    return typeof r["setup"] === "function" && typeof r["updateColors"] === "function";
+}
+
 if (typeof HTMLElement !== "undefined") {
     class B3ttyDialogImpl extends HTMLElement implements B3ttyDialog {
         constructor() {
@@ -104,6 +122,7 @@ if (typeof HTMLElement !== "undefined") {
 
     async function fetchPalette(name: string): Promise<Palette> {
         const res = await fetch(`/theme?name=${name}`);
+        if (!res.ok) throw new Error(`Failed to fetch palette for theme "${name}": ${res.status}`);
         return res.json() as Promise<Palette>;
     }
 
@@ -281,10 +300,14 @@ if (typeof HTMLElement !== "undefined") {
             options.className = "options";
             options.appendChild(skipCard());
 
-            Promise.all([fetchPalette("dark"), fetchPalette("light")]).then(([dark, light]) => {
-                options.prepend(paletteCard("light", "Light", light));
-                options.prepend(paletteCard("dark", "Dark", dark));
-            });
+            Promise.all([fetchPalette("dark"), fetchPalette("light")])
+                .then(([dark, light]) => {
+                    options.prepend(paletteCard("light", "Light", light));
+                    options.prepend(paletteCard("dark", "Dark", dark));
+                })
+                .catch(() => {
+                    // Palette cards remain absent; the user can still select "No theme".
+                });
 
             const okBtn = document.createElement("button");
             okBtn.className = "ok-btn";

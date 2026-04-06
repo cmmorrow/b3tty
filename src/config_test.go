@@ -192,6 +192,14 @@ unknown-key: true
 // buildConfigYAML
 // ---------------------------------------------------------------------------
 
+// mustBuildConfigYAML calls buildConfigYAML and fails the test on error.
+func mustBuildConfigYAML(t *testing.T, themeName string, colors map[string]any) string {
+	t.Helper()
+	out, err := buildConfigYAML(themeName, colors)
+	require.NoError(t, err)
+	return out
+}
+
 // parseConfigYAML is a test helper that unmarshals the output of buildConfigYAML
 // into a generic map so tests can inspect values without relying on string layout.
 func parseConfigYAML(t *testing.T, s string) map[string]any {
@@ -203,7 +211,7 @@ func parseConfigYAML(t *testing.T, s string) map[string]any {
 
 func TestBuildConfigYAML(t *testing.T) {
 	t.Run("theme name appears at top level and under themes", func(t *testing.T) {
-		out := parseConfigYAML(t, buildConfigYAML("dark", map[string]any{
+		out := parseConfigYAML(t, mustBuildConfigYAML(t, "dark", map[string]any{
 			"foreground": "#ffffff",
 		}))
 		assert.Equal(t, "dark", out["theme"])
@@ -219,7 +227,7 @@ func TestBuildConfigYAML(t *testing.T) {
 			"bright-red":           "#ff5555",
 			"selection-background": "#44475a",
 		}
-		out := parseConfigYAML(t, buildConfigYAML("my-theme", colors))
+		out := parseConfigYAML(t, mustBuildConfigYAML(t, "my-theme", colors))
 		themes := out["themes"].(map[string]any)
 		palette := themes["my-theme"].(map[string]any)
 		for k, v := range colors {
@@ -229,14 +237,14 @@ func TestBuildConfigYAML(t *testing.T) {
 
 	t.Run("hex colors starting with # are valid YAML", func(t *testing.T) {
 		// A bare # in YAML begins an inline comment; yaml.v3 must quote it.
-		yaml := buildConfigYAML("dark", map[string]any{"foreground": "#aabbcc"})
-		out := parseConfigYAML(t, yaml)
+		yamlOut := mustBuildConfigYAML(t, "dark", map[string]any{"foreground": "#aabbcc"})
+		out := parseConfigYAML(t, yamlOut)
 		palette := out["themes"].(map[string]any)["dark"].(map[string]any)
 		assert.Equal(t, "#aabbcc", palette["foreground"])
 	})
 
 	t.Run("empty color map produces valid YAML with empty theme block", func(t *testing.T) {
-		out := parseConfigYAML(t, buildConfigYAML("light", map[string]any{}))
+		out := parseConfigYAML(t, mustBuildConfigYAML(t, "light", map[string]any{}))
 		assert.Equal(t, "light", out["theme"])
 		themes := out["themes"].(map[string]any)
 		assert.Contains(t, themes, "light")
@@ -249,14 +257,14 @@ func TestBuildConfigYAML(t *testing.T) {
 			"red":        "#eb5a4b",
 			"bright-red": "#ee837b",
 		}
-		yaml := buildConfigYAML("b3tty_dark", colors)
-		path := writeTempConfig(t, yaml)
+		yamlOut := mustBuildConfigYAML(t, "b3tty_dark", colors)
+		path := writeTempConfig(t, yamlOut)
 		assert.NoError(t, ValidateConfig(path))
 	})
 
 	t.Run("different theme names produce distinct sections", func(t *testing.T) {
-		outA := parseConfigYAML(t, buildConfigYAML("alpha", map[string]any{"foreground": "#111111"}))
-		outB := parseConfigYAML(t, buildConfigYAML("beta", map[string]any{"foreground": "#222222"}))
+		outA := parseConfigYAML(t, mustBuildConfigYAML(t, "alpha", map[string]any{"foreground": "#111111"}))
+		outB := parseConfigYAML(t, mustBuildConfigYAML(t, "beta", map[string]any{"foreground": "#222222"}))
 		assert.Equal(t, "alpha", outA["theme"])
 		assert.Equal(t, "beta", outB["theme"])
 		assert.Contains(t, outA["themes"].(map[string]any), "alpha")
@@ -269,7 +277,7 @@ func TestBuildConfigYAML(t *testing.T) {
 			"count":      float64(3),
 			"flag":       true,
 		}
-		out := parseConfigYAML(t, buildConfigYAML("dark", colors))
+		out := parseConfigYAML(t, mustBuildConfigYAML(t, "dark", colors))
 		palette := out["themes"].(map[string]any)["dark"].(map[string]any)
 		assert.Equal(t, "#ffffff", palette["foreground"])
 		assert.NotContains(t, palette, "count")
@@ -282,7 +290,7 @@ func TestBuildConfigYAML(t *testing.T) {
 			"background": "rgb(0,0,0)",
 			"red":        "not#valid",
 		}
-		out := parseConfigYAML(t, buildConfigYAML("dark", colors))
+		out := parseConfigYAML(t, mustBuildConfigYAML(t, "dark", colors))
 		palette := out["themes"].(map[string]any)["dark"].(map[string]any)
 		assert.Equal(t, "#ffffff", palette["foreground"])
 		assert.NotContains(t, palette, "background")
@@ -296,7 +304,7 @@ func TestBuildConfigYAML(t *testing.T) {
 			"red":        "#gggggg", // invalid hex chars — dropped
 			"green":      42,        // non-string — dropped
 		}
-		out := parseConfigYAML(t, buildConfigYAML("mixed", colors))
+		out := parseConfigYAML(t, mustBuildConfigYAML(t, "mixed", colors))
 		palette := out["themes"].(map[string]any)["mixed"].(map[string]any)
 		assert.Equal(t, "#aabbcc", palette["foreground"])
 		assert.Equal(t, "white", palette["background"])
