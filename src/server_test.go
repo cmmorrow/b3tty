@@ -198,43 +198,50 @@ func TestResolveProfileName(t *testing.T) {
 	tests := []struct {
 		name     string
 		query    url.Values
+		profiles map[string]Profile
 		expected string
 	}{
 		{
 			name:     "profile param present returns its value",
 			query:    queryWith("profile", "work"),
+			profiles: map[string]Profile{"work": {}},
 			expected: "work",
 		},
 		{
 			name:     "absent profile param returns 'default'",
 			query:    url.Values{},
+			profiles: map[string]Profile{},
 			expected: "default",
 		},
 		{
 			name:     "empty profile param returns 'default'",
 			query:    queryWith("profile", ""),
+			profiles: map[string]Profile{},
 			expected: "default",
 		},
 		{
-			name:     "profile with whitespace is returned as-is",
+			name:     "unknown profile returns 'default'",
 			query:    queryWith("profile", " dev "),
-			expected: " dev ",
+			profiles: map[string]Profile{},
+			expected: "default",
 		},
 		{
 			name:     "profile param with other params present",
 			query:    queryWith("token", "abc", "profile", "staging"),
+			profiles: map[string]Profile{"staging": {}},
 			expected: "staging",
 		},
 		{
 			name:     "profile name with hyphens",
 			query:    queryWith("profile", "my-profile"),
+			profiles: map[string]Profile{"my-profile": {}},
 			expected: "my-profile",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, resolveProfileName(tt.query))
+			assert.Equal(t, tt.expected, resolveProfileName(tt.query, tt.profiles))
 		})
 	}
 }

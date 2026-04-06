@@ -123,7 +123,7 @@ func parseSizeParams(q url.Values) (uint16, uint16) {
 
 // resolveProfileName returns the value of the "profile" query parameter when present
 // and corresponding to a known profile, or DEFAULT_PROFILE_NAME otherwise.
-func resolveProfileName(q url.Values, profiles map[string]interface{}) string {
+func resolveProfileName(q url.Values, profiles map[string]Profile) string {
 	if p := q.Get("profile"); p != "" {
 		if _, ok := profiles[p]; ok {
 			return p
