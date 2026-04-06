@@ -1,16 +1,20 @@
 package src
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
+	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"text/template"
 	"time"
 
@@ -18,10 +22,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const DEFAULT_PROFILE_NAME = "default"
-const DEFAULT_COLS = 80
-const DEFAULT_ROWS = 24
-const BUFFER_SIZE = 4096
+// const DEFAULT_COLS = 80
+// const DEFAULT_ROWS = 24
 
 //go:embed assets
 var assets embed.FS
@@ -38,17 +40,11 @@ var defaultDarkThemeJSON []byte
 //go:embed default_themes/b3tty_light.json
 var defaultLightThemeJSON []byte
 
-// defaultDarkTheme and defaultLightTheme are the colour maps used both to
+// defaultDarkTheme and defaultLightTheme are the color maps used both to
 // update ts.client.Theme in memory (via MapToTheme) and to write the YAML
 // config file. Keys use the hyphenated form expected by MapToTheme.
 var defaultDarkTheme = mustUnmarshalTheme(defaultDarkThemeJSON)
 var defaultLightTheme = mustUnmarshalTheme(defaultLightThemeJSON)
-
-var InitClient *Client
-var InitServer *Server
-var Profiles map[string]Profile
-var Themes map[string]Theme
-var ActiveThemeName string
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:    BUFFER_SIZE,
@@ -74,21 +70,21 @@ var upgrader = websocket.Upgrader{
 // TerminalServer bundles all mutable per-session state used by the HTTP handlers,
 // making them independent of package-level globals and straightforward to test.
 type TerminalServer struct {
-	client         *Client
-	server         *Server
-	profiles       map[string]Profile
-	themes         map[string]Theme
-	token          string
-	orgCols        uint16
-	orgRows        uint16
-	profileName    string
-	activeTheme    string
-	failedAttempts int
-	firstRun       bool
-	backoffMu      sync.Mutex
-	// authSleep is the function used to pause on auth failures. It defaults to
+	Client         *Client
+	Server         *Server
+	Profiles       map[string]Profile
+	Themes         map[string]Theme
+	Token          string
+	OrgCols        uint16
+	OrgRows        uint16
+	ProfileName    string
+	ActiveTheme    string
+	FailedAttempts int
+	FirstRun       bool
+	BackoffMu      sync.Mutex
+	// AuthSleep is the function used to pause on auth failures. It defaults to
 	// time.Sleep and can be replaced in tests with a no-op to avoid real delays.
-	authSleep func(time.Duration)
+	AuthSleep func(time.Duration)
 }
 
 const (
@@ -213,20 +209,20 @@ func GetCSPHeaders() CSPHeaders {
 
 // Serve wires up the HTTP mux and starts the server. It creates a TerminalServer from
 // the package-level InitClient, InitServer, and Profiles variables set by the cmd layer.
-func Serve(shouldOpenBrowser bool, useTLS bool) {
+func Serve(ts *TerminalServer, shouldOpenBrowser bool, useTLS bool) {
 	Debug("starting b3tty server....")
-	ts := &TerminalServer{
-		client:      InitClient,
-		server:      InitServer,
-		profiles:    Profiles,
-		themes:      Themes,
-		orgCols:     DEFAULT_COLS,
-		orgRows:     DEFAULT_ROWS,
-		profileName: DEFAULT_PROFILE_NAME,
-		activeTheme: ActiveThemeName,
-		firstRun:    InitServer.FirstRun,
-		authSleep:   time.Sleep,
-	}
+	// ts := &TerminalServer{
+	// 	client:      InitClient,
+	// 	server:      InitServer,
+	// 	profiles:    Profiles,
+	// 	themes:      Themes,
+	// 	orgCols:     DEFAULT_COLS,
+	// 	orgRows:     DEFAULT_ROWS,
+	// 	profileName: DEFAULT_PROFILE_NAME,
+	// 	activeTheme: ActiveThemeName,
+	// 	firstRun:    InitServer.FirstRun,
+	// 	authSleep:   time.Sleep,
+	// }
 
 	var err error
 	var tokenQuery = ""
@@ -236,16 +232,16 @@ func Serve(shouldOpenBrowser bool, useTLS bool) {
 		protocol = "https"
 	}
 
-	Debugf("no-auth mode: %v", ts.server.NoAuth)
-	if !ts.server.NoAuth {
-		ts.token, err = generateToken(24)
+	Debugf("no-auth mode: %v", ts.Server.NoAuth)
+	if !ts.Server.NoAuth {
+		ts.Token, err = generateToken(TOKEN_LENGTH)
 		if err != nil {
 			Fatalf("error generating token: %v", err)
 		}
-		tokenQuery = "?token=" + ts.token
+		tokenQuery = "?token=" + ts.Token
 	}
 
-	addr := ts.server.Addr().Host
+	addr := ts.Server.Addr().Host
 	uiUrl := protocol + "://" + addr + "/" + tokenQuery
 
 	Debugf("open-browser on start up: %v", shouldOpenBrowser)
@@ -260,7 +256,7 @@ func Serve(shouldOpenBrowser bool, useTLS bool) {
 	Infof("%s server started on %s", protocol, Bold(uiUrl))
 
 	// Display the available profiles in the config file
-	if len(ts.profiles) > 1 {
+	if len(ts.Profiles) > 1 {
 		Info("Configured profiles:")
 		var prfQuery string
 		if len(tokenQuery) > 0 {
@@ -269,8 +265,8 @@ func Serve(shouldOpenBrowser bool, useTLS bool) {
 			prfQuery = "?profile="
 		}
 		// Collect and sort non-default profile names for consistent output.
-		names := make([]string, 0, len(ts.profiles)-1)
-		for prf := range ts.profiles {
+		names := make([]string, 0, len(ts.Profiles)-1)
+		for prf := range ts.Profiles {
 			if prf != DEFAULT_PROFILE_NAME {
 				names = append(names, prf)
 			}
@@ -284,7 +280,7 @@ func Serve(shouldOpenBrowser bool, useTLS bool) {
 			}
 		}
 		for _, prf := range names {
-			profile := ts.profiles[prf]
+			profile := ts.Profiles[prf]
 			url := uiUrl + prfQuery + prf
 			// Pad using the plain name length so ANSI codes in BoldGreen don't
 			// inflate the width and break column alignment.
@@ -309,14 +305,31 @@ func Serve(shouldOpenBrowser bool, useTLS bool) {
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
-	Debugf("use TLS: %v", useTLS)
-	if useTLS {
-		err = httpServer.ListenAndServeTLS(ts.server.CertFilePath, ts.server.KeyFilePath)
-	} else {
-		err = httpServer.ListenAndServe()
-	}
-	if err != nil {
-		Fatalf("%s server error: %v", protocol, err)
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	serverErr := make(chan error, 1)
+	go func() {
+		Debugf("use TLS: %v", useTLS)
+		if useTLS {
+			serverErr <- httpServer.ListenAndServeTLS(ts.Server.CertFilePath, ts.Server.KeyFilePath)
+		} else {
+			serverErr <- httpServer.ListenAndServe()
+		}
+	}()
+
+	select {
+	case err = <-serverErr:
+		if err != nil && err != http.ErrServerClosed {
+			Fatalf("%s server error: %v", protocol, err)
+		}
+	case sig := <-quit:
+		Infof("received signal %v, shutting down...", sig)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err = httpServer.Shutdown(ctx); err != nil {
+			Fatalf("server shutdown error: %v", err)
+		}
 	}
 }
 
@@ -341,9 +354,9 @@ func (ts *TerminalServer) setSizeHandler(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
-	ts.orgCols, ts.orgRows = parseSizeParams(r.URL.Query())
-	Debugf("extracted cols: %d", ts.orgCols)
-	Debugf("extracted rows: %d", ts.orgRows)
+	ts.OrgCols, ts.OrgRows = parseSizeParams(r.URL.Query())
+	Debugf("extracted cols: %d", ts.OrgCols)
+	Debugf("extracted rows: %d", ts.OrgRows)
 }
 
 // displayTermHandler validates the auth token, selects the active profile, serialises
@@ -369,19 +382,19 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 
 	query := r.URL.Query()
 
-	if !validateToken(query.Get("token"), ts.token) {
+	if !validateToken(query.Get("token"), ts.Token) {
 		// Only apply backoff when auth is enabled (token is non-empty). In no-auth
 		// mode ts.token is always "" and validateToken always passes, so this branch
 		// is only reachable in auth mode — but the guard makes the intent explicit.
-		if ts.token != "" {
+		if ts.Token != "" {
 			Debug("requesting mutex lock")
-			ts.backoffMu.Lock()
-			ts.failedAttempts++
-			delay := authBackoffDelay(ts.failedAttempts)
-			Debug("requesting mutex unlock")
-			ts.backoffMu.Unlock()
-			Warnf("%s %s: forbidden: invalid or missing token (attempt %d, delay %s)", r.Method, r.URL.Path, ts.failedAttempts, delay)
-			ts.authSleep(delay)
+			ts.BackoffMu.Lock()
+			ts.FailedAttempts++
+			delay := authBackoffDelay(ts.FailedAttempts)
+			ts.BackoffMu.Unlock()
+			Debug("mutex unlocked")
+			Warnf("%s %s: forbidden: invalid or missing token (attempt %d, delay %s)", r.Method, r.URL.Path, ts.FailedAttempts, delay)
+			ts.AuthSleep(delay)
 		} else {
 			Warnf("%s %s: forbidden: invalid or missing token", r.Method, r.URL.Path)
 		}
@@ -390,12 +403,12 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	Debug("requesting mutex lock")
-	ts.backoffMu.Lock()
-	ts.failedAttempts = 0
-	Debug("requesting mutex unlock")
-	ts.backoffMu.Unlock()
+	ts.BackoffMu.Lock()
+	ts.FailedAttempts = 0
+	ts.BackoffMu.Unlock()
+	Debug("mutex unlocked")
 
-	if ts.firstRun {
+	if ts.FirstRun {
 		Debug("serving first run page....")
 		ts.renderSetupPage(w)
 		return
@@ -407,26 +420,26 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 		Fatal(err)
 	}
 
-	ts.profileName = resolveProfileName(query)
-	Debugf("resolved profile name: %s", ts.profileName)
-	profile := ts.profiles[ts.profileName]
+	ts.ProfileName = resolveProfileName(query)
+	Debugf("resolved profile name: %s", ts.ProfileName)
+	profile := ts.Profiles[ts.ProfileName]
 
-	themeNames := make([]string, 0, len(ts.themes))
-	for name := range ts.themes {
+	themeNames := make([]string, 0, len(ts.Themes))
+	for name := range ts.Themes {
 		themeNames = append(themeNames, name)
 	}
 	sort.Strings(themeNames)
 	Debugf("Theme names: %s", strings.Join(themeNames, ", "))
 
-	profileNames := make([]string, 0, len(ts.profiles))
-	for name := range ts.profiles {
+	profileNames := make([]string, 0, len(ts.Profiles))
+	for name := range ts.Profiles {
 		profileNames = append(profileNames, name)
 	}
 	sort.Strings(profileNames)
 	Debugf("Profile names: %s", strings.Join(profileNames, ", "))
 
-	thm := ts.client.Theme
-	cfgJSON, err := buildConfigJSON(ts.server, ts.client, &thm, themeNames, profileNames, ts.activeTheme)
+	thm := ts.Client.Theme
+	cfgJSON, err := buildConfigJSON(ts.Server, ts.Client, &thm, themeNames, profileNames, ts.ActiveTheme)
 	if err != nil {
 		Errorf("config serialization error: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -448,7 +461,7 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	Debugf("config response body: %s", cfgPayload)
 	Debugf("title: %s", profile.Title)
 	Debugf("nonce: %s", nonce)
-	err = tmpl.Execute(w, TemplateProps{ConfigJSON: cfgPayload, Title: profile.Title, ProfileName: ts.profileName, Nonce: nonce})
+	err = tmpl.Execute(w, TemplateProps{ConfigJSON: cfgPayload, Title: profile.Title, ProfileName: ts.ProfileName, Nonce: nonce})
 	if err != nil {
 		Errorf("response error: %v", err)
 		return
@@ -515,10 +528,14 @@ func (ts *TerminalServer) themePaletteHandler(w http.ResponseWriter, r *http.Req
 		Normal: normal,
 		Bright: bright,
 	}
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
+	buf, err := json.Marshal(resp)
+	if err != nil {
 		Errorf("theme response error: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(buf)
 }
 
 // themeConfigHandler serves GET and POST /theme-config?name=<themename>.
@@ -551,14 +568,14 @@ func (ts *TerminalServer) themeConfigHandler(w http.ResponseWriter, r *http.Requ
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	theme, ok := ts.themes[name]
+	theme, ok := ts.Themes[name]
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
 	if r.Method == "POST" {
-		ts.client.Theme = theme
-		ts.activeTheme = name
+		ts.Client.Theme = theme
+		ts.ActiveTheme = name
 	}
 	resp := themeConfigResponse{
 		Theme:              theme,
@@ -574,7 +591,7 @@ func (ts *TerminalServer) themeConfigHandler(w http.ResponseWriter, r *http.Requ
 // field ("dark", "light", or "skip"). For dark/light, it writes a default config
 // file to $HOME/.config/b3tty/conf.yaml. Sets firstRun to false on success.
 func (ts *TerminalServer) saveConfigHandler(w http.ResponseWriter, r *http.Request) {
-	if !ts.firstRun {
+	if !ts.FirstRun {
 		http.NotFound(w, r)
 		return
 	}
@@ -592,7 +609,7 @@ func (ts *TerminalServer) saveConfigHandler(w http.ResponseWriter, r *http.Reque
 	var req struct {
 		Theme string `json:"theme"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, MAX_REQUEST_BODY_SIZE)).Decode(&req); err != nil {
 		Warn("request body size exceeding limit")
 		w.WriteHeader(http.StatusBadRequest)
 		return
@@ -613,18 +630,18 @@ func (ts *TerminalServer) saveConfigHandler(w http.ResponseWriter, r *http.Reque
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		ts.client.Theme.MapToTheme(themeColors)
+		ts.Client.Theme.MapToTheme(themeColors)
 		Infof("created default %s theme config", req.Theme)
 	}
 
-	ts.firstRun = false
+	ts.FirstRun = false
 	w.WriteHeader(http.StatusOK)
 }
 
 // backgroundHandler serves the configured background image file, if any.
 // Returns 404 when no background image is configured or the file cannot be found.
 func (ts *TerminalServer) backgroundHandler(w http.ResponseWriter, r *http.Request) {
-	imagePath := ts.client.Theme.BackgroundImage
+	imagePath := ts.Client.Theme.BackgroundImage
 	if imagePath == "" {
 		http.NotFound(w, r)
 		return
@@ -649,7 +666,7 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 	}
 	defer ws.Close()
 
-	profile := ts.profiles[ts.profileName]
+	profile := ts.Profiles[ts.ProfileName]
 
 	// Start the active profile's shell via /bin/sh -c so that shell flags and
 	// paths are handled uniformly regardless of the configured shell binary.
@@ -661,8 +678,8 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	windowSize := &pty.Winsize{
-		Cols: ts.orgCols,
-		Rows: ts.orgRows,
+		Cols: ts.OrgCols,
+		Rows: ts.OrgRows,
 	}
 
 	Debugf("cols: %d", windowSize.Cols)
@@ -709,7 +726,10 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 						continue
 					}
 					Debugf("resizing to %d, %d", cols, rows)
-					pty.Setsize(ptmx, &pty.Winsize{Cols: cols, Rows: rows})
+					err = pty.Setsize(ptmx, &pty.Winsize{Cols: cols, Rows: rows})
+					if err != nil {
+						Errorf("error calling pty resize: %v", err)
+					}
 					continue
 				}
 			}

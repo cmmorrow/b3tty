@@ -76,6 +76,18 @@ func TestValidateTheme(t *testing.T) {
 	})
 }
 
+func TestValidatePortNumber(t *testing.T) {
+	valid := []int{1, 80, 443, 8080, 8443, 65535}
+	for _, p := range valid {
+		assert.True(t, ValidatePortNumber(p), "expected valid: %d", p)
+	}
+
+	invalid := []int{0, -1, -1000, 65536, 100000}
+	for _, p := range invalid {
+		assert.False(t, ValidatePortNumber(p), "expected invalid: %d", p)
+	}
+}
+
 func TestValidateTerminalDimension(t *testing.T) {
 	assert.True(t, validateTerminalDimension(0))
 	assert.True(t, validateTerminalDimension(80))

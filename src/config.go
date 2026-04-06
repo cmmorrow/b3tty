@@ -79,7 +79,7 @@ type profileConfig struct {
 
 // buildConfigYAML produces a conf.yaml string for the given theme name and color map.
 // Keys in colors use the hyphenated form expected by MapToTheme (e.g. "bright-red").
-func buildConfigYAML(themeName string, colors map[string]any) string {
+func buildConfigYAML(themeName string, colors map[string]any) (string, error) {
 	themeColors := make(map[string]string, len(colors))
 	for k, v := range colors {
 		if s, ok := v.(string); ok && ValidateThemeColor(s) {
@@ -95,9 +95,9 @@ func buildConfigYAML(themeName string, colors map[string]any) string {
 	}
 	out, err := yaml.Marshal(cfg)
 	if err != nil {
-		panic("buildConfigYAML: " + err.Error())
+		return "", fmt.Errorf("buildConfigYAML: %w", err)
 	}
-	return string(out)
+	return string(out), nil
 }
 
 // WriteDefaultConfig writes a default theme config file to $HOME/.config/b3tty/conf.yaml.
@@ -110,8 +110,12 @@ func WriteDefaultConfig(themeName string, colors map[string]any) error {
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return err
 	}
+	yaml, err := buildConfigYAML(themeName, colors)
+	if err != nil {
+		return err
+	}
 	configPath := filepath.Join(configDir, CONFIG_FILE_NAME)
-	return os.WriteFile(configPath, []byte(buildConfigYAML(themeName, colors)), 0644)
+	return os.WriteFile(configPath, []byte(yaml), 0644)
 }
 
 // ValidateConfig opens the YAML file at path, decodes it into typed structs

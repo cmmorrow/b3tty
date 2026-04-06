@@ -19,6 +19,7 @@ PACKAGE_VERSION=$(shell cat VERSION)
 # Build flags
 BUILD_FLAGS=-v -ldflags="-X 'github.com/cmmorrow/b3tty/cmd.Version=$(PACKAGE_VERSION)'"
 # BUILD_FLAGS=-v -ldflags="-X 'github.com/cmmorrow/b3tty/cmd.Version=test'"
+.PHONY: all format format-check client build test clean run deps tidy build-linux build-freebsd build-mac
 
 all: test build
 
@@ -61,5 +62,3 @@ build-freebsd:
 
 build-mac:
 	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GOBUILD) $(BUILD_FLAGS) -o $(BINARY_NAME)_mac $(MAIN_PACKAGE)
-
-.PHONY: all format format-check client build test clean run deps tidy build-linux build-freebsd build-mac

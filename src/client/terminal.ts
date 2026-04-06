@@ -13,9 +13,11 @@ import type {
     ClientConfig,
     ThemeConfig,
 } from "./types.ts";
+import { isThemeActivateResponse } from "./types.ts";
 import { isValidHttpProtocol, isValidWsProtocol, isValidPort, isValidUri } from "./validators.ts";
 import "./components.ts";
 import type { B3ttyDialog, B3ttyMenuBar } from "./components.ts";
+import { isB3ttyDialog, isB3ttyMenuBar } from "./components.ts";
 
 export const THEME_KEYS = [
     "foreground",
@@ -199,6 +201,17 @@ export function sendResizeMessage(socket: SocketLike, cols: number, rows: number
 }
 
 /**
+ * Returns the element with the given id or throws a descriptive error if it is absent.
+ * Prefer this over getElementById(id)! so missing elements produce clear failure messages
+ * rather than cryptic null-dereference errors deep inside a handler.
+ */
+export function requireElement(id: string): HTMLElement {
+    const el = document.getElementById(id);
+    if (!el) throw new Error(`Required element #${id} not found`);
+    return el;
+}
+
+/**
  * Constructs and returns a configured xterm.js Terminal from the given TermConfig.
  *
  * Builds the xterm.js theme from config.theme. When a background image is active,
@@ -260,7 +273,7 @@ export function initTerm(
  * solid background color and the body/style-element overrides are cleared.
  */
 function applyThemeStyles(theme: { background?: string; foreground?: string }, hasBackgroundImage: boolean): void {
-    const containerEl = document.getElementById("container")!;
+    const containerEl = requireElement("container");
 
     if (hasBackgroundImage) {
         const bgColor = withAlpha(theme.background || "", 0.5);
@@ -279,7 +292,7 @@ function applyThemeStyles(theme: { background?: string; foreground?: string }, h
         containerEl.style.background = theme.background || "";
     }
 
-    const profileEl = document.getElementById("profile")!;
+    const profileEl = requireElement("profile");
     if (profileEl.textContent?.trim()) {
         profileEl.style.color = theme.foreground || "white";
         profileEl.style.background = hasBackgroundImage ? "" : theme.background || "black";
@@ -315,7 +328,9 @@ export async function handleThemeChange(
     if (name === activeTheme.current) return;
     const res = await fetch(`/theme-config?name=${encodeURIComponent(name)}`, { method: "POST" });
     if (!res.ok) return;
-    const newTheme = (await res.json()) as ThemeActivateResponse;
+    const parsed: unknown = await res.json();
+    if (!isThemeActivateResponse(parsed)) return;
+    const newTheme = parsed;
 
     const builtTheme = buildTheme(newTheme);
     if (newTheme.hasBackgroundImage) {
@@ -363,8 +378,7 @@ export async function main(config: TermConfig): Promise<void> {
     applyPageStyles(config);
 
     const term = terminalFactory(config);
-    const termElement = document.getElementById("terminal")!;
-    term.open(termElement);
+    term.open(requireElement("terminal"));
 
     let fitAddon: FitAddon | undefined;
     if (!config.columns) {
@@ -377,11 +391,16 @@ export async function main(config: TermConfig): Promise<void> {
     term.loadAddon(new ImageAddon());
 
     const sizeUrl = buildSizeUrl(httpProto, config.uri, config.port, term.cols, term.rows);
-    await fetch(sizeUrl, { method: "POST" });
+    const sizeRes = await fetch(sizeUrl, { method: "POST" });
+    if (!sizeRes.ok) console.warn(`Failed to set terminal size: ${sizeRes.status}`);
 
     const wsUrl = buildWsUrl(wsProtocol, config.uri, config.port);
     const socket = new WebSocket(wsUrl);
     socket.binaryType = "arraybuffer";
+
+    // listenerController cleans up all DOM event listeners when the session ends.
+    const listenerController = new AbortController();
+    const { signal } = listenerController;
 
     const decoder = new TextDecoder("utf-8");
     const { onBeforeSend, writeCallback } = buildDebugHooks(!!config.debug);
@@ -393,31 +412,41 @@ export async function main(config: TermConfig): Promise<void> {
         handleSocketMessage(event as SocketMessageEvent, decoder, term, writeCallback);
     };
 
-    const dialog = document.getElementById("dialog") as unknown as B3ttyDialog;
+    const dialogEl = requireElement("dialog");
+    if (!isB3ttyDialog(dialogEl)) throw new Error("Element #dialog is not a B3ttyDialog");
+    const dialog: B3ttyDialog = dialogEl;
     socket.onclose = (event) => {
+        listenerController.abort();
         disableCursor(term);
         handleSocketClose(term, (msg) => dialog.show(msg), event.wasClean);
     };
     socket.onerror = (event) => console.log("A socket error occurred: ", event);
     socket.onopen = () => console.log("Socket opened");
 
-    const bellElement = document.getElementById("bell")!;
+    const bellElement = requireElement("bell");
     initTerm(term, socket, bellElement, onBeforeSend);
 
     const menuBarEl = document.getElementById("menubar");
     if (menuBarEl && (config.themeNames?.length || config.profileNames?.length)) {
-        const menuBar = menuBarEl as unknown as B3ttyMenuBar;
+        if (!isB3ttyMenuBar(menuBarEl)) throw new Error("Element #menubar is not a B3ttyMenuBar");
+        const menuBar: B3ttyMenuBar = menuBarEl;
         menuBar.setup(config.themeNames ?? [], config.profileNames ?? [], {
             bg: config.theme.foreground || "white",
             fg: config.theme.background || "black",
         });
 
-        menuBarEl.addEventListener("b3tty-menubar-open", () => requestAnimationFrame(() => fitAddon?.fit()));
-        menuBarEl.addEventListener("b3tty-menubar-close", () => requestAnimationFrame(() => fitAddon?.fit()));
+        menuBarEl.addEventListener("b3tty-menubar-open", () => requestAnimationFrame(() => fitAddon?.fit()), {
+            signal,
+        });
+        menuBarEl.addEventListener("b3tty-menubar-close", () => requestAnimationFrame(() => fitAddon?.fit()), {
+            signal,
+        });
 
         const activeTheme = { current: config.activeTheme ?? "" };
-        menuBarEl.addEventListener("b3tty-theme-change", (e) => handleThemeChange(e, term, menuBar, activeTheme));
-        menuBarEl.addEventListener("b3tty-profile-change", handleProfileChange);
+        menuBarEl.addEventListener("b3tty-theme-change", (e) => handleThemeChange(e, term, menuBar, activeTheme), {
+            signal,
+        });
+        menuBarEl.addEventListener("b3tty-profile-change", handleProfileChange, { signal });
     }
 
     if (!config.columns) {
@@ -426,10 +455,14 @@ export async function main(config: TermConfig): Promise<void> {
         });
 
         let resizeTimer: ReturnType<typeof setTimeout>;
-        window.addEventListener("resize", () => {
-            clearTimeout(resizeTimer);
-            resizeTimer = setTimeout(() => fitAddon!.fit(), 100);
-        });
+        window.addEventListener(
+            "resize",
+            () => {
+                clearTimeout(resizeTimer);
+                resizeTimer = setTimeout(() => fitAddon!.fit(), 100);
+            },
+            { signal }
+        );
     }
 }
 

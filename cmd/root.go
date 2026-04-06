@@ -14,6 +14,8 @@ var Version = "latest"
 var cfgFile string
 var profiles map[string]src.Profile
 var configFileFound bool
+var activeThemeName string
+var themes = make(map[string]src.Theme)
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -59,7 +61,7 @@ func init() {
 // initConfig reads in config file and ENV variables if set.
 func initConfig() {
 	profiles = make(map[string]src.Profile)
-	profiles["default"] = src.NewProfile(DEFAULT_SHELL, DEFAULT_WORKING_DIRECTORY, DEFAULT_ROOT, DEFAULT_TITLE, []string{})
+	profiles[src.DEFAULT_PROFILE_NAME] = src.NewProfile(src.DEFAULT_SHELL, src.DEFAULT_WORKING_DIRECTORY, src.DEFAULT_ROOT, src.DEFAULT_TITLE, []string{})
 
 	viper.SetConfigName("conf")
 	viper.SetConfigType("yaml")
@@ -85,7 +87,7 @@ func initConfig() {
 
 	configFileFound = viper.ConfigFileUsed() != "" || cfgFile != ""
 
-	if len(viper.ConfigFileUsed()) > 0 {
+	if configFileFound {
 		src.Infof("using config file: %s", viper.ConfigFileUsed())
 
 		if viper.IsSet("server.port") {
@@ -126,32 +128,32 @@ func initConfig() {
 				os.Exit(3)
 			}
 			theme.MapToTheme(themeCfg.AllSettings())
-			src.ActiveThemeName = strings.ToLower(themeName)
+			activeThemeName = strings.ToLower(themeName)
 		}
 
 		if viper.IsSet("themes") {
-			src.Themes = make(map[string]src.Theme)
+			// src.Themes = make(map[string]src.Theme)
 			for name := range viper.GetStringMap("themes") {
 				var t src.Theme
 				if themeCfg := viper.Sub("themes." + name); themeCfg != nil {
 					t.MapToTheme(themeCfg.AllSettings())
 				}
-				src.Themes[name] = t
+				themes[name] = t
 			}
 		}
 
-		// Guarantee the active theme is always in src.Themes. viper's
+		// Guarantee the active theme is always in themes. viper's
 		// GetStringMap can return an empty map for a single-entry themes
 		// section in some YAML parser versions, which would leave the active
 		// theme absent from the menu bar list even though it is fully loaded.
 		// Use strings.ToLower to match the keys GetStringMap already stored.
 		if themeName != "" {
-			if src.Themes == nil {
-				src.Themes = make(map[string]src.Theme)
-			}
+			// if src.Themes == nil {
+			// 	src.Themes = make(map[string]src.Theme)
+			// }
 			lowerName := strings.ToLower(themeName)
-			if _, exists := src.Themes[lowerName]; !exists {
-				src.Themes[lowerName] = theme
+			if _, exists := themes[lowerName]; !exists {
+				themes[lowerName] = theme
 			}
 		}
 
@@ -162,10 +164,10 @@ func initConfig() {
 				if profileCfg == nil {
 					continue
 				}
-				profileCfg.SetDefault("root", DEFAULT_ROOT)
-				profileCfg.SetDefault("working-directory", DEFAULT_WORKING_DIRECTORY)
-				profileCfg.SetDefault("shell", DEFAULT_SHELL)
-				profileCfg.SetDefault("title", DEFAULT_TITLE)
+				profileCfg.SetDefault("root", src.DEFAULT_ROOT)
+				profileCfg.SetDefault("working-directory", src.DEFAULT_WORKING_DIRECTORY)
+				profileCfg.SetDefault("shell", src.DEFAULT_SHELL)
+				profileCfg.SetDefault("title", src.DEFAULT_TITLE)
 				profileCfg.SetDefault("commands", []string{})
 				root := profileCfg.GetString("root")
 				workingDirectory := profileCfg.GetString("working-directory")

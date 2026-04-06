@@ -49,17 +49,17 @@ func newTestTerminalServer() *TerminalServer {
 		TLS:  TLS{Enabled: false},
 	}
 	return &TerminalServer{
-		client: client,
-		server: server,
-		profiles: map[string]Profile{
+		Client: client,
+		Server: server,
+		Profiles: map[string]Profile{
 			"default": {Title: "b3tty", Shell: "/bin/bash"},
 			"work":    {Title: "Work Terminal", Shell: "/bin/zsh"},
 		},
-		token:       "test-token-1234",
-		orgCols:     DEFAULT_COLS,
-		orgRows:     DEFAULT_ROWS,
-		profileName: "default",
-		authSleep:   func(time.Duration) {}, // no-op: avoid real delays in tests
+		Token:       "test-token-1234",
+		OrgCols:     DEFAULT_COLS,
+		OrgRows:     DEFAULT_ROWS,
+		ProfileName: "default",
+		AuthSleep:   func(time.Duration) {}, // no-op: avoid real delays in tests
 	}
 }
 
@@ -551,8 +551,8 @@ func TestSetSizeHandler(t *testing.T) {
 		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 		assert.Contains(t, logged, "method not allowed")
 		// State must not be mutated on error
-		assert.Equal(t, uint16(DEFAULT_COLS), ts.orgCols)
-		assert.Equal(t, uint16(DEFAULT_ROWS), ts.orgRows)
+		assert.Equal(t, uint16(DEFAULT_COLS), ts.OrgCols)
+		assert.Equal(t, uint16(DEFAULT_ROWS), ts.OrgRows)
 	})
 
 	t.Run("DELETE is rejected with 405", func(t *testing.T) {
@@ -579,8 +579,8 @@ func TestSetSizeHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		ts.setSizeHandler(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, uint16(132), ts.orgCols)
-		assert.Equal(t, uint16(50), ts.orgRows)
+		assert.Equal(t, uint16(132), ts.OrgCols)
+		assert.Equal(t, uint16(50), ts.OrgRows)
 	})
 
 	t.Run("POST with missing cols falls back to default", func(t *testing.T) {
@@ -588,8 +588,8 @@ func TestSetSizeHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/size?rows=40", nil)
 		w := httptest.NewRecorder()
 		ts.setSizeHandler(w, req)
-		assert.Equal(t, uint16(DEFAULT_COLS), ts.orgCols)
-		assert.Equal(t, uint16(40), ts.orgRows)
+		assert.Equal(t, uint16(DEFAULT_COLS), ts.OrgCols)
+		assert.Equal(t, uint16(40), ts.OrgRows)
 	})
 
 	t.Run("POST with missing rows falls back to default", func(t *testing.T) {
@@ -597,8 +597,8 @@ func TestSetSizeHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/size?cols=100", nil)
 		w := httptest.NewRecorder()
 		ts.setSizeHandler(w, req)
-		assert.Equal(t, uint16(100), ts.orgCols)
-		assert.Equal(t, uint16(DEFAULT_ROWS), ts.orgRows)
+		assert.Equal(t, uint16(100), ts.OrgCols)
+		assert.Equal(t, uint16(DEFAULT_ROWS), ts.OrgRows)
 	})
 
 	t.Run("POST with no params falls back to both defaults", func(t *testing.T) {
@@ -606,8 +606,8 @@ func TestSetSizeHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/size", nil)
 		w := httptest.NewRecorder()
 		ts.setSizeHandler(w, req)
-		assert.Equal(t, uint16(DEFAULT_COLS), ts.orgCols)
-		assert.Equal(t, uint16(DEFAULT_ROWS), ts.orgRows)
+		assert.Equal(t, uint16(DEFAULT_COLS), ts.OrgCols)
+		assert.Equal(t, uint16(DEFAULT_ROWS), ts.OrgRows)
 	})
 
 	t.Run("POST with non-numeric cols falls back to default", func(t *testing.T) {
@@ -615,8 +615,8 @@ func TestSetSizeHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/size?cols=wide&rows=24", nil)
 		w := httptest.NewRecorder()
 		ts.setSizeHandler(w, req)
-		assert.Equal(t, uint16(DEFAULT_COLS), ts.orgCols)
-		assert.Equal(t, uint16(24), ts.orgRows)
+		assert.Equal(t, uint16(DEFAULT_COLS), ts.OrgCols)
+		assert.Equal(t, uint16(24), ts.OrgRows)
 	})
 
 	t.Run("POST with zero dimensions stores zero", func(t *testing.T) {
@@ -624,8 +624,8 @@ func TestSetSizeHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/size?cols=0&rows=0", nil)
 		w := httptest.NewRecorder()
 		ts.setSizeHandler(w, req)
-		assert.Equal(t, uint16(0), ts.orgCols)
-		assert.Equal(t, uint16(0), ts.orgRows)
+		assert.Equal(t, uint16(0), ts.OrgCols)
+		assert.Equal(t, uint16(0), ts.OrgRows)
 	})
 
 	t.Run("POST returns no body", func(t *testing.T) {
@@ -643,8 +643,8 @@ func TestSetSizeHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		ts.setSizeHandler(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, uint16(132), ts.orgCols)
-		assert.Equal(t, uint16(50), ts.orgRows)
+		assert.Equal(t, uint16(132), ts.OrgCols)
+		assert.Equal(t, uint16(50), ts.OrgRows)
 	})
 
 	t.Run("POST with Sec-Fetch-Site cross-site is rejected with 403", func(t *testing.T) {
@@ -657,8 +657,8 @@ func TestSetSizeHandler(t *testing.T) {
 		assert.Contains(t, logged, "forbidden")
 		assert.Contains(t, logged, "cross-site")
 		// State must not be mutated on error
-		assert.Equal(t, uint16(DEFAULT_COLS), ts.orgCols)
-		assert.Equal(t, uint16(DEFAULT_ROWS), ts.orgRows)
+		assert.Equal(t, uint16(DEFAULT_COLS), ts.OrgCols)
+		assert.Equal(t, uint16(DEFAULT_ROWS), ts.OrgRows)
 	})
 
 	t.Run("POST with Sec-Fetch-Site same-site is rejected with 403", func(t *testing.T) {
@@ -670,8 +670,8 @@ func TestSetSizeHandler(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, w.Code)
 		assert.Contains(t, logged, "forbidden")
 		assert.Contains(t, logged, "same-site")
-		assert.Equal(t, uint16(DEFAULT_COLS), ts.orgCols)
-		assert.Equal(t, uint16(DEFAULT_ROWS), ts.orgRows)
+		assert.Equal(t, uint16(DEFAULT_COLS), ts.OrgCols)
+		assert.Equal(t, uint16(DEFAULT_ROWS), ts.OrgRows)
 	})
 
 	t.Run("POST without Sec-Fetch-Site (non-browser client) is allowed", func(t *testing.T) {
@@ -680,8 +680,8 @@ func TestSetSizeHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		ts.setSizeHandler(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, uint16(100), ts.orgCols)
-		assert.Equal(t, uint16(30), ts.orgRows)
+		assert.Equal(t, uint16(100), ts.OrgCols)
+		assert.Equal(t, uint16(30), ts.OrgRows)
 	})
 }
 
@@ -697,7 +697,7 @@ func TestDisplayTermHandler(t *testing.T) {
 			w := httptest.NewRecorder()
 			ts.displayTermHandler(w, req)
 			assert.Equal(t, http.StatusNotFound, w.Code, "expected 404 for %s", path)
-			assert.Equal(t, 0, ts.failedAttempts, "backoff counter must not increment for %s", path)
+			assert.Equal(t, 0, ts.FailedAttempts, "backoff counter must not increment for %s", path)
 		}
 	})
 
@@ -729,7 +729,7 @@ func TestDisplayTermHandler(t *testing.T) {
 
 	t.Run("no-auth mode: empty server token accepts request without token param", func(t *testing.T) {
 		ts := newTestTerminalServer()
-		ts.token = "" // simulate no-auth
+		ts.Token = "" // simulate no-auth
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		w := httptest.NewRecorder()
 		ts.displayTermHandler(w, req)
@@ -770,17 +770,17 @@ func TestDisplayTermHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		ts.displayTermHandler(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, "work", ts.profileName)
+		assert.Equal(t, "work", ts.ProfileName)
 		assert.Contains(t, w.Body.String(), "work")
 	})
 
 	t.Run("absent profile param resets profileName to 'default'", func(t *testing.T) {
 		ts := newTestTerminalServer()
-		ts.profileName = "work" // pre-set a different profile
+		ts.ProfileName = "work" // pre-set a different profile
 		req := httptest.NewRequest(http.MethodGet, "/?token=test-token-1234", nil)
 		w := httptest.NewRecorder()
 		ts.displayTermHandler(w, req)
-		assert.Equal(t, "default", ts.profileName)
+		assert.Equal(t, "default", ts.ProfileName)
 	})
 
 	t.Run("failed attempt increments counter and is logged", func(t *testing.T) {
@@ -790,29 +790,29 @@ func TestDisplayTermHandler(t *testing.T) {
 		var logged string
 		logged = captureLog(func() { ts.displayTermHandler(w, req) })
 		assert.Equal(t, http.StatusForbidden, w.Code)
-		assert.Equal(t, 1, ts.failedAttempts)
+		assert.Equal(t, 1, ts.FailedAttempts)
 		assert.Contains(t, logged, "attempt 1")
 	})
 
 	t.Run("successful auth after failures resets counter", func(t *testing.T) {
 		ts := newTestTerminalServer()
-		ts.failedAttempts = 5
+		ts.FailedAttempts = 5
 
 		req := httptest.NewRequest(http.MethodGet, "/?token=test-token-1234", nil)
 		w := httptest.NewRecorder()
 		ts.displayTermHandler(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, 0, ts.failedAttempts)
+		assert.Equal(t, 0, ts.FailedAttempts)
 	})
 
 	t.Run("no-auth mode: token mismatch skips backoff and counter", func(t *testing.T) {
 		ts := newTestTerminalServer()
-		ts.token = "" // no-auth mode; validateToken always passes with empty server token
+		ts.Token = "" // no-auth mode; validateToken always passes with empty server token
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		w := httptest.NewRecorder()
 		ts.displayTermHandler(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, 0, ts.failedAttempts)
+		assert.Equal(t, 0, ts.FailedAttempts)
 	})
 
 	t.Run("unknown profile param returns empty profile (zero value)", func(t *testing.T) {
@@ -822,7 +822,7 @@ func TestDisplayTermHandler(t *testing.T) {
 		ts.displayTermHandler(w, req)
 		// Profiles map returns zero-value Profile; handler should still render 200
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, "nonexistent", ts.profileName)
+		assert.Equal(t, "nonexistent", ts.ProfileName)
 	})
 
 	t.Run("response Content-Type is text/html", func(t *testing.T) {
@@ -847,7 +847,7 @@ func TestDisplayTermHandler(t *testing.T) {
 
 	t.Run("TLS flag is reflected in the embedded config", func(t *testing.T) {
 		ts := newTestTerminalServer()
-		ts.server.TLS.Enabled = true
+		ts.Server.TLS.Enabled = true
 		req := httptest.NewRequest(http.MethodGet, "/?token=test-token-1234", nil)
 		w := httptest.NewRecorder()
 		ts.displayTermHandler(w, req)
@@ -987,7 +987,7 @@ func TestThemeConfigHandler(t *testing.T) {
 
 	newTS := func() *TerminalServer {
 		ts := newTestTerminalServer()
-		ts.themes = map[string]Theme{
+		ts.Themes = map[string]Theme{
 			"solarized": solarizedTheme,
 			"image":     imageTheme,
 		}
@@ -1075,11 +1075,11 @@ func TestThemeConfigHandler(t *testing.T) {
 
 	t.Run("GET does not mutate ts.client.Theme", func(t *testing.T) {
 		ts := newTS()
-		original := ts.client.Theme
+		original := ts.Client.Theme
 		req := httptest.NewRequest(http.MethodGet, "/theme-config?name=solarized", nil)
 		w := httptest.NewRecorder()
 		ts.themeConfigHandler(w, req)
-		assert.Equal(t, original, ts.client.Theme)
+		assert.Equal(t, original, ts.Client.Theme)
 	})
 
 	t.Run("POST with valid name returns 200 and activates theme", func(t *testing.T) {
@@ -1088,7 +1088,7 @@ func TestThemeConfigHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		ts.themeConfigHandler(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, solarizedTheme, ts.client.Theme)
+		assert.Equal(t, solarizedTheme, ts.Client.Theme)
 	})
 
 	t.Run("POST with same-origin Sec-Fetch-Site is allowed", func(t *testing.T) {
@@ -1098,31 +1098,31 @@ func TestThemeConfigHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		ts.themeConfigHandler(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, solarizedTheme, ts.client.Theme)
+		assert.Equal(t, solarizedTheme, ts.Client.Theme)
 	})
 
 	t.Run("POST with cross-site Sec-Fetch-Site returns 403 and does not mutate theme", func(t *testing.T) {
 		ts := newTS()
-		original := ts.client.Theme
+		original := ts.Client.Theme
 		req := httptest.NewRequest(http.MethodPost, "/theme-config?name=solarized", nil)
 		req.Header.Set("Sec-Fetch-Site", "cross-site")
 		w := httptest.NewRecorder()
 		logged := captureLog(func() { ts.themeConfigHandler(w, req) })
 		assert.Equal(t, http.StatusForbidden, w.Code)
 		assert.Contains(t, logged, "forbidden")
-		assert.Equal(t, original, ts.client.Theme)
+		assert.Equal(t, original, ts.Client.Theme)
 	})
 
 	t.Run("POST with same-site Sec-Fetch-Site returns 403 and does not mutate theme", func(t *testing.T) {
 		ts := newTS()
-		original := ts.client.Theme
+		original := ts.Client.Theme
 		req := httptest.NewRequest(http.MethodPost, "/theme-config?name=solarized", nil)
 		req.Header.Set("Sec-Fetch-Site", "same-site")
 		w := httptest.NewRecorder()
 		logged := captureLog(func() { ts.themeConfigHandler(w, req) })
 		assert.Equal(t, http.StatusForbidden, w.Code)
 		assert.Contains(t, logged, "forbidden")
-		assert.Equal(t, original, ts.client.Theme)
+		assert.Equal(t, original, ts.Client.Theme)
 	})
 
 	t.Run("POST without Sec-Fetch-Site (non-browser client) is allowed", func(t *testing.T) {
@@ -1131,28 +1131,28 @@ func TestThemeConfigHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		ts.themeConfigHandler(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, solarizedTheme, ts.client.Theme)
+		assert.Equal(t, solarizedTheme, ts.Client.Theme)
 	})
 
 	t.Run("POST with missing name returns 400 and does not mutate theme", func(t *testing.T) {
 		ts := newTS()
-		original := ts.client.Theme
+		original := ts.Client.Theme
 		req := httptest.NewRequest(http.MethodPost, "/theme-config", nil)
 		w := httptest.NewRecorder()
 		logged := captureLog(func() { ts.themeConfigHandler(w, req) })
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Contains(t, logged, "missing name")
-		assert.Equal(t, original, ts.client.Theme)
+		assert.Equal(t, original, ts.Client.Theme)
 	})
 
 	t.Run("POST with unknown name returns 404 and does not mutate theme", func(t *testing.T) {
 		ts := newTS()
-		original := ts.client.Theme
+		original := ts.Client.Theme
 		req := httptest.NewRequest(http.MethodPost, "/theme-config?name=nonexistent", nil)
 		w := httptest.NewRecorder()
 		ts.themeConfigHandler(w, req)
 		assert.Equal(t, http.StatusNotFound, w.Code)
-		assert.Equal(t, original, ts.client.Theme)
+		assert.Equal(t, original, ts.Client.Theme)
 	})
 
 	t.Run("POST response contains activated theme colors", func(t *testing.T) {
