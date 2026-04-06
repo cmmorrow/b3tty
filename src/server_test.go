@@ -827,9 +827,9 @@ func TestDisplayTermHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/?token=test-token-1234&profile=nonexistent", nil)
 		w := httptest.NewRecorder()
 		ts.displayTermHandler(w, req)
-		// Profiles map returns zero-value Profile; handler should still render 200
+		// Unknown profile falls back to default; handler should still render 200
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, "nonexistent", ts.ProfileName)
+		assert.Equal(t, DEFAULT_PROFILE_NAME, ts.ProfileName)
 	})
 
 	t.Run("response Content-Type is text/html", func(t *testing.T) {
