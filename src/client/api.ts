@@ -1,0 +1,54 @@
+import { isThemeActivateResponse } from "./types.ts";
+import type { ThemeActivateResponse, Palette } from "./types.ts";
+
+/**
+ * POSTs terminal dimensions to /size (URL pre-built by buildSizeUrl).
+ * Throws if the server returns a non-ok status.
+ */
+export async function postSize(url: string): Promise<void> {
+    const res = await fetch(url, { method: "POST" });
+    if (!res.ok) throw new Error(`Failed to set terminal size: ${res.status}`);
+}
+
+/**
+ * POSTs to /theme-config to activate the named theme.
+ * Throws if the request fails or the response fails the type guard.
+ */
+export async function postThemeConfig(name: string): Promise<ThemeActivateResponse> {
+    const res = await fetch(`/theme-config?name=${encodeURIComponent(name)}`, { method: "POST" });
+    if (!res.ok) throw new Error(`Failed to activate theme "${name}": ${res.status}`);
+    const parsed: unknown = await res.json();
+    if (!isThemeActivateResponse(parsed)) throw new Error(`Unexpected theme-config response shape`);
+    return parsed;
+}
+
+/**
+ * GETs /theme?name=<name> to retrieve palette preview data.
+ * Throws if the request fails or the response shape is invalid.
+ */
+export async function getThemePalette(name: string): Promise<Palette> {
+    const res = await fetch(`/theme?name=${encodeURIComponent(name)}`);
+    if (!res.ok) throw new Error(`Failed to fetch palette for theme "${name}": ${res.status}`);
+    const parsed: unknown = await res.json();
+    if (
+        typeof parsed !== "object" ||
+        parsed === null ||
+        !Array.isArray((parsed as Record<string, unknown>)["normal"]) ||
+        !Array.isArray((parsed as Record<string, unknown>)["bright"])
+    ) {
+        throw new Error(`Unexpected palette response shape for theme "${name}"`);
+    }
+    return parsed as Palette;
+}
+
+/**
+ * POSTs to /save-config with the selected theme name.
+ * Does not check the response status (fire-and-forget, caller handles reload).
+ */
+export async function postSaveConfig(theme: string): Promise<void> {
+    await fetch("/save-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ theme }),
+    });
+}

@@ -1,4 +1,4 @@
-export interface ThemeConfig {
+interface ThemeConfigBase {
     foreground?: string;
     background?: string;
     cursor?: string;
@@ -21,6 +21,9 @@ export interface ThemeConfig {
     brightWhite?: string;
     selectionForeground?: string;
     selectionBackground?: string;
+}
+
+export interface ThemeConfig extends ThemeConfigBase {
     [key: string]: string | undefined;
 }
 
@@ -41,7 +44,7 @@ export interface TermConfig {
     activeTheme?: string;
 }
 
-export interface ThemeActivateResponse extends ThemeConfig {
+export interface ThemeActivateResponse extends ThemeConfigBase {
     hasBackgroundImage: boolean;
 }
 
@@ -84,6 +87,15 @@ export interface TerminalLike {
 
 export interface SocketMessageEvent {
     data: ArrayBuffer | string;
+}
+
+export interface Palette {
+    bg: string;
+    fg: string;
+    selBg: string;
+    cursor: string;
+    normal: string[];
+    bright: string[];
 }
 
 declare global {

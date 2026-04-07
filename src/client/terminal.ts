@@ -13,8 +13,8 @@ import type {
     ClientConfig,
     ThemeConfig,
 } from "./types.ts";
-import { isThemeActivateResponse } from "./types.ts";
 import { isValidHttpProtocol, isValidWsProtocol, isValidPort, isValidUri } from "./validators.ts";
+import { postSize, postThemeConfig } from "./api.ts";
 import "./components.ts";
 import type { B3ttyDialog, B3ttyMenuBar } from "./components.ts";
 import { isB3ttyDialog, isB3ttyMenuBar } from "./components.ts";
@@ -79,7 +79,7 @@ export function withAlpha(color: string, alpha: number): string {
  * Extracts defined theme color values from the config's theme object.
  * Only keys present in THEME_KEYS with truthy values are included.
  */
-export function buildTheme(themeConfig: ThemeConfig): ITheme {
+export function buildTheme(themeConfig: ThemeConfig | ThemeActivateResponse): ITheme {
     const theme: Record<string, string> = {};
     for (const k of THEME_KEYS) {
         const val = themeConfig[k];
@@ -326,11 +326,12 @@ export async function handleThemeChange(
 ): Promise<void> {
     const { name } = (e as CustomEvent<{ name: string }>).detail;
     if (name === activeTheme.current) return;
-    const res = await fetch(`/theme-config?name=${encodeURIComponent(name)}`, { method: "POST" });
-    if (!res.ok) return;
-    const parsed: unknown = await res.json();
-    if (!isThemeActivateResponse(parsed)) return;
-    const newTheme = parsed;
+    let newTheme: ThemeActivateResponse;
+    try {
+        newTheme = await postThemeConfig(name);
+    } catch {
+        return;
+    }
 
     const builtTheme = buildTheme(newTheme);
     if (newTheme.hasBackgroundImage) {
@@ -391,8 +392,11 @@ export async function main(config: TermConfig): Promise<void> {
     term.loadAddon(new ImageAddon());
 
     const sizeUrl = buildSizeUrl(httpProto, config.uri, config.port, term.cols, term.rows);
-    const sizeRes = await fetch(sizeUrl, { method: "POST" });
-    if (!sizeRes.ok) console.warn(`Failed to set terminal size: ${sizeRes.status}`);
+    try {
+        await postSize(sizeUrl);
+    } catch (err) {
+        console.warn(err instanceof Error ? err.message : String(err));
+    }
 
     const wsUrl = buildWsUrl(wsProtocol, config.uri, config.port);
     const socket = new WebSocket(wsUrl);
