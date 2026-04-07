@@ -1,3 +1,6 @@
+import { getThemePalette, postSaveConfig } from "./api.ts";
+import type { Palette } from "./types.ts";
+
 /**
  * Interface for the b3tty-dialog web component. The concrete class is defined
  * conditionally so that importing this module in non-browser environments (e.g.
@@ -110,21 +113,6 @@ if (typeof HTMLElement !== "undefined") {
     }
 
     customElements.define("b3tty-dialog", B3ttyDialogImpl);
-
-    type Palette = {
-        bg: string;
-        fg: string;
-        selBg: string;
-        cursor: string;
-        normal: string[];
-        bright: string[];
-    };
-
-    async function fetchPalette(name: string): Promise<Palette> {
-        const res = await fetch(`/theme?name=${name}`);
-        if (!res.ok) throw new Error(`Failed to fetch palette for theme "${name}": ${res.status}`);
-        return res.json() as Promise<Palette>;
-    }
 
     class B3ttyThemeSelectorImpl extends HTMLElement {
         constructor() {
@@ -300,7 +288,7 @@ if (typeof HTMLElement !== "undefined") {
             options.className = "options";
             options.appendChild(skipCard());
 
-            Promise.all([fetchPalette("dark"), fetchPalette("light")])
+            Promise.all([getThemePalette("dark"), getThemePalette("light")])
                 .then(([dark, light]) => {
                     options.prepend(paletteCard("light", "Light", light));
                     options.prepend(paletteCard("dark", "Dark", dark));
@@ -329,11 +317,7 @@ if (typeof HTMLElement !== "undefined") {
             okBtn.addEventListener("click", async () => {
                 const checked = shadow.querySelector<HTMLInputElement>("input[name=theme]:checked");
                 if (!checked) return;
-                await fetch("/save-config", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ theme: checked.value }),
-                });
+                await postSaveConfig(checked.value);
                 window.location.reload();
             });
         }

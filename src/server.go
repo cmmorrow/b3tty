@@ -719,6 +719,7 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 						Errorf("websocket read: %v", err)
 					}
 				}
+				ptmx.Close()
 				break
 			}
 			if msgType == websocket.TextMessage {
@@ -747,10 +748,8 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 	// Handle output from the pty
 	go func() {
 		buf := make([]byte, BUFFER_SIZE)
-		n := 0
-		var err error
 		for {
-			n, err = ptmx.Read(buf)
+			n, err := ptmx.Read(buf)
 			Debugf("bytes read from buffer: %d", n)
 			if err != nil {
 				switch err {
@@ -764,9 +763,13 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 				ws.Close()
 				return
 			}
+			ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			err = ws.WriteMessage(websocket.BinaryMessage, buf[:n])
 			if err != nil {
 				Errorf("write from pty: %v", err)
+				ptmx.Close()
+				signalDone()
+				break
 			}
 		}
 	}()
