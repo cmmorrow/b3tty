@@ -78,6 +78,7 @@ type TerminalServer struct {
 	OrgCols        uint16
 	OrgRows        uint16
 	ProfileName    string
+	StartupProfile string
 	ActiveTheme    string
 	FailedAttempts int
 	FirstRun       bool
@@ -122,12 +123,15 @@ func parseSizeParams(q url.Values) (uint16, uint16) {
 }
 
 // resolveProfileName returns the value of the "profile" query parameter when present
-// and corresponding to a known profile, or DEFAULT_PROFILE_NAME otherwise.
+// and corresponding to a known profile, or fallback otherwise. fallback should be
+// set to ts.StartupProfile so that --profile selections persist across page loads
+// that carry no explicit ?profile= query parameter.
 func resolveProfileName(q url.Values, profiles map[string]Profile) string {
 	if p := q.Get("profile"); p != "" {
 		if _, ok := profiles[p]; ok {
 			return p
 		}
+		Warnf("profile %s is not a valid profile name; falling back to profile %s", p, DEFAULT_PROFILE_NAME)
 	}
 	return DEFAULT_PROFILE_NAME
 }
@@ -209,22 +213,72 @@ func GetCSPHeaders() CSPHeaders {
 	return *header
 }
 
+// logProfileURLs prints a header and one line per non-default profile, showing its
+// URL, shell, and working directory. The query separator is derived from uiUrl itself:
+// "&profile=" when uiUrl already contains a "?", "?profile=" otherwise. This correctly
+// handles the case where uiUrl already carries a ?profile= from a --profile startup flag.
+func logProfileURLs(profiles map[string]Profile, uiUrl string) {
+	Info("Configured profiles:")
+	var prfQuery string
+	if strings.Contains(uiUrl, "?") && !strings.Contains(uiUrl, "?profile") && !strings.Contains(uiUrl, "&profile") {
+		prfQuery = "&profile="
+	} else if !strings.Contains(uiUrl, "?") {
+		prfQuery = "?profile="
+	} else {
+		prfQuery = ""
+	}
+
+	// Collect and sort non-default profile names for consistent output.
+	names := make([]string, 0, len(profiles)-1)
+	for prf := range profiles {
+		if prf != DEFAULT_PROFILE_NAME {
+			names = append(names, prf)
+		}
+	}
+	sort.Strings(names)
+	// Compute max name width for aligned columns.
+	maxLen := 0
+	for _, prf := range names {
+		if len(prf) > maxLen {
+			maxLen = len(prf)
+		}
+	}
+	for _, prf := range names {
+		profile := profiles[prf]
+		var url string
+		if len(prfQuery) > 0 {
+			url = uiUrl + prfQuery + prf
+		} else {
+			url = uiUrl
+		}
+
+		// Pad using the plain name length so ANSI codes in BoldGreen don't
+		// inflate the width and break column alignment.
+		padding := strings.Repeat(" ", maxLen-len(prf))
+		Infof("  %s%s  %s  (shell: %s | dir: %s)", BoldGreen(prf), padding, Bold(url), profile.Shell, profile.WorkingDirectory)
+	}
+}
+
+// buildUIUrl assembles the URL printed at startup and optionally opened in the browser.
+// tokenQuery is either "?token=<tok>" (auth enabled) or "" (no-auth mode).
+// When startupProfile differs from DEFAULT_PROFILE_NAME the profile query parameter is
+// appended using "&" when a token is already present, or "?" otherwise.
+func buildUIUrl(protocol, addr, tokenQuery, startupProfile string) string {
+	url := protocol + "://" + addr + "/" + tokenQuery
+	if startupProfile != DEFAULT_PROFILE_NAME {
+		if tokenQuery != "" {
+			url += "&profile=" + startupProfile
+		} else {
+			url += "?profile=" + startupProfile
+		}
+	}
+	return url
+}
+
 // Serve wires up the HTTP mux and starts the server. It creates a TerminalServer from
 // the package-level InitClient, InitServer, and Profiles variables set by the cmd layer.
 func Serve(ts *TerminalServer, shouldOpenBrowser bool, useTLS bool) {
 	Debug("starting b3tty server....")
-	// ts := &TerminalServer{
-	// 	client:      InitClient,
-	// 	server:      InitServer,
-	// 	profiles:    Profiles,
-	// 	themes:      Themes,
-	// 	orgCols:     DEFAULT_COLS,
-	// 	orgRows:     DEFAULT_ROWS,
-	// 	profileName: DEFAULT_PROFILE_NAME,
-	// 	activeTheme: ActiveThemeName,
-	// 	firstRun:    InitServer.FirstRun,
-	// 	authSleep:   time.Sleep,
-	// }
 
 	var err error
 	var tokenQuery = ""
@@ -244,7 +298,7 @@ func Serve(ts *TerminalServer, shouldOpenBrowser bool, useTLS bool) {
 	}
 
 	addr := ts.Server.Addr().Host
-	uiUrl := protocol + "://" + addr + "/" + tokenQuery
+	uiUrl := buildUIUrl(protocol, addr, tokenQuery, ts.StartupProfile)
 
 	Debugf("open-browser on start up: %v", shouldOpenBrowser)
 	if shouldOpenBrowser {
@@ -259,36 +313,7 @@ func Serve(ts *TerminalServer, shouldOpenBrowser bool, useTLS bool) {
 
 	// Display the available profiles in the config file
 	if len(ts.Profiles) > 1 {
-		Info("Configured profiles:")
-		var prfQuery string
-		if len(tokenQuery) > 0 {
-			prfQuery = "&profile="
-		} else {
-			prfQuery = "?profile="
-		}
-		// Collect and sort non-default profile names for consistent output.
-		names := make([]string, 0, len(ts.Profiles)-1)
-		for prf := range ts.Profiles {
-			if prf != DEFAULT_PROFILE_NAME {
-				names = append(names, prf)
-			}
-		}
-		sort.Strings(names)
-		// Compute max name width for aligned columns.
-		maxLen := 0
-		for _, prf := range names {
-			if len(prf) > maxLen {
-				maxLen = len(prf)
-			}
-		}
-		for _, prf := range names {
-			profile := ts.Profiles[prf]
-			url := uiUrl + prfQuery + prf
-			// Pad using the plain name length so ANSI codes in BoldGreen don't
-			// inflate the width and break column alignment.
-			padding := strings.Repeat(" ", maxLen-len(prf))
-			Infof("  %s%s  %s  (shell: %s | dir: %s)", BoldGreen(prf), padding, Bold(url), profile.Shell, profile.WorkingDirectory)
-		}
+		logProfileURLs(ts.Profiles, uiUrl)
 	}
 
 	mux.HandleFunc("/", ts.displayTermHandler)

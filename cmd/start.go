@@ -24,6 +24,7 @@ var certFile string
 var keyFile string
 var noAuth bool
 var noBrowser bool
+var startupProfile string
 
 // startCmd represents the start command
 var startCmd = &cobra.Command{
@@ -54,17 +55,25 @@ configuration. For additional security, b3tty supports TLS over https and wss.`,
 				port = 8443
 			}
 		}
+		if startupProfile != "" {
+			if _, ok := profiles[startupProfile]; !ok {
+				src.Fatalf("profile %q not found in config", startupProfile)
+			}
+		} else {
+			startupProfile = src.DEFAULT_PROFILE_NAME
+		}
 		ts := src.TerminalServer{
-			Client:      src.NewClient(&rows, &columns, &cursorBlink, &fontFamily, &fontSize, &theme),
-			Server:      src.NewServer(&uri, &port, &noAuth, &src.TLS{CertFilePath: certFile, KeyFilePath: keyFile, Enabled: tls}),
-			Profiles:    profiles,
-			Themes:      themes,
-			OrgCols:     src.DEFAULT_COLS,
-			OrgRows:     src.DEFAULT_ROWS,
-			ProfileName: src.DEFAULT_PROFILE_NAME,
-			ActiveTheme: activeThemeName,
-			FirstRun:    !configFileFound,
-			AuthSleep:   time.Sleep,
+			Client:         src.NewClient(&rows, &columns, &cursorBlink, &fontFamily, &fontSize, &theme),
+			Server:         src.NewServer(&uri, &port, &noAuth, &src.TLS{CertFilePath: certFile, KeyFilePath: keyFile, Enabled: tls}),
+			Profiles:       profiles,
+			Themes:         themes,
+			OrgCols:        src.DEFAULT_COLS,
+			OrgRows:        src.DEFAULT_ROWS,
+			ProfileName:    "",
+			StartupProfile: startupProfile,
+			ActiveTheme:    activeThemeName,
+			FirstRun:       !configFileFound,
+			AuthSleep:      time.Sleep,
 		}
 		src.Serve(&ts, !noBrowser, tls)
 	},
@@ -91,4 +100,5 @@ func init() {
 	startCmd.Flags().BoolVar(&noAuth, "no-auth", false, "Disable API token verification. Using this flag will reduce security posture.")
 	startCmd.Flags().BoolVar(&noBrowser, "no-browser", false, "Disables opening b3tty in the default browser.")
 	startCmd.Flags().BoolVar(&debug, "debug", false, "Enable debug logging.")
+	startCmd.Flags().StringVar(&startupProfile, "profile", "", "Profile to load on startup. Must exist in the config file.")
 }

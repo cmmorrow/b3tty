@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,7 +23,7 @@ func captureLog(f func()) string {
 	log.SetOutput(&buf)
 	log.SetFlags(0)
 	defer func() {
-		log.SetOutput(nil) // restore default (stderr)
+		log.SetOutput(os.Stderr) // restore default (stderr)
 		log.SetFlags(log.LstdFlags)
 	}()
 	f()
@@ -55,11 +57,12 @@ func newTestTerminalServer() *TerminalServer {
 			"default": {Title: "b3tty", Shell: "/bin/bash"},
 			"work":    {Title: "Work Terminal", Shell: "/bin/zsh"},
 		},
-		Token:       "test-token-1234",
-		OrgCols:     DEFAULT_COLS,
-		OrgRows:     DEFAULT_ROWS,
-		ProfileName: "default",
-		AuthSleep:   func(time.Duration) {}, // no-op: avoid real delays in tests
+		Token:          "test-token-1234",
+		OrgCols:        DEFAULT_COLS,
+		OrgRows:        DEFAULT_ROWS,
+		ProfileName:    DEFAULT_PROFILE_NAME,
+		StartupProfile: DEFAULT_PROFILE_NAME,
+		AuthSleep:      func(time.Duration) {}, // no-op: avoid real delays in tests
 	}
 }
 
@@ -191,6 +194,87 @@ func TestParseSizeParams(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// logProfileURLs
+// ---------------------------------------------------------------------------
+
+func TestLogProfileURLs(t *testing.T) {
+	profiles := map[string]Profile{
+		DEFAULT_PROFILE_NAME: {Shell: "/bin/bash", WorkingDirectory: "/home/user"},
+		"work":               {Shell: "/bin/zsh", WorkingDirectory: "/home/user/work"},
+		"dev":                {Shell: "/bin/fish", WorkingDirectory: "/home/user/dev"},
+	}
+
+	t.Run("no-auth no startup profile uses ? separator", func(t *testing.T) {
+		logged := captureLog(func() {
+			logProfileURLs(profiles, "http://localhost:8080/")
+		})
+		assert.Contains(t, logged, "?profile=dev")
+		assert.Contains(t, logged, "?profile=work")
+		assert.NotContains(t, logged, "&profile=")
+	})
+
+	t.Run("token present no startup profile uses & separator", func(t *testing.T) {
+		logged := captureLog(func() {
+			logProfileURLs(profiles, "http://localhost:8080/?token=abc")
+		})
+		assert.Contains(t, logged, "?token=abc&profile=dev")
+		assert.Contains(t, logged, "?token=abc&profile=work")
+	})
+
+	t.Run("token and startup profile present uses URL as-is without duplicate profile param", func(t *testing.T) {
+		// When uiUrl already contains &profile=, prfQuery is empty and the URL is used
+		// verbatim — this prevents a duplicate &profile=work&profile=work in the output.
+		logged := captureLog(func() {
+			logProfileURLs(profiles, "http://localhost:8080/?token=abc&profile=work")
+		})
+		assert.NotContains(t, logged, "&profile=work&profile=work")
+	})
+
+	t.Run("no-auth startup profile as first query param does not append &profile=", func(t *testing.T) {
+		// When uiUrl starts with ?profile= (no token), the profile param is already the
+		// first query param. prfQuery must be "" so no &profile= is appended, which would
+		// otherwise produce malformed URLs like ?profile=work&profile=dev.
+		logged := captureLog(func() {
+			logProfileURLs(profiles, "http://localhost:8080/?profile=work")
+		})
+		assert.NotContains(t, logged, "?profile=work&profile=")
+	})
+
+	t.Run("default profile is excluded from output", func(t *testing.T) {
+		logged := captureLog(func() {
+			logProfileURLs(profiles, "http://localhost:8080/")
+		})
+		assert.NotContains(t, logged, "?profile="+DEFAULT_PROFILE_NAME)
+	})
+
+	t.Run("non-default profiles are printed in sorted order", func(t *testing.T) {
+		logged := captureLog(func() {
+			logProfileURLs(profiles, "http://localhost:8080/")
+		})
+		devIdx := strings.Index(logged, "dev")
+		workIdx := strings.Index(logged, "work")
+		assert.Less(t, devIdx, workIdx)
+	})
+
+	t.Run("shell and working directory are included in output", func(t *testing.T) {
+		logged := captureLog(func() {
+			logProfileURLs(profiles, "http://localhost:8080/")
+		})
+		assert.Contains(t, logged, "/bin/zsh")
+		assert.Contains(t, logged, "/home/user/work")
+		assert.Contains(t, logged, "/bin/fish")
+		assert.Contains(t, logged, "/home/user/dev")
+	})
+
+	t.Run("configured profiles header is logged", func(t *testing.T) {
+		logged := captureLog(func() {
+			logProfileURLs(profiles, "http://localhost:8080/")
+		})
+		assert.Contains(t, logged, "Configured profiles:")
+	})
+}
+
+// ---------------------------------------------------------------------------
 // resolveProfileName
 // ---------------------------------------------------------------------------
 
@@ -208,19 +292,25 @@ func TestResolveProfileName(t *testing.T) {
 			expected: "work",
 		},
 		{
-			name:     "absent profile param returns 'default'",
+			name:     "absent profile param returns default",
 			query:    url.Values{},
 			profiles: map[string]Profile{},
 			expected: "default",
 		},
 		{
-			name:     "empty profile param returns 'default'",
+			name:     "absent profile param returns default despite StartupProfile",
+			query:    url.Values{},
+			profiles: map[string]Profile{"work": {}},
+			expected: "default",
+		},
+		{
+			name:     "empty profile param returns default",
 			query:    queryWith("profile", ""),
 			profiles: map[string]Profile{},
 			expected: "default",
 		},
 		{
-			name:     "unknown profile returns 'default'",
+			name:     "unknown profile returns default",
 			query:    queryWith("profile", " dev "),
 			profiles: map[string]Profile{},
 			expected: "default",
@@ -242,6 +332,84 @@ func TestResolveProfileName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.expected, resolveProfileName(tt.query, tt.profiles))
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// buildUIUrl
+// ---------------------------------------------------------------------------
+
+func TestBuildUIUrl(t *testing.T) {
+	tests := []struct {
+		name           string
+		protocol       string
+		addr           string
+		tokenQuery     string
+		startupProfile string
+		expected       string
+	}{
+		{
+			name:           "http with token, default profile",
+			protocol:       "http",
+			addr:           "localhost:8080",
+			tokenQuery:     "?token=abc123",
+			startupProfile: DEFAULT_PROFILE_NAME,
+			expected:       "http://localhost:8080/?token=abc123",
+		},
+		{
+			name:           "http no-auth, default profile",
+			protocol:       "http",
+			addr:           "localhost:8080",
+			tokenQuery:     "",
+			startupProfile: DEFAULT_PROFILE_NAME,
+			expected:       "http://localhost:8080/",
+		},
+		{
+			name:           "https with token, default profile",
+			protocol:       "https",
+			addr:           "localhost:8443",
+			tokenQuery:     "?token=abc123",
+			startupProfile: DEFAULT_PROFILE_NAME,
+			expected:       "https://localhost:8443/?token=abc123",
+		},
+		{
+			name:           "http with token, non-default profile appends &profile=",
+			protocol:       "http",
+			addr:           "localhost:8080",
+			tokenQuery:     "?token=abc123",
+			startupProfile: "work",
+			expected:       "http://localhost:8080/?token=abc123&profile=work",
+		},
+		{
+			name:           "http no-auth, non-default profile appends ?profile=",
+			protocol:       "http",
+			addr:           "localhost:8080",
+			tokenQuery:     "",
+			startupProfile: "work",
+			expected:       "http://localhost:8080/?profile=work",
+		},
+		{
+			name:           "https no-auth, non-default profile appends ?profile=",
+			protocol:       "https",
+			addr:           "localhost:8443",
+			tokenQuery:     "",
+			startupProfile: "dev",
+			expected:       "https://localhost:8443/?profile=dev",
+		},
+		{
+			name:           "profile name with hyphens",
+			protocol:       "http",
+			addr:           "localhost:8080",
+			tokenQuery:     "?token=xyz",
+			startupProfile: "my-profile",
+			expected:       "http://localhost:8080/?token=xyz&profile=my-profile",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, buildUIUrl(tt.protocol, tt.addr, tt.tokenQuery, tt.startupProfile))
 		})
 	}
 }
@@ -781,13 +949,22 @@ func TestDisplayTermHandler(t *testing.T) {
 		assert.Contains(t, w.Body.String(), "work")
 	})
 
-	t.Run("absent profile param resets profileName to 'default'", func(t *testing.T) {
+	t.Run("absent profile param falls back to StartupProfile", func(t *testing.T) {
 		ts := newTestTerminalServer()
-		ts.ProfileName = "work" // pre-set a different profile
+		// StartupProfile defaults to DEFAULT_PROFILE_NAME; ProfileName should match.
 		req := httptest.NewRequest(http.MethodGet, "/?token=test-token-1234", nil)
 		w := httptest.NewRecorder()
 		ts.displayTermHandler(w, req)
-		assert.Equal(t, "default", ts.ProfileName)
+		assert.Equal(t, DEFAULT_PROFILE_NAME, ts.ProfileName)
+	})
+
+	t.Run("absent profile param uses default despite StartupProfile", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		ts.StartupProfile = "work"
+		req := httptest.NewRequest(http.MethodGet, "/?token=test-token-1234", nil)
+		w := httptest.NewRecorder()
+		ts.displayTermHandler(w, req)
+		assert.Equal(t, DEFAULT_PROFILE_NAME, ts.ProfileName)
 	})
 
 	t.Run("failed attempt increments counter and is logged", func(t *testing.T) {
