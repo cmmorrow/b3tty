@@ -40,7 +40,8 @@ b3tty start --help
 
 1. Open a new terminal window.
 2. b3tty does not ship as a binary. To install b3tty, clone the repo at [https://github.com/cmmorrow/b3tty.git](https://github.com/cmmorrow/b3tty.git).
-3. In the root b3tty directory, run `make build` to build b3tty for your system. This will first bundle the frontend JavaScript with bun, then compile the Go binary.
+3. In the root b3tty directory, run `make setup` to install the bun dependencies.
+4. After installing the bun dependencies, run `make build` to build b3tty for your system. This will first bundle the frontend JavaScript with bun, then compile the Go binary.
    * To format frontend source files before building, run `make format`. To check formatting without modifying files (e.g. in CI), run `make format-check`.
 4. Make the b3tty binary executable with `chmod u+x b3tty`.
 5. Either copy the b3tty binary to a directory in your `$PATH` such as /usr/local/bin, or create a symlink to the betty executable that is in your `$PATH`.

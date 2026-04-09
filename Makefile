@@ -19,9 +19,12 @@ PACKAGE_VERSION=$(shell cat VERSION)
 # Build flags
 BUILD_FLAGS=-v -ldflags="-X 'github.com/cmmorrow/b3tty/cmd.Version=$(PACKAGE_VERSION)'"
 # BUILD_FLAGS=-v -ldflags="-X 'github.com/cmmorrow/b3tty/cmd.Version=test'"
-.PHONY: all format format-check client build test clean run deps tidy build-linux build-freebsd build-mac
+.PHONY: all setup format format-check client build test clean run deps tidy build-linux build-freebsd build-mac
 
 all: test build
+
+setup:
+	cd src/client && bun install
 
 format:
 	cd src/client && bun run format
