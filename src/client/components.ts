@@ -288,10 +288,10 @@ if (typeof HTMLElement !== "undefined") {
             options.className = "options";
             options.appendChild(skipCard());
 
-            Promise.all([getThemePalette("dark"), getThemePalette("light")])
+            Promise.all([getThemePalette("b3tty-dark"), getThemePalette("b3tty-light")])
                 .then(([dark, light]) => {
-                    options.prepend(paletteCard("light", "Light", light));
-                    options.prepend(paletteCard("dark", "Dark", dark));
+                    options.prepend(paletteCard("b3tty-light", "B3tty Light", light));
+                    options.prepend(paletteCard("b3tty-dark", "B3tty Dark", dark));
                 })
                 .catch(() => {
                     // Palette cards remain absent; the user can still select "No theme".

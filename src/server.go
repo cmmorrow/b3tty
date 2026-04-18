@@ -514,7 +514,7 @@ func (ts *TerminalServer) renderSetupPage(w http.ResponseWriter) {
 var themeNormalOrder = []string{"black", "red", "yellow", "green", "cyan", "blue", "magenta", "white"}
 var themeBrightOrder = []string{"bright-black", "bright-red", "bright-yellow", "bright-green", "bright-cyan", "bright-blue", "bright-magenta", "bright-white"}
 
-// themePaletteHandler serves a GET /theme?name=<dark|light> request and returns a
+// themePaletteHandler serves a GET /theme?name=<b3tty-dark|b3tty-light> request and returns a
 // themePaletteResponse JSON payload shaped for the B3ttyThemeSelector component.
 func (ts *TerminalServer) themePaletteHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "GET" {
@@ -524,12 +524,12 @@ func (ts *TerminalServer) themePaletteHandler(w http.ResponseWriter, r *http.Req
 	}
 	var colors map[string]any
 	switch r.URL.Query().Get("name") {
-	case "dark":
+	case "b3tty-dark":
 		colors = defaultDarkTheme
-	case "light":
+	case "b3tty-light":
 		colors = defaultLightTheme
 	default:
-		Warn("theme name must be light or dark")
+		Warn("theme name must be b3tty-light or b3tty-dark")
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -615,7 +615,7 @@ func (ts *TerminalServer) themeConfigHandler(w http.ResponseWriter, r *http.Requ
 }
 
 // saveConfigHandler accepts a POST request with a JSON body containing a "theme"
-// field ("dark", "light", or "skip"). For dark/light, it writes a default config
+// field ("b3tty-dark", "b3tty-light", or "skip"). For b3tty-dark/b3tty-light, it writes a default config
 // file to $HOME/.config/b3tty/conf.yaml. Sets firstRun to false on success.
 func (ts *TerminalServer) saveConfigHandler(w http.ResponseWriter, r *http.Request) {
 	if !ts.FirstRun {
@@ -644,9 +644,9 @@ func (ts *TerminalServer) saveConfigHandler(w http.ResponseWriter, r *http.Reque
 
 	var themeColors map[string]any
 	switch req.Theme {
-	case "dark":
+	case "b3tty-dark":
 		themeColors = defaultDarkTheme
-	case "light":
+	case "b3tty-light":
 		themeColors = defaultLightTheme
 	}
 

@@ -1046,7 +1046,7 @@ func TestDisplayTermHandler(t *testing.T) {
 func TestThemePaletteHandler(t *testing.T) {
 	t.Run("POST is rejected with 405", func(t *testing.T) {
 		ts := newTestTerminalServer()
-		req := httptest.NewRequest(http.MethodPost, "/theme?name=dark", nil)
+		req := httptest.NewRequest(http.MethodPost, "/theme?name=b3tty-dark", nil)
 		w := httptest.NewRecorder()
 		logged := captureLog(func() { ts.themePaletteHandler(w, req) })
 		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
@@ -1055,7 +1055,7 @@ func TestThemePaletteHandler(t *testing.T) {
 
 	t.Run("DELETE is rejected with 405", func(t *testing.T) {
 		ts := newTestTerminalServer()
-		req := httptest.NewRequest(http.MethodDelete, "/theme?name=dark", nil)
+		req := httptest.NewRequest(http.MethodDelete, "/theme?name=b3tty-dark", nil)
 		w := httptest.NewRecorder()
 		logged := captureLog(func() { ts.themePaletteHandler(w, req) })
 		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
@@ -1068,7 +1068,7 @@ func TestThemePaletteHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		logged := captureLog(func() { ts.themePaletteHandler(w, req) })
 		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, logged, "light or dark")
+		assert.Contains(t, logged, "b3tty-light or b3tty-dark")
 	})
 
 	t.Run("GET with missing name returns 400", func(t *testing.T) {
@@ -1077,29 +1077,29 @@ func TestThemePaletteHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		logged := captureLog(func() { ts.themePaletteHandler(w, req) })
 		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, logged, "light or dark")
+		assert.Contains(t, logged, "b3tty-light or b3tty-dark")
 	})
 
-	t.Run("GET name=dark returns 200 with application/json", func(t *testing.T) {
+	t.Run("GET name=b3tty-dark returns 200 with application/json", func(t *testing.T) {
 		ts := newTestTerminalServer()
-		req := httptest.NewRequest(http.MethodGet, "/theme?name=dark", nil)
+		req := httptest.NewRequest(http.MethodGet, "/theme?name=b3tty-dark", nil)
 		w := httptest.NewRecorder()
 		ts.themePaletteHandler(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Contains(t, w.Header().Get("Content-Type"), "application/json")
 	})
 
-	t.Run("GET name=dark returns valid JSON", func(t *testing.T) {
+	t.Run("GET name=b3tty-dark returns valid JSON", func(t *testing.T) {
 		ts := newTestTerminalServer()
-		req := httptest.NewRequest(http.MethodGet, "/theme?name=dark", nil)
+		req := httptest.NewRequest(http.MethodGet, "/theme?name=b3tty-dark", nil)
 		w := httptest.NewRecorder()
 		ts.themePaletteHandler(w, req)
 		assert.True(t, json.Valid(w.Body.Bytes()))
 	})
 
-	t.Run("GET name=dark returns correct bg, fg, selBg, and cursor", func(t *testing.T) {
+	t.Run("GET name=b3tty-dark returns correct bg, fg, selBg, and cursor", func(t *testing.T) {
 		ts := newTestTerminalServer()
-		req := httptest.NewRequest(http.MethodGet, "/theme?name=dark", nil)
+		req := httptest.NewRequest(http.MethodGet, "/theme?name=b3tty-dark", nil)
 		w := httptest.NewRecorder()
 		ts.themePaletteHandler(w, req)
 
@@ -1111,9 +1111,9 @@ func TestThemePaletteHandler(t *testing.T) {
 		assert.Equal(t, "#aeafad", resp.Cursor)
 	})
 
-	t.Run("GET name=dark returns 8-element normal array in ANSI display order", func(t *testing.T) {
+	t.Run("GET name=b3tty-dark returns 8-element normal array in ANSI display order", func(t *testing.T) {
 		ts := newTestTerminalServer()
-		req := httptest.NewRequest(http.MethodGet, "/theme?name=dark", nil)
+		req := httptest.NewRequest(http.MethodGet, "/theme?name=b3tty-dark", nil)
 		w := httptest.NewRecorder()
 		ts.themePaletteHandler(w, req)
 
@@ -1124,9 +1124,9 @@ func TestThemePaletteHandler(t *testing.T) {
 		assert.Equal(t, expected, resp.Normal)
 	})
 
-	t.Run("GET name=dark returns 8-element bright array in ANSI display order", func(t *testing.T) {
+	t.Run("GET name=b3tty-dark returns 8-element bright array in ANSI display order", func(t *testing.T) {
 		ts := newTestTerminalServer()
-		req := httptest.NewRequest(http.MethodGet, "/theme?name=dark", nil)
+		req := httptest.NewRequest(http.MethodGet, "/theme?name=b3tty-dark", nil)
 		w := httptest.NewRecorder()
 		ts.themePaletteHandler(w, req)
 
@@ -1137,9 +1137,9 @@ func TestThemePaletteHandler(t *testing.T) {
 		assert.Equal(t, expected, resp.Bright)
 	})
 
-	t.Run("GET name=light returns 200 with correct bg, fg, selBg, and cursor", func(t *testing.T) {
+	t.Run("GET name=b3tty-light returns 200 with correct bg, fg, selBg, and cursor", func(t *testing.T) {
 		ts := newTestTerminalServer()
-		req := httptest.NewRequest(http.MethodGet, "/theme?name=light", nil)
+		req := httptest.NewRequest(http.MethodGet, "/theme?name=b3tty-light", nil)
 		w := httptest.NewRecorder()
 		ts.themePaletteHandler(w, req)
 

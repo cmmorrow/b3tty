@@ -211,13 +211,13 @@ func parseConfigYAML(t *testing.T, s string) map[string]any {
 
 func TestBuildConfigYAML(t *testing.T) {
 	t.Run("theme name appears at top level and under themes", func(t *testing.T) {
-		out := parseConfigYAML(t, mustBuildConfigYAML(t, "dark", map[string]any{
+		out := parseConfigYAML(t, mustBuildConfigYAML(t, "b3tty-dark", map[string]any{
 			"foreground": "#ffffff",
 		}))
-		assert.Equal(t, "dark", out["theme"])
+		assert.Equal(t, "b3tty-dark", out["theme"])
 		themes, ok := out["themes"].(map[string]any)
 		require.True(t, ok)
-		assert.Contains(t, themes, "dark")
+		assert.Contains(t, themes, "b3tty-dark")
 	})
 
 	t.Run("color values round-trip correctly", func(t *testing.T) {
@@ -237,17 +237,17 @@ func TestBuildConfigYAML(t *testing.T) {
 
 	t.Run("hex colors starting with # are valid YAML", func(t *testing.T) {
 		// A bare # in YAML begins an inline comment; yaml.v3 must quote it.
-		yamlOut := mustBuildConfigYAML(t, "dark", map[string]any{"foreground": "#aabbcc"})
+		yamlOut := mustBuildConfigYAML(t, "b3tty-dark", map[string]any{"foreground": "#aabbcc"})
 		out := parseConfigYAML(t, yamlOut)
-		palette := out["themes"].(map[string]any)["dark"].(map[string]any)
+		palette := out["themes"].(map[string]any)["b3tty-dark"].(map[string]any)
 		assert.Equal(t, "#aabbcc", palette["foreground"])
 	})
 
 	t.Run("empty color map produces valid YAML with empty theme block", func(t *testing.T) {
-		out := parseConfigYAML(t, mustBuildConfigYAML(t, "light", map[string]any{}))
-		assert.Equal(t, "light", out["theme"])
+		out := parseConfigYAML(t, mustBuildConfigYAML(t, "b3tty-light", map[string]any{}))
+		assert.Equal(t, "b3tty-light", out["theme"])
 		themes := out["themes"].(map[string]any)
-		assert.Contains(t, themes, "light")
+		assert.Contains(t, themes, "b3tty-light")
 	})
 
 	t.Run("output passes ValidateConfig", func(t *testing.T) {
@@ -277,8 +277,8 @@ func TestBuildConfigYAML(t *testing.T) {
 			"count":      float64(3),
 			"flag":       true,
 		}
-		out := parseConfigYAML(t, mustBuildConfigYAML(t, "dark", colors))
-		palette := out["themes"].(map[string]any)["dark"].(map[string]any)
+		out := parseConfigYAML(t, mustBuildConfigYAML(t, "b3tty-dark", colors))
+		palette := out["themes"].(map[string]any)["b3tty-dark"].(map[string]any)
 		assert.Equal(t, "#ffffff", palette["foreground"])
 		assert.NotContains(t, palette, "count")
 		assert.NotContains(t, palette, "flag")
@@ -290,8 +290,8 @@ func TestBuildConfigYAML(t *testing.T) {
 			"background": "rgb(0,0,0)",
 			"red":        "not#valid",
 		}
-		out := parseConfigYAML(t, mustBuildConfigYAML(t, "dark", colors))
-		palette := out["themes"].(map[string]any)["dark"].(map[string]any)
+		out := parseConfigYAML(t, mustBuildConfigYAML(t, "b3tty-dark", colors))
+		palette := out["themes"].(map[string]any)["b3tty-dark"].(map[string]any)
 		assert.Equal(t, "#ffffff", palette["foreground"])
 		assert.NotContains(t, palette, "background")
 		assert.NotContains(t, palette, "red")
