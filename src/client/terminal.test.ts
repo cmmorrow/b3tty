@@ -14,9 +14,17 @@ import {
     initTerm,
     hexToRgba,
     withAlpha,
+    setLight,
+    setDark,
     terminalFactory,
     buildDebugHooks,
     requireElement,
+    disableCursor,
+    applyThemeStyles,
+    applyPageStyles,
+    handleThemeChange,
+    handleProfileChange,
+    handleThemeSelected,
 } from "./terminal.ts";
 import { isValidHttpProtocol, isValidWsProtocol, isValidPort, isValidUri, MAX_UINT16 } from "./validators.ts";
 import { isB3ttyDialog, isB3ttyMenuBar } from "./components.ts";
@@ -106,6 +114,42 @@ describe("withAlpha", () => {
 
     it("falls back to rgba(0,0,0,alpha) for an empty string", () => {
         expect(withAlpha("", 0.5)).toBe("rgba(0, 0, 0, 0.5)");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// setLight
+// ---------------------------------------------------------------------------
+
+describe("setLight", () => {
+    it("returns the color when defined and non-empty", () => {
+        expect(setLight("#ffffff")).toBe("#ffffff");
+    });
+
+    it("returns 'white' when the value is undefined", () => {
+        expect(setLight(undefined)).toBe("white");
+    });
+
+    it("returns 'white' when the value is an empty string", () => {
+        expect(setLight("")).toBe("white");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// setDark
+// ---------------------------------------------------------------------------
+
+describe("setDark", () => {
+    it("returns the color when defined and non-empty", () => {
+        expect(setDark("#000000")).toBe("#000000");
+    });
+
+    it("returns 'black' when the value is undefined", () => {
+        expect(setDark(undefined)).toBe("black");
+    });
+
+    it("returns 'black' when the value is an empty string", () => {
+        expect(setDark("")).toBe("black");
     });
 });
 
@@ -1139,5 +1183,642 @@ describe("isThemeActivateResponse", () => {
 
     it("returns false for an empty object", () => {
         expect(isThemeActivateResponse({})).toBe(false);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// DOM stub helpers
+// ---------------------------------------------------------------------------
+
+type StyleMap = Record<string, string>;
+
+function makeStyleObj(): { setProperty: ReturnType<typeof mock>; [key: string]: unknown } {
+    const props: StyleMap = {};
+    return {
+        setProperty: mock((k: string, v: string) => {
+            props[k] = v;
+        }),
+        get(k: string) {
+            return props[k] ?? "";
+        },
+        _props: props,
+    };
+}
+
+function makeDomStub() {
+    const elements: Record<string, { style: StyleMap; textContent: string | null }> = {
+        container: { style: {} as StyleMap, textContent: null },
+        profile: { style: {} as StyleMap, textContent: null },
+    };
+    const head = {
+        _children: [] as Array<{ id: string; textContent: string }>,
+        appendChild: mock(function (this: typeof head, el: { id: string; textContent: string }) {
+            this._children.push(el);
+        }),
+    };
+    const bodyStyle: StyleMap = {};
+    const documentElementStyle = makeStyleObj();
+
+    const doc = {
+        body: { style: bodyStyle },
+        head,
+        documentElement: { style: documentElementStyle },
+        getElementById: mock((id: string) => {
+            if (id === "b3tty-bg-style") return head._children.find((c) => c.id === "b3tty-bg-style") ?? null;
+            return elements[id] ?? null;
+        }),
+        createElement: mock((_tag: string) => ({ id: "", textContent: "" })),
+    };
+    return { doc, elements, head, bodyStyle, documentElementStyle };
+}
+
+// ---------------------------------------------------------------------------
+// disableCursor
+// ---------------------------------------------------------------------------
+
+describe("disableCursor", () => {
+    it("sets cursorBlink to false", () => {
+        const term = terminalFactory({
+            tls: false,
+            uri: "localhost",
+            port: 8080,
+            fontSize: 14,
+            fontFamily: "monospace",
+            cursorBlink: true,
+            rows: 0,
+            columns: 0,
+            theme: {},
+        });
+        disableCursor(term);
+        expect(term.options.cursorBlink).toBe(false);
+    });
+
+    it("sets cursorInactiveStyle to 'none'", () => {
+        const term = terminalFactory({
+            tls: false,
+            uri: "localhost",
+            port: 8080,
+            fontSize: 14,
+            fontFamily: "monospace",
+            cursorBlink: true,
+            rows: 0,
+            columns: 0,
+            theme: {},
+        });
+        disableCursor(term);
+        expect(term.options.cursorInactiveStyle).toBe("none");
+    });
+
+    it("calls term.blur()", () => {
+        const term = terminalFactory({
+            tls: false,
+            uri: "localhost",
+            port: 8080,
+            fontSize: 14,
+            fontFamily: "monospace",
+            cursorBlink: true,
+            rows: 0,
+            columns: 0,
+            theme: {},
+        });
+        const blurSpy = spyOn(term, "blur");
+        disableCursor(term);
+        expect(blurSpy).toHaveBeenCalledTimes(1);
+        blurSpy.mockRestore();
+    });
+
+    it("re-blurs on subsequent focus when textarea is present", () => {
+        const term = terminalFactory({
+            tls: false,
+            uri: "localhost",
+            port: 8080,
+            fontSize: 14,
+            fontFamily: "monospace",
+            cursorBlink: true,
+            rows: 0,
+            columns: 0,
+            theme: {},
+        });
+        const listeners: Array<() => void> = [];
+        const fakeTextarea = { addEventListener: mock((_evt: string, cb: () => void) => listeners.push(cb)) };
+        Object.defineProperty(term, "textarea", { value: fakeTextarea, configurable: true });
+        const blurSpy = spyOn(term, "blur");
+        disableCursor(term);
+        listeners[0]?.();
+        expect(blurSpy).toHaveBeenCalledTimes(2);
+        blurSpy.mockRestore();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// applyThemeStyles
+// ---------------------------------------------------------------------------
+
+describe("applyThemeStyles", () => {
+    let saved: unknown;
+
+    beforeEach(() => {
+        saved = (globalThis as Record<string, unknown>)["document"];
+    });
+
+    afterEach(() => {
+        (globalThis as Record<string, unknown>)["document"] = saved;
+    });
+
+    it("sets body background to a linear-gradient when hasBackgroundImage is true", () => {
+        const { doc, bodyStyle } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        applyThemeStyles({ background: "#14181d" }, true);
+        expect(bodyStyle["background"]).toContain("linear-gradient");
+        expect(bodyStyle["background"]).toContain("url('/background')");
+    });
+
+    it("includes a semi-transparent tint derived from the theme background color", () => {
+        const { doc, bodyStyle } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        applyThemeStyles({ background: "#ffffff" }, true);
+        expect(bodyStyle["background"]).toContain("rgba(255, 255, 255, 0.5)");
+    });
+
+    it("injects a b3tty-bg-style element into the head when hasBackgroundImage is true", () => {
+        const { doc, head } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        applyThemeStyles({ background: "#14181d" }, true);
+        expect(head.appendChild).toHaveBeenCalledTimes(1);
+        expect(head._children[0]?.textContent).toContain("xterm-viewport");
+    });
+
+    it("clears the container background when hasBackgroundImage is true", () => {
+        const { doc, elements } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        applyThemeStyles({ background: "#14181d" }, true);
+        expect(elements["container"]!.style["background"]).toBe("");
+    });
+
+    it("clears body background and sets container background when hasBackgroundImage is false", () => {
+        const { doc, elements, bodyStyle } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        applyThemeStyles({ background: "#14181d" }, false);
+        expect(bodyStyle["background"]).toBe("");
+        expect(elements["container"]!.style["background"]).toBe("#14181d");
+    });
+
+    it("sets profile label colors when the profile element has text content", () => {
+        const { doc, elements } = makeDomStub();
+        elements["profile"]!.textContent = "myprofile";
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        applyThemeStyles({ foreground: "#ffffff", background: "#14181d" }, false);
+        expect(elements["profile"]!.style["color"]).toBe("#ffffff");
+        expect(elements["profile"]!.style["background"]).toBe("#14181d");
+    });
+
+    it("does not set profile label colors when the profile element is empty", () => {
+        const { doc, elements } = makeDomStub();
+        elements["profile"]!.textContent = "";
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        applyThemeStyles({ foreground: "#ffffff", background: "#14181d" }, false);
+        expect(elements["profile"]!.style["color"]).toBeUndefined();
+    });
+
+    it("clears profile label background when hasBackgroundImage is true", () => {
+        const { doc, elements } = makeDomStub();
+        elements["profile"]!.textContent = "myprofile";
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        applyThemeStyles({ foreground: "#ffffff", background: "#14181d" }, true);
+        expect(elements["profile"]!.style["background"]).toBe("");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// applyPageStyles
+// ---------------------------------------------------------------------------
+
+describe("applyPageStyles", () => {
+    let saved: unknown;
+
+    beforeEach(() => {
+        saved = (globalThis as Record<string, unknown>)["document"];
+    });
+
+    afterEach(() => {
+        (globalThis as Record<string, unknown>)["document"] = saved;
+    });
+
+    const baseConfig = {
+        tls: false,
+        uri: "localhost",
+        port: 8080,
+        fontSize: 16,
+        fontFamily: "Fira Code",
+        cursorBlink: true,
+        rows: 0,
+        columns: 0,
+        theme: { background: "#14181d", foreground: "#ffffff" },
+    };
+
+    it("sets --b3tty-font-size CSS custom property", () => {
+        const { doc, documentElementStyle } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        applyPageStyles(baseConfig);
+        expect(documentElementStyle.setProperty).toHaveBeenCalledWith("--b3tty-font-size", "16px");
+    });
+
+    it("sets --b3tty-font-family CSS custom property", () => {
+        const { doc, documentElementStyle } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        applyPageStyles(baseConfig);
+        expect(documentElementStyle.setProperty).toHaveBeenCalledWith("--b3tty-font-family", `"Fira Code", monospace`);
+    });
+
+    it("delegates to applyThemeStyles with the config theme and backgroundImage flag", () => {
+        const { doc, elements, bodyStyle } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        applyPageStyles({ ...baseConfig, backgroundImage: false });
+        expect(bodyStyle["background"]).toBe("");
+        expect(elements["container"]!.style["background"]).toBe("#14181d");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// handleProfileChange
+// ---------------------------------------------------------------------------
+
+describe("handleProfileChange", () => {
+    let savedWindow: unknown;
+
+    beforeEach(() => {
+        savedWindow = (globalThis as Record<string, unknown>)["window"];
+    });
+
+    afterEach(() => {
+        (globalThis as Record<string, unknown>)["window"] = savedWindow;
+    });
+
+    function makeEvent(name: string): Event {
+        return { detail: { name } } as unknown as Event;
+    }
+
+    it("opens a new tab with the selected profile in the query string", () => {
+        const openMock = mock((_url: string, _target: string) => {});
+        (globalThis as Record<string, unknown>)["window"] = { location: { search: "" }, open: openMock };
+        handleProfileChange(makeEvent("work"));
+        expect(openMock).toHaveBeenCalledTimes(1);
+        const [url, target] = openMock.mock.calls[0]!;
+        expect(url).toContain("profile=work");
+        expect(target).toBe("_blank");
+    });
+
+    it("preserves existing query parameters when opening the new tab", () => {
+        const openMock = mock((_url: string, _target: string) => {});
+        (globalThis as Record<string, unknown>)["window"] = { location: { search: "?token=abc123" }, open: openMock };
+        handleProfileChange(makeEvent("dev"));
+        const [url] = openMock.mock.calls[0]!;
+        expect(url).toContain("token=abc123");
+        expect(url).toContain("profile=dev");
+    });
+
+    it("URL-encodes special characters in the profile name", () => {
+        const openMock = mock((_url: string, _target: string) => {});
+        (globalThis as Record<string, unknown>)["window"] = { location: { search: "" }, open: openMock };
+        handleProfileChange(makeEvent("my profile"));
+        const [url] = openMock.mock.calls[0]!;
+        expect(url).toContain("profile=my+profile");
+    });
+
+    it("opens relative to the root path", () => {
+        const openMock = mock((_url: string, _target: string) => {});
+        (globalThis as Record<string, unknown>)["window"] = { location: { search: "" }, open: openMock };
+        handleProfileChange(makeEvent("work"));
+        const [url] = openMock.mock.calls[0]!;
+        expect(url).toMatch(/^\//);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// handleThemeChange
+// ---------------------------------------------------------------------------
+
+describe("handleThemeChange", () => {
+    let savedDocument: unknown;
+    let savedFetch: unknown;
+
+    beforeEach(() => {
+        savedDocument = (globalThis as Record<string, unknown>)["document"];
+        savedFetch = (globalThis as Record<string, unknown>)["fetch"];
+    });
+
+    afterEach(() => {
+        (globalThis as Record<string, unknown>)["document"] = savedDocument;
+        (globalThis as Record<string, unknown>)["fetch"] = savedFetch;
+        mock.restore();
+    });
+
+    function makeEvent(name: string): Event {
+        return { detail: { name } } as unknown as Event;
+    }
+
+    function makeMenuBar() {
+        return { setup: mock(() => {}), updateColors: mock((_c: unknown) => {}) };
+    }
+
+    function stubFetchTheme(overrides: Record<string, unknown> = {}) {
+        const response = { hasBackgroundImage: false, foreground: "#ffffff", background: "#14181d", ...overrides };
+        (globalThis as Record<string, unknown>)["fetch"] = mock(() =>
+            Promise.resolve({ ok: true, json: () => Promise.resolve(response) })
+        );
+    }
+
+    it("returns early without a fetch when the selected name matches the active theme", async () => {
+        const fetchMock = mock(() => Promise.resolve({ ok: true, json: () => Promise.resolve({}) }));
+        (globalThis as Record<string, unknown>)["fetch"] = fetchMock;
+        const term = terminalFactory({
+            tls: false,
+            uri: "localhost",
+            port: 8080,
+            fontSize: 14,
+            fontFamily: "monospace",
+            cursorBlink: true,
+            rows: 0,
+            columns: 0,
+            theme: {},
+        });
+        const menuBar = makeMenuBar();
+        await handleThemeChange(makeEvent("dracula"), term, menuBar, { current: "dracula" });
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("calls updateColors with the new theme's foreground and background", async () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        stubFetchTheme({ foreground: "#cdd6f4", background: "#1e1e2e" });
+        const term = terminalFactory({
+            tls: false,
+            uri: "localhost",
+            port: 8080,
+            fontSize: 14,
+            fontFamily: "monospace",
+            cursorBlink: true,
+            rows: 0,
+            columns: 0,
+            theme: {},
+        });
+        const menuBar = makeMenuBar();
+        const activeTheme = { current: "b3tty-dark" };
+        await handleThemeChange(makeEvent("catppuccin-mocha"), term, menuBar, activeTheme);
+        expect(menuBar.updateColors).toHaveBeenCalledWith({ bg: "#cdd6f4", fg: "#1e1e2e" });
+    });
+
+    it("updates activeTheme.current after a successful change", async () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        stubFetchTheme();
+        const term = terminalFactory({
+            tls: false,
+            uri: "localhost",
+            port: 8080,
+            fontSize: 14,
+            fontFamily: "monospace",
+            cursorBlink: true,
+            rows: 0,
+            columns: 0,
+            theme: {},
+        });
+        const activeTheme = { current: "b3tty-dark" };
+        await handleThemeChange(makeEvent("dracula"), term, makeMenuBar(), activeTheme);
+        expect(activeTheme.current).toBe("dracula");
+    });
+
+    it("applies the new theme to term.options.theme", async () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        stubFetchTheme({ foreground: "#f8f8f2", background: "#282a36" });
+        const term = terminalFactory({
+            tls: false,
+            uri: "localhost",
+            port: 8080,
+            fontSize: 14,
+            fontFamily: "monospace",
+            cursorBlink: true,
+            rows: 0,
+            columns: 0,
+            theme: {},
+        });
+        await handleThemeChange(makeEvent("dracula"), term, makeMenuBar(), { current: "b3tty-dark" });
+        expect(term.options.theme?.foreground).toBe("#f8f8f2");
+        expect(term.options.theme?.background).toBe("#282a36");
+    });
+
+    it("overrides theme background to transparent when hasBackgroundImage is true", async () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        stubFetchTheme({ hasBackgroundImage: true, background: "#282a36" });
+        const term = terminalFactory({
+            tls: false,
+            uri: "localhost",
+            port: 8080,
+            fontSize: 14,
+            fontFamily: "monospace",
+            cursorBlink: true,
+            rows: 0,
+            columns: 0,
+            theme: {},
+        });
+        await handleThemeChange(makeEvent("dracula"), term, makeMenuBar(), { current: "b3tty-dark" });
+        expect(term.options.theme?.background).toBe("rgba(40, 42, 54, 0)");
+    });
+
+    it("does not update activeTheme.current when the fetch throws", async () => {
+        (globalThis as Record<string, unknown>)["fetch"] = mock(() => Promise.reject(new Error("network error")));
+        const term = terminalFactory({
+            tls: false,
+            uri: "localhost",
+            port: 8080,
+            fontSize: 14,
+            fontFamily: "monospace",
+            cursorBlink: true,
+            rows: 0,
+            columns: 0,
+            theme: {},
+        });
+        const activeTheme = { current: "b3tty-dark" };
+        await handleThemeChange(makeEvent("dracula"), term, makeMenuBar(), activeTheme);
+        expect(activeTheme.current).toBe("b3tty-dark");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// handleThemeSelected
+// ---------------------------------------------------------------------------
+
+describe("handleThemeSelected", () => {
+    let savedDocument: unknown;
+    let savedFetch: unknown;
+
+    beforeEach(() => {
+        savedDocument = (globalThis as Record<string, unknown>)["document"];
+        savedFetch = (globalThis as Record<string, unknown>)["fetch"];
+    });
+
+    afterEach(() => {
+        (globalThis as Record<string, unknown>)["document"] = savedDocument;
+        (globalThis as Record<string, unknown>)["fetch"] = savedFetch;
+        mock.restore();
+    });
+
+    function makeEvent(name: string): Event {
+        return { detail: { name } } as unknown as Event;
+    }
+
+    function makeMenuBar() {
+        return {
+            setup: mock((_t: string[], _p: string[], _c: unknown) => {}),
+            updateColors: mock((_c: unknown) => {}),
+        };
+    }
+
+    function makePicker() {
+        return { open: mock((_names: string[]) => {}), close: mock(() => {}) };
+    }
+
+    function makeConfig(overrides: Record<string, unknown> = {}) {
+        return {
+            tls: false,
+            uri: "localhost",
+            port: 8080,
+            fontSize: 14,
+            fontFamily: "monospace",
+            cursorBlink: true,
+            rows: 0,
+            columns: 0,
+            theme: {},
+            themeNames: ["b3tty-dark"],
+            profileNames: [],
+            ...overrides,
+        };
+    }
+
+    function stubFetchTheme(overrides: Record<string, unknown> = {}) {
+        const response = { hasBackgroundImage: false, foreground: "#ffffff", background: "#14181d", ...overrides };
+        (globalThis as Record<string, unknown>)["fetch"] = mock(() =>
+            Promise.resolve({ ok: true, json: () => Promise.resolve(response) })
+        );
+    }
+
+    it("closes the picker after a successful theme selection", async () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        stubFetchTheme();
+        const picker = makePicker();
+        await handleThemeSelected(
+            makeEvent("dracula"),
+            terminalFactory(makeConfig()),
+            makeMenuBar(),
+            picker,
+            makeConfig(),
+            { current: "b3tty-dark" }
+        );
+        expect(picker.close).toHaveBeenCalledTimes(1);
+    });
+
+    it("closes the picker without changing the theme when the fetch throws", async () => {
+        (globalThis as Record<string, unknown>)["fetch"] = mock(() => Promise.reject(new Error("network error")));
+        const picker = makePicker();
+        const activeTheme = { current: "b3tty-dark" };
+        await handleThemeSelected(
+            makeEvent("dracula"),
+            terminalFactory(makeConfig()),
+            makeMenuBar(),
+            picker,
+            makeConfig(),
+            activeTheme
+        );
+        expect(picker.close).toHaveBeenCalledTimes(1);
+        expect(activeTheme.current).toBe("b3tty-dark");
+    });
+
+    it("updates activeTheme.current after a successful selection", async () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        stubFetchTheme();
+        const activeTheme = { current: "b3tty-dark" };
+        await handleThemeSelected(
+            makeEvent("dracula"),
+            terminalFactory(makeConfig()),
+            makeMenuBar(),
+            makePicker(),
+            makeConfig(),
+            activeTheme
+        );
+        expect(activeTheme.current).toBe("dracula");
+    });
+
+    it("applies the new theme to term.options.theme", async () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        stubFetchTheme({ foreground: "#f8f8f2", background: "#282a36" });
+        const term = terminalFactory(makeConfig());
+        await handleThemeSelected(makeEvent("dracula"), term, makeMenuBar(), makePicker(), makeConfig(), {
+            current: "b3tty-dark",
+        });
+        expect(term.options.theme?.foreground).toBe("#f8f8f2");
+        expect(term.options.theme?.background).toBe("#282a36");
+    });
+
+    it("overrides theme background to transparent when hasBackgroundImage is true", async () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        stubFetchTheme({ hasBackgroundImage: true, background: "#282a36" });
+        const term = terminalFactory(makeConfig());
+        await handleThemeSelected(makeEvent("dracula"), term, makeMenuBar(), makePicker(), makeConfig(), {
+            current: "b3tty-dark",
+        });
+        expect(term.options.theme?.background).toBe("rgba(40, 42, 54, 0)");
+    });
+
+    it("calls menuBar.setup with updated themeNames when the response includes them", async () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        stubFetchTheme({ themeNames: ["b3tty-dark", "dracula"], foreground: "#f8f8f2", background: "#282a36" });
+        const menuBar = makeMenuBar();
+        const config = makeConfig({ themeNames: ["b3tty-dark"] });
+        await handleThemeSelected(makeEvent("dracula"), terminalFactory(makeConfig()), menuBar, makePicker(), config, {
+            current: "b3tty-dark",
+        });
+        expect(menuBar.setup).toHaveBeenCalledTimes(1);
+        expect(menuBar.setup.mock.calls[0]![0]).toEqual(["b3tty-dark", "dracula"]);
+        expect(menuBar.updateColors).not.toHaveBeenCalled();
+    });
+
+    it("calls menuBar.updateColors when the response does not include themeNames", async () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        stubFetchTheme({ foreground: "#cdd6f4", background: "#1e1e2e" });
+        const menuBar = makeMenuBar();
+        await handleThemeSelected(
+            makeEvent("catppuccin-mocha"),
+            terminalFactory(makeConfig()),
+            menuBar,
+            makePicker(),
+            makeConfig(),
+            { current: "b3tty-dark" }
+        );
+        expect(menuBar.updateColors).toHaveBeenCalledWith({ bg: "#cdd6f4", fg: "#1e1e2e" });
+        expect(menuBar.setup).not.toHaveBeenCalled();
+    });
+
+    it("updates config.themeNames in place when the response includes themeNames", async () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        stubFetchTheme({ themeNames: ["b3tty-dark", "dracula"] });
+        const config = makeConfig({ themeNames: ["b3tty-dark"] });
+        await handleThemeSelected(
+            makeEvent("dracula"),
+            terminalFactory(makeConfig()),
+            makeMenuBar(),
+            makePicker(),
+            config,
+            { current: "b3tty-dark" }
+        );
+        expect(config.themeNames).toEqual(["b3tty-dark", "dracula"]);
     });
 });

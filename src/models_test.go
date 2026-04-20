@@ -431,3 +431,77 @@ func TestMapToTheme(t *testing.T) {
 	assert.Equal("red", theme.Foreground)
 	assert.Empty(theme.Background)
 }
+
+func TestThemeToColorMap(t *testing.T) {
+	t.Run("empty theme returns empty map", func(t *testing.T) {
+		m := Theme{}.toColorMap()
+		assert.Empty(t, m)
+	})
+
+	t.Run("populated fields appear with hyphenated keys", func(t *testing.T) {
+		theme := Theme{
+			Foreground:          "#ffffff",
+			Background:          "#000000",
+			Cursor:              "#cccccc",
+			CursorAccent:        "#aaaaaa",
+			SelectionForeground: "#ff0000",
+			SelectionBackground: "#0000ff",
+		}
+		m := theme.toColorMap()
+		assert.Equal(t, "#ffffff", m["foreground"])
+		assert.Equal(t, "#000000", m["background"])
+		assert.Equal(t, "#cccccc", m["cursor"])
+		assert.Equal(t, "#aaaaaa", m["cursor-accent"])
+		assert.Equal(t, "#ff0000", m["selection-foreground"])
+		assert.Equal(t, "#0000ff", m["selection-background"])
+	})
+
+	t.Run("all 22 color fields are present when fully populated", func(t *testing.T) {
+		theme := Theme{
+			Foreground: "#fff", Background: "#000",
+			Cursor: "#ccc", CursorAccent: "#aaa",
+			SelectionForeground: "#111", SelectionBackground: "#222",
+			Black: "#000", BrightBlack: "#333",
+			Red: "#f00", BrightRed: "#f55",
+			Yellow: "#ff0", BrightYellow: "#ff5",
+			Green: "#0f0", BrightGreen: "#5f5",
+			Blue: "#00f", BrightBlue: "#55f",
+			Magenta: "#f0f", BrightMagenta: "#f5f",
+			Cyan: "#0ff", BrightCyan: "#5ff",
+			White: "#eee", BrightWhite: "#fff",
+		}
+		assert.Len(t, theme.toColorMap(), 22)
+	})
+
+	t.Run("empty fields are omitted from the map", func(t *testing.T) {
+		theme := Theme{Foreground: "#ffffff"}
+		m := theme.toColorMap()
+		assert.Contains(t, m, "foreground")
+		assert.NotContains(t, m, "background")
+		assert.NotContains(t, m, "cursor")
+	})
+
+	t.Run("BackgroundImage is excluded from the map", func(t *testing.T) {
+		theme := Theme{Foreground: "#ffffff", BackgroundImage: "/path/to/image.png"}
+		m := theme.toColorMap()
+		assert.NotContains(t, m, "background-image")
+		assert.NotContains(t, m, "BackgroundImage")
+	})
+
+	t.Run("round-trips correctly through MapToTheme", func(t *testing.T) {
+		original := Theme{
+			Foreground: "#f8f8f2",
+			Background: "#282a36",
+			Red:        "#ff5555",
+			BrightRed:  "#ff6e6e",
+			Cursor:     "#f8f8f2",
+		}
+		var restored Theme
+		restored.MapToTheme(original.toColorMap())
+		assert.Equal(t, original.Foreground, restored.Foreground)
+		assert.Equal(t, original.Background, restored.Background)
+		assert.Equal(t, original.Red, restored.Red)
+		assert.Equal(t, original.BrightRed, restored.BrightRed)
+		assert.Equal(t, original.Cursor, restored.Cursor)
+	})
+}

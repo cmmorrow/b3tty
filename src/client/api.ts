@@ -2,6 +2,23 @@ import { isThemeActivateResponse } from "./types.ts";
 import type { ThemeActivateResponse, Palette } from "./types.ts";
 
 /**
+ * POSTs to /add-theme to apply and persist the chosen theme.
+ * Returns the activated theme config so the caller can apply it to the terminal.
+ * Throws if the request fails or the response fails the type guard.
+ */
+export async function postAddTheme(name: string): Promise<ThemeActivateResponse> {
+    const res = await fetch("/add-theme", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ theme: name }),
+    });
+    if (!res.ok) throw new Error(`Failed to select theme "${name}": ${res.status}`);
+    const parsed: unknown = await res.json();
+    if (!isThemeActivateResponse(parsed)) throw new Error(`Unexpected add-theme response shape`);
+    return parsed;
+}
+
+/**
  * POSTs terminal dimensions to /size (URL pre-built by buildSizeUrl).
  * Throws if the server returns a non-ok status.
  */

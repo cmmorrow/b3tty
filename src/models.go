@@ -173,6 +173,41 @@ func (tm *Theme) MapToTheme(m map[string]any) {
 	}
 }
 
+// toColorMap converts the Theme to a map[string]any using the hyphenated key
+// names expected by MapToTheme and buildConfigYAML. Empty fields are omitted.
+// BackgroundImage is intentionally excluded since it holds a file path, not a color.
+func (tm Theme) toColorMap() map[string]any {
+	m := make(map[string]any)
+	set := func(k, v string) {
+		if v != "" {
+			m[k] = v
+		}
+	}
+	set("foreground", tm.Foreground)
+	set("background", tm.Background)
+	set("cursor", tm.Cursor)
+	set("cursor-accent", tm.CursorAccent)
+	set("selection-foreground", tm.SelectionForeground)
+	set("selection-background", tm.SelectionBackground)
+	set("black", tm.Black)
+	set("bright-black", tm.BrightBlack)
+	set("red", tm.Red)
+	set("bright-red", tm.BrightRed)
+	set("yellow", tm.Yellow)
+	set("bright-yellow", tm.BrightYellow)
+	set("green", tm.Green)
+	set("bright-green", tm.BrightGreen)
+	set("blue", tm.Blue)
+	set("bright-blue", tm.BrightBlue)
+	set("magenta", tm.Magenta)
+	set("bright-magenta", tm.BrightMagenta)
+	set("cyan", tm.Cyan)
+	set("bright-cyan", tm.BrightCyan)
+	set("white", tm.White)
+	set("bright-white", tm.BrightWhite)
+	return m
+}
+
 type TermConfig struct {
 	TLS                bool     `json:"tls"`
 	CursorBlink        bool     `json:"cursorBlink"`
@@ -186,11 +221,12 @@ type TermConfig struct {
 	Debug              bool     `json:"debug"`
 	HasBackgroundImage bool     `json:"backgroundImage"`
 	ThemeNames         []string `json:"themeNames"`
+	AllThemeNames      []string `json:"allThemeNames"`
 	ProfileNames       []string `json:"profileNames"`
 	ActiveTheme        string   `json:"activeTheme"`
 }
 
-func NewTermConfig(srv *Server, clnt *Client, thm *Theme, themeNames []string, profileNames []string, activeTheme string) *TermConfig {
+func NewTermConfig(srv *Server, clnt *Client, thm *Theme, themeNames []string, allThemeNames []string, profileNames []string, activeTheme string) *TermConfig {
 	return &TermConfig{
 		TLS:                srv.TLS.Enabled,
 		CursorBlink:        clnt.CursorBlink,
@@ -204,6 +240,7 @@ func NewTermConfig(srv *Server, clnt *Client, thm *Theme, themeNames []string, p
 		Debug:              debugEnabled,
 		HasBackgroundImage: thm.BackgroundImage != "",
 		ThemeNames:         themeNames,
+		AllThemeNames:      allThemeNames,
 		ProfileNames:       profileNames,
 		ActiveTheme:        activeTheme,
 	}
@@ -226,7 +263,8 @@ type themePaletteResponse struct {
 // mode without receiving the server-side file path.
 type themeConfigResponse struct {
 	Theme
-	HasBackgroundImage bool `json:"hasBackgroundImage"`
+	HasBackgroundImage bool     `json:"hasBackgroundImage"`
+	ThemeNames         []string `json:"themeNames,omitempty"`
 }
 
 // CSPHeader represents a single Content-Security-Policy directive, consisting of

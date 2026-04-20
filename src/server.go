@@ -34,17 +34,60 @@ var templ string
 //go:embed templates/setup.tmpl
 var setupTempl string
 
+//go:embed templates/theme-select.tmpl
+var themeSelectTempl string
+
 //go:embed default_themes/b3tty_dark.json
 var defaultDarkThemeJSON []byte
 
 //go:embed default_themes/b3tty_light.json
 var defaultLightThemeJSON []byte
 
+//go:embed default_themes/catppuccin-mocha.json
+var catppuccinMochaThemeJSON []byte
+
+//go:embed default_themes/catppuccin-latte.json
+var catppuccinLatteThemeJSON []byte
+
+//go:embed default_themes/solarized-dark.json
+var solarizedDarkThemeJSON []byte
+
+//go:embed default_themes/solarized-light.json
+var solarizedLightThemeJSON []byte
+
+//go:embed default_themes/tokyo-night.json
+var tokyoNightThemeJSON []byte
+
+//go:embed default_themes/dracula.json
+var draculaThemeJSON []byte
+
+//go:embed default_themes/one-light.json
+var oneLightThemeJSON []byte
+
+//go:embed default_themes/gruvbox-light.json
+var gruvboxLightThemeJSON []byte
+
 // defaultDarkTheme and defaultLightTheme are the color maps used both to
 // update ts.client.Theme in memory (via MapToTheme) and to write the YAML
 // config file. Keys use the hyphenated form expected by MapToTheme.
 var defaultDarkTheme = mustUnmarshalTheme(defaultDarkThemeJSON)
 var defaultLightTheme = mustUnmarshalTheme(defaultLightThemeJSON)
+
+// builtinThemes maps each built-in theme name to its color map. All entries
+// are available via themePaletteHandler and are registered into ts.Themes at
+// startup so the menu bar can switch between them without any conf.yaml entry.
+var builtinThemes = map[string]map[string]any{
+	"b3tty-dark":       defaultDarkTheme,
+	"b3tty-light":      defaultLightTheme,
+	"catppuccin-mocha": mustUnmarshalTheme(catppuccinMochaThemeJSON),
+	"catppuccin-latte": mustUnmarshalTheme(catppuccinLatteThemeJSON),
+	"solarized-dark":   mustUnmarshalTheme(solarizedDarkThemeJSON),
+	"solarized-light":  mustUnmarshalTheme(solarizedLightThemeJSON),
+	"tokyo-night":      mustUnmarshalTheme(tokyoNightThemeJSON),
+	"dracula":          mustUnmarshalTheme(draculaThemeJSON),
+	"one-light":        mustUnmarshalTheme(oneLightThemeJSON),
+	"gruvbox-light":    mustUnmarshalTheme(gruvboxLightThemeJSON),
+}
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:    BUFFER_SIZE,
@@ -139,8 +182,8 @@ func resolveProfileName(q url.Values, profiles map[string]Profile) string {
 // buildConfigJSON serialises a TermConfig derived from the given server, client, theme,
 // and available theme/profile name lists into JSON. The returned bytes are ready to
 // embed in the HTML template.
-func buildConfigJSON(srv *Server, clnt *Client, thm *Theme, themeNames []string, profileNames []string, activeTheme string) ([]byte, error) {
-	cfg := NewTermConfig(srv, clnt, thm, themeNames, profileNames, activeTheme)
+func buildConfigJSON(srv *Server, clnt *Client, thm *Theme, themeNames []string, allThemeNames []string, profileNames []string, activeTheme string) ([]byte, error) {
+	cfg := NewTermConfig(srv, clnt, thm, themeNames, allThemeNames, profileNames, activeTheme)
 	return json.Marshal(cfg)
 }
 
@@ -323,6 +366,8 @@ func Serve(ts *TerminalServer, shouldOpenBrowser bool, useTLS bool) {
 	mux.HandleFunc("/background", ts.backgroundHandler)
 	mux.HandleFunc("/theme", ts.themePaletteHandler)
 	mux.HandleFunc("/theme-config", ts.themeConfigHandler)
+	mux.HandleFunc("/theme-select", ts.themeSelectHandler)
+	mux.HandleFunc("/add-theme", ts.addThemeHandler)
 	mux.HandleFunc("/save-config", ts.saveConfigHandler)
 	httpServer := &http.Server{
 		Addr:         addr,
@@ -458,6 +503,25 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	sort.Strings(themeNames)
 	Debugf("Theme names: %s", strings.Join(themeNames, ", "))
 
+	// allThemeNames is the union of built-in and user-defined theme names, used
+	// to populate the in-page theme picker.
+	allNameSet := make(map[string]struct{})
+	var allThemeNames []string
+	for name := range builtinThemes {
+		if _, seen := allNameSet[name]; !seen {
+			allNameSet[name] = struct{}{}
+			allThemeNames = append(allThemeNames, name)
+		}
+	}
+	for name := range ts.Themes {
+		if _, seen := allNameSet[name]; !seen {
+			allNameSet[name] = struct{}{}
+			allThemeNames = append(allThemeNames, name)
+		}
+	}
+	sort.Strings(allThemeNames)
+	Debugf("All theme names: %s", strings.Join(allThemeNames, ", "))
+
 	profileNames := make([]string, 0, len(ts.Profiles))
 	for name := range ts.Profiles {
 		profileNames = append(profileNames, name)
@@ -466,7 +530,7 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	Debugf("Profile names: %s", strings.Join(profileNames, ", "))
 
 	thm := ts.Client.Theme
-	cfgJSON, err := buildConfigJSON(ts.Server, ts.Client, &thm, themeNames, profileNames, ts.ActiveTheme)
+	cfgJSON, err := buildConfigJSON(ts.Server, ts.Client, &thm, themeNames, allThemeNames, profileNames, ts.ActiveTheme)
 	if err != nil {
 		Errorf("config serialization error: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -509,41 +573,141 @@ func (ts *TerminalServer) renderSetupPage(w http.ResponseWriter) {
 	}
 }
 
-// themeNormalOrder and themeBrightOrder define the ANSI display order used by
-// the palette preview in the theme selector component.
-var themeNormalOrder = []string{"black", "red", "yellow", "green", "cyan", "blue", "magenta", "white"}
-var themeBrightOrder = []string{"bright-black", "bright-red", "bright-yellow", "bright-green", "bright-cyan", "bright-blue", "bright-magenta", "bright-white"}
+// themeSelectHandler renders the full-page theme picker for authenticated users.
+// GET /theme-select?token=<tok>&profile=<name>
+func (ts *TerminalServer) themeSelectHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		Warnf("%s %s: method not allowed: %s", r.Method, r.URL.Path, r.Method)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	query := r.URL.Query()
+	if !validateToken(query.Get("token"), ts.Token) {
+		Warnf("%s %s: forbidden: invalid or missing token", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	if ts.FirstRun {
+		http.NotFound(w, r)
+		return
+	}
 
-// themePaletteHandler serves a GET /theme?name=<b3tty-dark|b3tty-light> request and returns a
-// themePaletteResponse JSON payload shaped for the B3ttyThemeSelector component.
+	w.Header().Set("Content-Security-Policy", GetCSPHeaders().String())
+
+	tmpl, err := template.New("theme-select").Parse(themeSelectTempl)
+	if err != nil {
+		Fatal(err)
+	}
+	Debug("loading theme-select over-panel")
+	if err = tmpl.Execute(w, nil); err != nil {
+		Errorf("theme-select response error: %v", err)
+	}
+}
+
+// addThemeHandler applies a chosen theme and persists it to conf.yaml.
+// POST /add-theme  body: {"theme":"<name>"}
+func (ts *TerminalServer) addThemeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		Warnf("%s %s: method not allowed: %s", r.Method, r.URL.Path, r.Method)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
+		Warnf("%s %s: forbidden: cross-origin request from Sec-Fetch-Site %q", r.Method, r.URL.Path, site)
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, MAX_REQUEST_BODY_SIZE)
+	var req struct {
+		Theme string `json:"theme"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Theme == "" {
+		Warnf("%s %s: bad request: missing or invalid theme", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	// Resolve theme colors and ensure the theme is in ts.Themes.
+	var colors map[string]any
+	if builtinColors, ok := builtinThemes[req.Theme]; ok {
+		colors = builtinColors
+		if ts.Themes == nil {
+			ts.Themes = make(map[string]Theme)
+		}
+		if _, exists := ts.Themes[req.Theme]; !exists {
+			var t Theme
+			t.MapToTheme(colors)
+			ts.Themes[req.Theme] = t
+		}
+	} else if theme, ok := ts.Themes[req.Theme]; ok {
+		colors = theme.toColorMap()
+	} else {
+		Warnf("%s %s: unknown theme %q", r.Method, r.URL.Path, req.Theme)
+		http.NotFound(w, r)
+		return
+	}
+
+	ts.Client.Theme = ts.Themes[req.Theme]
+	ts.ActiveTheme = req.Theme
+
+	if err := UpdateThemeInConfig(req.Theme, colors); err != nil {
+		Errorf("add-theme: failed to update config: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	Debugf("added theme %q", req.Theme)
+	themeNames := make([]string, 0, len(ts.Themes))
+	for name := range ts.Themes {
+		themeNames = append(themeNames, name)
+	}
+	sort.Strings(themeNames)
+	resp := themeConfigResponse{
+		Theme:              ts.Client.Theme,
+		HasBackgroundImage: ts.Client.Theme.BackgroundImage != "",
+		ThemeNames:         themeNames,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		Errorf("add-theme response error: %v", err)
+	}
+}
+
+// themePaletteHandler serves a GET /theme?name=<name> request for any built-in or
+// user-defined theme and returns a themePaletteResponse JSON payload shaped for the
+// theme selector components.
 func (ts *TerminalServer) themePaletteHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "GET" {
 		Warnf("%s %s: method not allowed: %s", r.Method, r.URL.Path, r.Method)
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	var colors map[string]any
-	switch r.URL.Query().Get("name") {
-	case "b3tty-dark":
-		colors = defaultDarkTheme
-	case "b3tty-light":
-		colors = defaultLightTheme
-	default:
-		Warn("theme name must be b3tty-light or b3tty-dark")
-		w.WriteHeader(http.StatusBadRequest)
-		return
+	name := r.URL.Query().Get("name")
+	colors, ok := builtinThemes[name]
+	if !ok {
+		theme, ok := ts.Themes[name]
+		if !ok {
+			Warnf("unknown theme name: %q", name)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		colors = theme.toColorMap()
 	}
+
+	normalOrder := []string{"black", "red", "yellow", "green", "cyan", "blue", "magenta", "white"}
+	brightOrder := []string{"bright-black", "bright-red", "bright-yellow", "bright-green", "bright-cyan", "bright-blue", "bright-magenta", "bright-white"}
 
 	str := func(key string) string {
 		v, _ := colors[key].(string)
 		return v
 	}
-	normal := make([]string, len(themeNormalOrder))
-	for i, key := range themeNormalOrder {
+	normal := make([]string, len(normalOrder))
+	for i, key := range normalOrder {
 		normal[i] = str(key)
 	}
-	bright := make([]string, len(themeBrightOrder))
-	for i, key := range themeBrightOrder {
+	bright := make([]string, len(brightOrder))
+	for i, key := range brightOrder {
 		bright[i] = str(key)
 	}
 
@@ -603,6 +767,17 @@ func (ts *TerminalServer) themeConfigHandler(w http.ResponseWriter, r *http.Requ
 	if r.Method == "POST" {
 		ts.Client.Theme = theme
 		ts.ActiveTheme = name
+		var colors map[string]any
+		if builtinColors, ok := builtinThemes[name]; ok {
+			colors = builtinColors
+		} else {
+			colors = theme.toColorMap()
+		}
+		if err := UpdateThemeInConfig(name, colors); err != nil {
+			Errorf("theme-config: failed to update config: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 	}
 	resp := themeConfigResponse{
 		Theme:              theme,

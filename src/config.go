@@ -10,10 +10,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const CONFIG_FILE_NAME = "conf.yaml"
-const DOT_CONFIG_PATH = ".config"
-const B3TTY_CONFIG_PATH = "b3tty"
-
 // The following types mirror the YAML config file structure. They exist solely
 // for structural and type validation at startup and are intentionally separate
 // from the runtime structs in src/models.go.
@@ -116,6 +112,54 @@ func WriteDefaultConfig(themeName string, colors map[string]any) error {
 	}
 	configPath := filepath.Join(configDir, CONFIG_FILE_NAME)
 	return os.WriteFile(configPath, []byte(yaml), 0644)
+}
+
+// UpdateThemeInConfig reads the existing conf.yaml (creating it if absent), sets the
+// active theme name, and adds the theme's color entries to the themes section if they
+// are not already present. Existing settings are preserved.
+func UpdateThemeInConfig(themeName string, colors map[string]any) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	configPath := filepath.Join(home, DOT_CONFIG_PATH, B3TTY_CONFIG_PATH, CONFIG_FILE_NAME)
+
+	cfg := map[string]any{}
+	if data, err := os.ReadFile(configPath); err == nil && len(data) > 0 {
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return fmt.Errorf("UpdateThemeInConfig: parse existing config: %w", err)
+		}
+	}
+
+	cfg["theme"] = themeName
+
+	if _, ok := cfg["themes"]; !ok {
+		cfg["themes"] = map[string]any{}
+	}
+	themesSection, ok := cfg["themes"].(map[string]any)
+	if !ok {
+		themesSection = map[string]any{}
+		cfg["themes"] = themesSection
+	}
+
+	if _, exists := themesSection[themeName]; !exists && len(colors) > 0 {
+		themeColors := make(map[string]any, len(colors))
+		for k, v := range colors {
+			if s, ok := v.(string); ok && ValidateThemeColor(s) {
+				themeColors[k] = s
+			}
+		}
+		themesSection[themeName] = themeColors
+	}
+
+	out, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("UpdateThemeInConfig: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(configPath, out, 0644)
 }
 
 // ValidateConfig opens the YAML file at path, decodes it into typed structs
