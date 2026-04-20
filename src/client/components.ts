@@ -29,6 +29,14 @@ export interface B3ttyMenuBar {
 }
 
 /**
+ * Interface for the b3tty-theme-picker web component.
+ */
+export interface B3ttyThemePicker {
+    open(themeNames: string[]): void;
+    close(): void;
+}
+
+/**
  * Returns true when el exposes the B3ttyDialog contract (show/hide methods).
  * Use this instead of `as unknown as B3ttyDialog` to preserve type safety.
  */
@@ -44,6 +52,21 @@ export function isB3ttyDialog(el: Element): el is HTMLElement & B3ttyDialog {
 export function isB3ttyMenuBar(el: Element): el is HTMLElement & B3ttyMenuBar {
     const r = el as unknown as Record<string, unknown>;
     return typeof r["setup"] === "function" && typeof r["updateColors"] === "function";
+}
+
+/**
+ * Returns true when el exposes the B3ttyThemePicker contract (open/close methods).
+ */
+export function isB3ttyThemePicker(el: Element): el is HTMLElement & B3ttyThemePicker {
+    const r = el as unknown as Record<string, unknown>;
+    return typeof r["open"] === "function" && typeof r["close"] === "function";
+}
+
+function formatThemeName(name: string): string {
+    return name
+        .split("-")
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" ");
 }
 
 if (typeof HTMLElement !== "undefined") {
@@ -288,10 +311,10 @@ if (typeof HTMLElement !== "undefined") {
             options.className = "options";
             options.appendChild(skipCard());
 
-            Promise.all([getThemePalette("dark"), getThemePalette("light")])
+            Promise.all([getThemePalette("b3tty-dark"), getThemePalette("b3tty-light")])
                 .then(([dark, light]) => {
-                    options.prepend(paletteCard("light", "Light", light));
-                    options.prepend(paletteCard("dark", "Dark", dark));
+                    options.prepend(paletteCard("b3tty-light", "B3tty Light", light));
+                    options.prepend(paletteCard("b3tty-dark", "B3tty Dark", dark));
                 })
                 .catch(() => {
                     // Palette cards remain absent; the user can still select "No theme".
@@ -433,6 +456,12 @@ if (typeof HTMLElement !== "undefined") {
                     filter: brightness(0.85);
                     background: var(--menu-bg, #fff);
                 }
+                .menu-separator {
+                    height: 1px;
+                    background: var(--menu-fg, #000);
+                    opacity: 0.2;
+                    margin: 2px 8px;
+                }
             `;
 
             this.#trigger = document.createElement("div");
@@ -462,9 +491,9 @@ if (typeof HTMLElement !== "undefined") {
             this.#menubar.innerHTML = "";
             this.#activeSection = null;
 
-            if (themeNames.length > 0) {
-                this.#menubar.appendChild(this.#buildSection("themes", "Themes", themeNames));
-            }
+            // Always add the Themes section — even when themeNames is empty — so
+            // "Select Theme…" is always accessible from the menu bar.
+            this.#menubar.appendChild(this.#buildSection("themes", "Themes", themeNames));
             if (profileNames.length > 0) {
                 this.#menubar.appendChild(this.#buildSection("profiles", "Profiles", profileNames));
             }
@@ -486,6 +515,23 @@ if (typeof HTMLElement !== "undefined") {
 
             const dropdown = document.createElement("div");
             dropdown.className = "dropdown";
+
+            if (type === "themes") {
+                const selectItem = document.createElement("div");
+                selectItem.className = "menu-item";
+                selectItem.textContent = "Select Theme\u2026";
+                selectItem.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    this.dispatchEvent(new CustomEvent("b3tty-open-theme-selector", { bubbles: true, composed: true }));
+                    this.#close();
+                });
+                dropdown.appendChild(selectItem);
+                if (items.length > 0) {
+                    const sep = document.createElement("div");
+                    sep.className = "menu-separator";
+                    dropdown.appendChild(sep);
+                }
+            }
 
             for (const name of items) {
                 const item = document.createElement("div");
@@ -564,4 +610,239 @@ if (typeof HTMLElement !== "undefined") {
     }
 
     customElements.define("b3tty-menu-bar", B3ttyMenuBarImpl);
+
+    class B3ttyThemePickerImpl extends HTMLElement implements B3ttyThemePicker {
+        #shadow: ShadowRoot;
+        #cards: HTMLDivElement;
+        #okBtn: HTMLButtonElement;
+
+        constructor() {
+            super();
+            this.#shadow = this.attachShadow({ mode: "open" });
+
+            const style = document.createElement("style");
+            style.textContent = `
+                :host { display: none; }
+                :host([open]) { display: block; }
+                .overlay {
+                    position: fixed; inset: 0;
+                    background: rgba(0,0,0,0.72);
+                    z-index: 10000;
+                    display: flex; align-items: center; justify-content: center;
+                    padding: 20px; box-sizing: border-box;
+                }
+                .modal {
+                    background: #e0e0e0;
+                    border-radius: 10px;
+                    padding: 24px 28px 20px;
+                    display: flex; flex-direction: column; gap: 16px;
+                    max-height: 85vh; max-width: 1000px; width: 100%;
+                    box-sizing: border-box;
+                    box-shadow: 0 8px 40px rgba(0,0,0,0.55);
+                }
+                h2 { margin: 0; font-family: sans-serif; font-size: 16px; font-weight: 600; color: #111; }
+                .cards {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+                    gap: 12px;
+                    overflow-y: auto; flex: 1; min-height: 0;
+                    padding: 4px 2px;
+                }
+                .card {
+                    display: flex; flex-direction: column;
+                    border-radius: 8px; border: 2px solid transparent;
+                    background: #cecece;
+                    cursor: pointer; transition: border-color 0.15s;
+                    user-select: none; overflow: hidden;
+                }
+                .card:has(input:checked) { border-color: #444; }
+                .card-header {
+                    display: flex; align-items: center; gap: 7px;
+                    padding: 8px 10px;
+                    font-family: sans-serif; font-size: 12px; font-weight: 600; color: #222;
+                    background: #c8c8c8;
+                }
+                input[type=radio] { cursor: pointer; accent-color: #444; }
+                .terminal {
+                    padding: 10px 10px 8px;
+                    display: flex; flex-direction: column; gap: 6px;
+                    font-family: monospace; font-size: 11px;
+                }
+                .titlebar { display: flex; gap: 5px; }
+                .dot { width: 9px; height: 9px; border-radius: 50%; }
+                .preview-text { line-height: 1.5; }
+                .sel { padding: 0 2px; border-radius: 2px; }
+                .swatch-row { display: flex; gap: 3px; }
+                .swatch { width: 20px; height: 20px; border-radius: 4px; box-shadow: inset 0 0 0 1px rgba(128,128,128,0.25); }
+                .loading {
+                    font-family: sans-serif; font-size: 13px; color: #555;
+                    text-align: center; padding: 20px; grid-column: 1 / -1;
+                }
+                .actions { display: flex; justify-content: flex-end; gap: 10px; }
+                .cancel-btn {
+                    padding: 8px 20px; border-radius: 5px;
+                    border: 1px solid #aaa; background: #c8c8c8;
+                    font-size: 14px; font-family: sans-serif; cursor: pointer;
+                }
+                .cancel-btn:hover { background: #b8b8b8; }
+                .ok-btn {
+                    padding: 8px 28px; border-radius: 5px; border: none;
+                    background: #444; color: #fff;
+                    font-size: 14px; font-family: sans-serif; cursor: pointer;
+                }
+                .ok-btn:disabled { background: #aaa; cursor: not-allowed; }
+                .ok-btn:not(:disabled):hover { background: #222; }
+            `;
+
+            const overlay = document.createElement("div");
+            overlay.className = "overlay";
+            const modal = document.createElement("div");
+            modal.className = "modal";
+            modal.setAttribute("role", "dialog");
+            modal.setAttribute("aria-modal", "true");
+
+            const title = document.createElement("h2");
+            title.textContent = "Select a Theme";
+
+            this.#cards = document.createElement("div");
+            this.#cards.className = "cards";
+            const loading = document.createElement("div");
+            loading.className = "loading";
+            loading.textContent = "Loading themes\u2026";
+            this.#cards.appendChild(loading);
+
+            const actions = document.createElement("div");
+            actions.className = "actions";
+            const cancelBtn = document.createElement("button");
+            cancelBtn.className = "cancel-btn";
+            cancelBtn.textContent = "Cancel";
+            this.#okBtn = document.createElement("button");
+            this.#okBtn.className = "ok-btn";
+            this.#okBtn.textContent = "OK";
+            this.#okBtn.disabled = true;
+            actions.appendChild(cancelBtn);
+            actions.appendChild(this.#okBtn);
+
+            modal.appendChild(title);
+            modal.appendChild(this.#cards);
+            modal.appendChild(actions);
+            overlay.appendChild(modal);
+            this.#shadow.appendChild(style);
+            this.#shadow.appendChild(overlay);
+
+            cancelBtn.addEventListener("click", () => this.close());
+            this.#okBtn.addEventListener("click", () => {
+                const checked = this.#shadow.querySelector<HTMLInputElement>("input[name=theme]:checked");
+                if (!checked) return;
+                this.dispatchEvent(
+                    new CustomEvent("b3tty-theme-selected", {
+                        detail: { name: checked.value },
+                        bubbles: true,
+                        composed: true,
+                    })
+                );
+            });
+        }
+
+        open(themeNames: string[]): void {
+            this.#okBtn.disabled = true;
+            this.#cards.innerHTML = "";
+            const loading = document.createElement("div");
+            loading.className = "loading";
+            loading.textContent = "Loading themes\u2026";
+            this.#cards.appendChild(loading);
+            this.setAttribute("open", "");
+
+            Promise.all(
+                themeNames.map((name) =>
+                    getThemePalette(name)
+                        .then((p) => ({ name, palette: p as Palette | null }))
+                        .catch(() => ({ name, palette: null as Palette | null }))
+                )
+            ).then((results) => {
+                this.#cards.innerHTML = "";
+                for (const { name, palette } of results) {
+                    if (palette) {
+                        this.#cards.appendChild(this.#buildCard(name, formatThemeName(name), palette));
+                    }
+                }
+                this.#cards.addEventListener("change", () => {
+                    this.#okBtn.disabled = false;
+                });
+            });
+        }
+
+        close(): void {
+            this.removeAttribute("open");
+            this.#okBtn.disabled = true;
+        }
+
+        #swatchRow(colors: string[]): HTMLDivElement {
+            const row = document.createElement("div");
+            row.className = "swatch-row";
+            for (const color of colors) {
+                const s = document.createElement("div");
+                s.className = "swatch";
+                s.style.background = color;
+                row.appendChild(s);
+            }
+            return row;
+        }
+
+        #buildCard(value: string, label: string, p: Palette): HTMLLabelElement {
+            const card = document.createElement("label");
+            card.className = "card";
+
+            const header = document.createElement("div");
+            header.className = "card-header";
+            const radio = document.createElement("input");
+            radio.type = "radio";
+            radio.name = "theme";
+            radio.id = value;
+            radio.value = value;
+            const labelSpan = document.createElement("span");
+            labelSpan.textContent = label;
+            header.appendChild(radio);
+            header.appendChild(labelSpan);
+
+            const terminal = document.createElement("div");
+            terminal.className = "terminal";
+            terminal.style.background = p.bg;
+
+            const titlebar = document.createElement("div");
+            titlebar.className = "titlebar";
+            for (const color of ["#ff5f57", "#ffbd2e", "#28c841"]) {
+                const dot = document.createElement("div");
+                dot.className = "dot";
+                dot.style.background = color;
+                titlebar.appendChild(dot);
+            }
+
+            const preview = document.createElement("div");
+            preview.className = "preview-text";
+            preview.style.color = p.fg;
+            preview.appendChild(document.createTextNode("lorem "));
+            const sel = document.createElement("span");
+            sel.className = "sel";
+            sel.style.background = p.selBg;
+            sel.style.color = p.fg;
+            sel.textContent = "ipsum";
+            preview.appendChild(sel);
+            const cursor = document.createElement("span");
+            cursor.textContent = "\u00a0";
+            cursor.style.background = p.cursor;
+            preview.appendChild(cursor);
+
+            terminal.appendChild(titlebar);
+            terminal.appendChild(preview);
+            terminal.appendChild(this.#swatchRow(p.normal));
+            terminal.appendChild(this.#swatchRow(p.bright));
+
+            card.appendChild(header);
+            card.appendChild(terminal);
+            return card;
+        }
+    }
+
+    customElements.define("b3tty-theme-picker", B3ttyThemePickerImpl);
 }

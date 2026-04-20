@@ -245,11 +245,53 @@ The menu bar is a browser-side control strip that appears at the top of the term
 - The menu bar automatically hides after 5 seconds of inactivity, or immediately when you click outside it.
 - When the menu bar opens or closes, the terminal resizes to fill the available space.
 
-**Themes menu** — visible when more than one theme is defined in the config file. Selecting a theme applies it immediately without reloading the page.
+**Themes menu** — The first item is always **Select Theme…**, which opens the Theme Selector overlay (see below). When themes are defined in the config file, a separator is shown followed by one item per theme; selecting a theme applies it immediately without reloading the page.
 
 **Profiles menu** — visible when more than one profile is configured. Selecting a profile opens that profile in a new browser tab.
 
 **Colors** — the menu bar uses the terminal's foreground color as its background and the terminal's background color as its text color, so it contrasts naturally with the active theme. When the theme is changed via the Themes menu, the menu bar colors update automatically to match.
+
+## Theme Selector
+
+The Theme Selector is a full-page overlay that lets you browse and apply any built-in or user-defined theme from directly inside the terminal page, without editing the config file.
+
+### Opening the Theme Selector
+
+Click **Select Theme…** at the top of the Themes menu in the menu bar. The overlay opens in front of the terminal — the PTY session continues running in the background and is never interrupted.
+
+### Browsing themes
+
+The overlay displays a card for each available theme. Each card shows the theme name and a row of color swatches drawn from the theme's palette, so you can preview the color scheme before applying it.
+
+Click a card to select it. The **OK** button becomes active once a card is selected.
+
+### Applying a theme
+
+Click **OK** to apply the selected theme. The following happens immediately, without a page reload:
+
+1. The theme colors are applied to the terminal and the page background.
+2. If the selected theme is a built-in theme that was not previously in your config file, it is added to the `themes` section of your config file and the `theme` key is updated — so the selection persists across restarts.
+
+Click **Cancel** at any time to close the overlay without making any changes.
+
+### Built-in themes
+
+b3tty ships with the following built-in themes, all available in the Theme Selector without any config file changes:
+
+| Theme | Style |
+|---|---|
+| b3tty-dark | Dark (default dark theme) |
+| b3tty-light | Light (default light theme) |
+| Catppuccin Mocha | Dark |
+| Catppuccin Latte | Light |
+| Dracula | Dark |
+| Tokyo Night | Dark |
+| Solarized Dark | Dark |
+| Solarized Light | Light |
+| One Light | Light |
+| Gruvbox Light | Light |
+
+User-defined themes from the `themes` section of the config file also appear in the Theme Selector alongside the built-in ones.
 
 ## Debug mode
 

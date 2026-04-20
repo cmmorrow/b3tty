@@ -14,3 +14,6 @@ const DEFAULT_PROFILE_NAME = "default"
 const BUFFER_SIZE = 4096
 const MAX_REQUEST_BODY_SIZE = 4096
 const TOKEN_LENGTH = 24
+const CONFIG_FILE_NAME = "conf.yaml"
+const DOT_CONFIG_PATH = ".config"
+const B3TTY_CONFIG_PATH = "b3tty"

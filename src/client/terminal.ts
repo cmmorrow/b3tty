@@ -14,10 +14,10 @@ import type {
     ThemeConfig,
 } from "./types.ts";
 import { isValidHttpProtocol, isValidWsProtocol, isValidPort, isValidUri } from "./validators.ts";
-import { postSize, postThemeConfig } from "./api.ts";
+import { postSize, postThemeConfig, postAddTheme } from "./api.ts";
 import "./components.ts";
-import type { B3ttyDialog, B3ttyMenuBar } from "./components.ts";
-import { isB3ttyDialog, isB3ttyMenuBar } from "./components.ts";
+import type { B3ttyDialog, B3ttyMenuBar, B3ttyThemePicker } from "./components.ts";
+import { isB3ttyDialog, isB3ttyMenuBar, isB3ttyThemePicker } from "./components.ts";
 
 export const THEME_KEYS = [
     "foreground",
@@ -73,6 +73,20 @@ export function hexToRgba(hex: string, alpha: number): string {
 export function withAlpha(color: string, alpha: number): string {
     if (color.startsWith("#")) return hexToRgba(color, alpha);
     return `rgba(0, 0, 0, ${alpha})`;
+}
+
+/**
+ * Returns the color value, falling back to "white" if undefined or empty.
+ */
+export function setLight(color: string | undefined): string {
+    return color || "white";
+}
+
+/**
+ * Returns the color value, falling back to "black" if undefined or empty.
+ */
+export function setDark(color: string | undefined): string {
+    return color || "black";
 }
 
 /**
@@ -272,7 +286,10 @@ export function initTerm(
  * and the xterm viewport is made transparent; otherwise the container gets a
  * solid background color and the body/style-element overrides are cleared.
  */
-function applyThemeStyles(theme: { background?: string; foreground?: string }, hasBackgroundImage: boolean): void {
+export function applyThemeStyles(
+    theme: { background?: string; foreground?: string },
+    hasBackgroundImage: boolean
+): void {
     const containerEl = requireElement("container");
 
     if (hasBackgroundImage) {
@@ -294,8 +311,8 @@ function applyThemeStyles(theme: { background?: string; foreground?: string }, h
 
     const profileEl = requireElement("profile");
     if (profileEl.textContent?.trim()) {
-        profileEl.style.color = theme.foreground || "white";
-        profileEl.style.background = hasBackgroundImage ? "" : theme.background || "black";
+        profileEl.style.color = setLight(theme.foreground);
+        profileEl.style.background = hasBackgroundImage ? "" : setDark(theme.background);
     }
 }
 
@@ -305,7 +322,7 @@ function applyThemeStyles(theme: { background?: string; foreground?: string }, h
  * profile label colors. Kept separate from main() so DOM-style concerns don't
  * obscure the connection setup flow.
  */
-function applyPageStyles(config: TermConfig): void {
+export function applyPageStyles(config: TermConfig): void {
     document.documentElement.style.setProperty("--b3tty-font-size", `${config.fontSize}px`);
     document.documentElement.style.setProperty("--b3tty-font-family", `"${config.fontFamily}", monospace`);
     applyThemeStyles(config.theme, !!config.backgroundImage);
@@ -341,8 +358,8 @@ export async function handleThemeChange(
 
     applyThemeStyles(newTheme, newTheme.hasBackgroundImage);
     menuBar.updateColors({
-        bg: newTheme.foreground || "white",
-        fg: newTheme.background || "black",
+        bg: setLight(newTheme.foreground),
+        fg: setDark(newTheme.background),
     });
     activeTheme.current = name;
 }
@@ -359,11 +376,58 @@ export function handleProfileChange(e: Event): void {
 }
 
 /**
+ * Handles a b3tty-theme-selected event from the B3ttyThemePicker overlay by posting
+ * the chosen theme to /add-theme, applying it to the terminal and page styles, and
+ * refreshing the menu bar. If the server returns an updated themeNames list, the menu
+ * bar is fully rebuilt; otherwise only its colors are updated. `activeTheme.current` is
+ * updated after each successful selection. On failure, the picker is closed without
+ * changing the active theme.
+ */
+export async function handleThemeSelected(
+    e: Event,
+    term: Terminal,
+    menuBar: B3ttyMenuBar,
+    picker: B3ttyThemePicker,
+    config: TermConfig,
+    activeTheme: { current: string }
+): Promise<void> {
+    const { name } = (e as CustomEvent<{ name: string }>).detail;
+    let newTheme: ThemeActivateResponse;
+    try {
+        newTheme = await postAddTheme(name);
+    } catch {
+        picker.close();
+        return;
+    }
+    picker.close();
+
+    const builtTheme = buildTheme(newTheme);
+    if (newTheme.hasBackgroundImage) {
+        builtTheme.background = withAlpha(newTheme.background || "#000", 0);
+    }
+    term.options.theme = builtTheme;
+    applyThemeStyles(newTheme, newTheme.hasBackgroundImage);
+    if (newTheme.themeNames) {
+        config.themeNames = newTheme.themeNames;
+        menuBar.setup(config.themeNames, config.profileNames ?? [], {
+            bg: setLight(newTheme.foreground),
+            fg: setDark(newTheme.background),
+        });
+    } else {
+        menuBar.updateColors({
+            bg: setLight(newTheme.foreground),
+            fg: setDark(newTheme.background),
+        });
+    }
+    activeTheme.current = name;
+}
+
+/**
  * Permanently disables and hides the terminal cursor after the WebSocket closes.
  * cursorInactiveStyle "none" hides the cursor when the terminal loses focus; the
  * focus listener ensures a subsequent click cannot briefly restore it.
  */
-function disableCursor(term: Terminal): void {
+export function disableCursor(term: Terminal): void {
     term.options.cursorBlink = false;
     term.options.cursorInactiveStyle = "none";
     term.blur();
@@ -431,12 +495,12 @@ export async function main(config: TermConfig): Promise<void> {
     initTerm(term, socket, bellElement, onBeforeSend);
 
     const menuBarEl = document.getElementById("menubar");
-    if (menuBarEl && (config.themeNames?.length || config.profileNames?.length)) {
+    if (menuBarEl) {
         if (!isB3ttyMenuBar(menuBarEl)) throw new Error("Element #menubar is not a B3ttyMenuBar");
         const menuBar: B3ttyMenuBar = menuBarEl;
         menuBar.setup(config.themeNames ?? [], config.profileNames ?? [], {
-            bg: config.theme.foreground || "white",
-            fg: config.theme.background || "black",
+            bg: setLight(config.theme.foreground),
+            fg: setDark(config.theme.background),
         });
 
         menuBarEl.addEventListener("b3tty-menubar-open", () => requestAnimationFrame(() => fitAddon?.fit()), {
@@ -451,6 +515,28 @@ export async function main(config: TermConfig): Promise<void> {
             signal,
         });
         menuBarEl.addEventListener("b3tty-profile-change", handleProfileChange, { signal });
+
+        const pickerEl = document.getElementById("theme-picker");
+        let picker: (HTMLElement & B3ttyThemePicker) | null = null;
+        if (pickerEl && isB3ttyThemePicker(pickerEl)) {
+            picker = pickerEl;
+        }
+
+        menuBarEl.addEventListener(
+            "b3tty-open-theme-selector",
+            () => {
+                picker?.open(config.allThemeNames ?? []);
+            },
+            { signal }
+        );
+
+        if (picker) {
+            picker.addEventListener(
+                "b3tty-theme-selected",
+                (e) => handleThemeSelected(e, term, menuBar, picker!, config, activeTheme),
+                { signal }
+            );
+        }
     }
 
     if (!config.columns) {

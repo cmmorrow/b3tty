@@ -40,12 +40,14 @@ export interface TermConfig {
     debug?: boolean;
     backgroundImage?: boolean;
     themeNames?: string[];
+    allThemeNames?: string[];
     profileNames?: string[];
     activeTheme?: string;
 }
 
 export interface ThemeActivateResponse extends ThemeConfigBase {
     hasBackgroundImage: boolean;
+    themeNames?: string[];
 }
 
 /**

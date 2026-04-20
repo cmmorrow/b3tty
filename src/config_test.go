@@ -211,13 +211,13 @@ func parseConfigYAML(t *testing.T, s string) map[string]any {
 
 func TestBuildConfigYAML(t *testing.T) {
 	t.Run("theme name appears at top level and under themes", func(t *testing.T) {
-		out := parseConfigYAML(t, mustBuildConfigYAML(t, "dark", map[string]any{
+		out := parseConfigYAML(t, mustBuildConfigYAML(t, "b3tty-dark", map[string]any{
 			"foreground": "#ffffff",
 		}))
-		assert.Equal(t, "dark", out["theme"])
+		assert.Equal(t, "b3tty-dark", out["theme"])
 		themes, ok := out["themes"].(map[string]any)
 		require.True(t, ok)
-		assert.Contains(t, themes, "dark")
+		assert.Contains(t, themes, "b3tty-dark")
 	})
 
 	t.Run("color values round-trip correctly", func(t *testing.T) {
@@ -237,17 +237,17 @@ func TestBuildConfigYAML(t *testing.T) {
 
 	t.Run("hex colors starting with # are valid YAML", func(t *testing.T) {
 		// A bare # in YAML begins an inline comment; yaml.v3 must quote it.
-		yamlOut := mustBuildConfigYAML(t, "dark", map[string]any{"foreground": "#aabbcc"})
+		yamlOut := mustBuildConfigYAML(t, "b3tty-dark", map[string]any{"foreground": "#aabbcc"})
 		out := parseConfigYAML(t, yamlOut)
-		palette := out["themes"].(map[string]any)["dark"].(map[string]any)
+		palette := out["themes"].(map[string]any)["b3tty-dark"].(map[string]any)
 		assert.Equal(t, "#aabbcc", palette["foreground"])
 	})
 
 	t.Run("empty color map produces valid YAML with empty theme block", func(t *testing.T) {
-		out := parseConfigYAML(t, mustBuildConfigYAML(t, "light", map[string]any{}))
-		assert.Equal(t, "light", out["theme"])
+		out := parseConfigYAML(t, mustBuildConfigYAML(t, "b3tty-light", map[string]any{}))
+		assert.Equal(t, "b3tty-light", out["theme"])
 		themes := out["themes"].(map[string]any)
-		assert.Contains(t, themes, "light")
+		assert.Contains(t, themes, "b3tty-light")
 	})
 
 	t.Run("output passes ValidateConfig", func(t *testing.T) {
@@ -277,8 +277,8 @@ func TestBuildConfigYAML(t *testing.T) {
 			"count":      float64(3),
 			"flag":       true,
 		}
-		out := parseConfigYAML(t, mustBuildConfigYAML(t, "dark", colors))
-		palette := out["themes"].(map[string]any)["dark"].(map[string]any)
+		out := parseConfigYAML(t, mustBuildConfigYAML(t, "b3tty-dark", colors))
+		palette := out["themes"].(map[string]any)["b3tty-dark"].(map[string]any)
 		assert.Equal(t, "#ffffff", palette["foreground"])
 		assert.NotContains(t, palette, "count")
 		assert.NotContains(t, palette, "flag")
@@ -290,8 +290,8 @@ func TestBuildConfigYAML(t *testing.T) {
 			"background": "rgb(0,0,0)",
 			"red":        "not#valid",
 		}
-		out := parseConfigYAML(t, mustBuildConfigYAML(t, "dark", colors))
-		palette := out["themes"].(map[string]any)["dark"].(map[string]any)
+		out := parseConfigYAML(t, mustBuildConfigYAML(t, "b3tty-dark", colors))
+		palette := out["themes"].(map[string]any)["b3tty-dark"].(map[string]any)
 		assert.Equal(t, "#ffffff", palette["foreground"])
 		assert.NotContains(t, palette, "background")
 		assert.NotContains(t, palette, "red")
@@ -310,5 +310,164 @@ func TestBuildConfigYAML(t *testing.T) {
 		assert.Equal(t, "white", palette["background"])
 		assert.NotContains(t, palette, "red")
 		assert.NotContains(t, palette, "green")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// UpdateThemeInConfig
+// ---------------------------------------------------------------------------
+
+// setupUpdateThemeTest creates a temp HOME directory, points HOME at it, and
+// returns a helper that reads the resulting conf.yaml back as a generic map.
+func setupUpdateThemeTest(t *testing.T) func() map[string]any {
+	t.Helper()
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	configPath := tmpHome + "/.config/b3tty/conf.yaml"
+	return func() map[string]any {
+		t.Helper()
+		data, err := os.ReadFile(configPath)
+		require.NoError(t, err)
+		var out map[string]any
+		require.NoError(t, yaml.Unmarshal(data, &out))
+		return out
+	}
+}
+
+// writeInitialConfig pre-populates the conf.yaml under the current HOME.
+func writeInitialConfig(t *testing.T, content string) {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	dir := home + "/.config/b3tty"
+	require.NoError(t, os.MkdirAll(dir, 0755))
+	require.NoError(t, os.WriteFile(dir+"/conf.yaml", []byte(content), 0644))
+}
+
+func TestUpdateThemeInConfig(t *testing.T) {
+	t.Run("creates config file when none exists", func(t *testing.T) {
+		readConfig := setupUpdateThemeTest(t)
+		require.NoError(t, UpdateThemeInConfig("dracula", map[string]any{"foreground": "#f8f8f2"}))
+		out := readConfig()
+		assert.Equal(t, "dracula", out["theme"])
+	})
+
+	t.Run("sets the theme key at the top level", func(t *testing.T) {
+		readConfig := setupUpdateThemeTest(t)
+		require.NoError(t, UpdateThemeInConfig("catppuccin-mocha", map[string]any{"foreground": "#cdd6f4"}))
+		assert.Equal(t, "catppuccin-mocha", readConfig()["theme"])
+	})
+
+	t.Run("adds color entries under the themes section", func(t *testing.T) {
+		readConfig := setupUpdateThemeTest(t)
+		require.NoError(t, UpdateThemeInConfig("dracula", map[string]any{
+			"foreground": "#f8f8f2",
+			"background": "#282a36",
+		}))
+		out := readConfig()
+		themes := out["themes"].(map[string]any)
+		palette := themes["dracula"].(map[string]any)
+		assert.Equal(t, "#f8f8f2", palette["foreground"])
+		assert.Equal(t, "#282a36", palette["background"])
+	})
+
+	t.Run("preserves existing settings in the config file", func(t *testing.T) {
+		readConfig := setupUpdateThemeTest(t)
+		writeInitialConfig(t, `
+server:
+  no-auth: true
+  port: 9000
+theme: b3tty-dark
+themes:
+  b3tty-dark:
+    foreground: "#dbdbdb"
+`)
+		require.NoError(t, UpdateThemeInConfig("dracula", map[string]any{"foreground": "#f8f8f2"}))
+		out := readConfig()
+		server := out["server"].(map[string]any)
+		assert.Equal(t, true, server["no-auth"])
+		assert.Equal(t, 9000, server["port"])
+	})
+
+	t.Run("updates the theme key without touching other existing themes", func(t *testing.T) {
+		readConfig := setupUpdateThemeTest(t)
+		writeInitialConfig(t, `
+theme: b3tty-dark
+themes:
+  b3tty-dark:
+    foreground: "#dbdbdb"
+`)
+		require.NoError(t, UpdateThemeInConfig("dracula", map[string]any{"foreground": "#f8f8f2"}))
+		out := readConfig()
+		themes := out["themes"].(map[string]any)
+		assert.Equal(t, "dracula", out["theme"])
+		assert.Contains(t, themes, "b3tty-dark")
+		assert.Contains(t, themes, "dracula")
+	})
+
+	t.Run("does not overwrite colors when the theme already exists in the themes section", func(t *testing.T) {
+		readConfig := setupUpdateThemeTest(t)
+		writeInitialConfig(t, `
+theme: dracula
+themes:
+  dracula:
+    foreground: "#original"
+`)
+		require.NoError(t, UpdateThemeInConfig("dracula", map[string]any{"foreground": "#new"}))
+		out := readConfig()
+		palette := out["themes"].(map[string]any)["dracula"].(map[string]any)
+		assert.Equal(t, "#original", palette["foreground"])
+	})
+
+	t.Run("creates the themes section when the config has none", func(t *testing.T) {
+		readConfig := setupUpdateThemeTest(t)
+		writeInitialConfig(t, `
+server:
+  port: 8080
+`)
+		require.NoError(t, UpdateThemeInConfig("dracula", map[string]any{"foreground": "#f8f8f2"}))
+		out := readConfig()
+		themes, ok := out["themes"].(map[string]any)
+		require.True(t, ok)
+		assert.Contains(t, themes, "dracula")
+	})
+
+	t.Run("silently drops non-string color values", func(t *testing.T) {
+		readConfig := setupUpdateThemeTest(t)
+		require.NoError(t, UpdateThemeInConfig("dracula", map[string]any{
+			"foreground": "#f8f8f2",
+			"count":      42,
+			"flag":       true,
+		}))
+		palette := readConfig()["themes"].(map[string]any)["dracula"].(map[string]any)
+		assert.Equal(t, "#f8f8f2", palette["foreground"])
+		assert.NotContains(t, palette, "count")
+		assert.NotContains(t, palette, "flag")
+	})
+
+	t.Run("silently drops invalid color strings", func(t *testing.T) {
+		readConfig := setupUpdateThemeTest(t)
+		require.NoError(t, UpdateThemeInConfig("dracula", map[string]any{
+			"foreground": "#f8f8f2",
+			"background": "rgb(40,42,54)",
+		}))
+		palette := readConfig()["themes"].(map[string]any)["dracula"].(map[string]any)
+		assert.Equal(t, "#f8f8f2", palette["foreground"])
+		assert.NotContains(t, palette, "background")
+	})
+
+	t.Run("output passes ValidateConfig", func(t *testing.T) {
+		readConfig := setupUpdateThemeTest(t)
+		home, _ := os.UserHomeDir()
+		configPath := home + "/.config/b3tty/conf.yaml"
+		require.NoError(t, UpdateThemeInConfig("dracula", map[string]any{
+			"foreground":  "#f8f8f2",
+			"background":  "#282a36",
+			"cursor":      "#f8f8f2",
+			"red":         "#ff5555",
+			"bright-red":  "#ff6e6e",
+		}))
+		_ = readConfig() // ensure file exists
+		assert.NoError(t, ValidateConfig(configPath))
 	})
 }
