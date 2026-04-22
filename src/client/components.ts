@@ -37,6 +37,31 @@ export interface B3ttyThemePicker {
 }
 
 /**
+ * Interface for the b3tty-palette-card web component. Call setup() to
+ * populate the card with a theme name, display label, and palette data.
+ * The selected property reflects the [selected] attribute on the host.
+ * When clicked, the card sets its own [selected] attribute and dispatches
+ * a composed "b3tty-card-select" CustomEvent with detail { value: string }.
+ *
+ * Style the card from a parent shadow DOM by setting CSS custom properties
+ * on b3tty-palette-card elements:
+ *   --palette-card-padding         (default: 12px)
+ *   --palette-card-gap             (default: 10px)
+ *   --palette-card-overflow        (default: visible)
+ *   --palette-card-header-bg       (default: transparent)
+ *   --palette-card-header-padding  (default: 0)
+ *   --palette-card-header-font-size (default: 13px)
+ *   --palette-card-terminal-gap    (default: 7px)
+ *   --palette-card-terminal-shadow (default: 0 2px 10px rgba(0,0,0,0.35))
+ *   --palette-card-terminal-min-width (default: 196px)
+ */
+export interface B3ttyPaletteCard {
+    setup(value: string, label: string, palette: Palette): void;
+    readonly selected: boolean;
+    readonly value: string;
+}
+
+/**
  * Returns true when el exposes the B3ttyDialog contract (show/hide methods).
  * Use this instead of `as unknown as B3ttyDialog` to preserve type safety.
  */
@@ -62,6 +87,14 @@ export function isB3ttyThemePicker(el: Element): el is HTMLElement & B3ttyThemeP
     return typeof r["open"] === "function" && typeof r["close"] === "function";
 }
 
+/**
+ * Returns true when el exposes the B3ttyPaletteCard contract (setup/value/selected).
+ */
+export function isB3ttyPaletteCard(el: Element): el is HTMLElement & B3ttyPaletteCard {
+    const r = el as unknown as Record<string, unknown>;
+    return typeof r["setup"] === "function" && "value" in r && "selected" in r;
+}
+
 function formatThemeName(name: string): string {
     return name
         .split("-")
@@ -70,6 +103,156 @@ function formatThemeName(name: string): string {
 }
 
 if (typeof HTMLElement !== "undefined") {
+    // Defined first so it is available when B3ttyThemeSelectorImpl and
+    // B3ttyThemePickerImpl constructors call document.createElement("b3tty-palette-card").
+    class B3ttyPaletteCardImpl extends HTMLElement implements B3ttyPaletteCard {
+        #shadow: ShadowRoot;
+        #value: string = "";
+
+        get selected(): boolean {
+            return this.hasAttribute("selected");
+        }
+
+        get value(): string {
+            return this.#value;
+        }
+
+        constructor() {
+            super();
+            this.#shadow = this.attachShadow({ mode: "open" });
+
+            const style = document.createElement("style");
+            style.textContent = `
+                :host {
+                    display: flex;
+                    flex-direction: column;
+                    gap: var(--palette-card-gap, 10px);
+                    padding: var(--palette-card-padding, 12px);
+                    border-radius: 8px;
+                    border: 2px solid transparent;
+                    background: #cecece;
+                    cursor: pointer;
+                    transition: border-color 0.15s;
+                    user-select: none;
+                    overflow: var(--palette-card-overflow, visible);
+                    box-sizing: border-box;
+                }
+                :host([selected]) { border-color: #444; }
+                .card-header {
+                    display: flex; align-items: center; gap: 7px;
+                    padding: var(--palette-card-header-padding, 0);
+                    font-family: sans-serif;
+                    font-size: var(--palette-card-header-font-size, 13px);
+                    font-weight: 600; color: #222;
+                    background: var(--palette-card-header-bg, transparent);
+                }
+                input[type=radio] { cursor: pointer; accent-color: #444; }
+                .terminal {
+                    border-radius: 6px;
+                    padding: 10px 10px 8px;
+                    display: flex; flex-direction: column;
+                    gap: var(--palette-card-terminal-gap, 7px);
+                    font-family: monospace; font-size: 11px;
+                    box-shadow: var(--palette-card-terminal-shadow, 0 2px 10px rgba(0,0,0,0.35));
+                    min-width: var(--palette-card-terminal-min-width, 196px);
+                }
+                .titlebar { display: flex; gap: 5px; margin-bottom: 1px; }
+                .dot { width: 9px; height: 9px; border-radius: 50%; }
+                .preview-text { padding: 1px 2px; line-height: 1.5; letter-spacing: 0.01em; }
+                .sel { padding: 0 2px; border-radius: 2px; }
+                .swatch-row { display: flex; gap: 3px; }
+                .swatch {
+                    width: 20px; height: 20px; border-radius: 4px;
+                    box-shadow: inset 0 0 0 1px rgba(128,128,128,0.25);
+                }
+            `;
+            this.#shadow.appendChild(style);
+
+            this.addEventListener("click", () => {
+                if (!this.#value) return;
+                this.setAttribute("selected", "");
+                this.dispatchEvent(
+                    new CustomEvent("b3tty-card-select", {
+                        detail: { value: this.#value },
+                        bubbles: true,
+                        composed: true,
+                    })
+                );
+            });
+        }
+
+        setup(value: string, label: string, palette: Palette): void {
+            this.#value = value;
+
+            const style = this.#shadow.querySelector("style")!;
+            while (this.#shadow.lastChild !== style) {
+                this.#shadow.removeChild(this.#shadow.lastChild!);
+            }
+
+            const header = document.createElement("div");
+            header.className = "card-header";
+            const radio = document.createElement("input");
+            radio.type = "radio";
+            radio.name = "theme";
+            radio.id = value;
+            radio.value = value;
+            const labelSpan = document.createElement("span");
+            labelSpan.textContent = label;
+            header.appendChild(radio);
+            header.appendChild(labelSpan);
+
+            const terminal = document.createElement("div");
+            terminal.className = "terminal";
+            terminal.style.background = palette.bg;
+
+            const titlebar = document.createElement("div");
+            titlebar.className = "titlebar";
+            for (const color of ["#ff5f57", "#ffbd2e", "#28c841"]) {
+                const dot = document.createElement("div");
+                dot.className = "dot";
+                dot.style.background = color;
+                titlebar.appendChild(dot);
+            }
+
+            const preview = document.createElement("div");
+            preview.className = "preview-text";
+            preview.style.color = palette.fg;
+            preview.appendChild(document.createTextNode("lorem "));
+            const sel = document.createElement("span");
+            sel.className = "sel";
+            sel.style.background = palette.selBg;
+            sel.style.color = palette.fg;
+            sel.textContent = "ipsum";
+            preview.appendChild(sel);
+            const cursor = document.createElement("span");
+            cursor.textContent = "\u00a0";
+            cursor.style.background = palette.cursor;
+            preview.appendChild(cursor);
+
+            terminal.appendChild(titlebar);
+            terminal.appendChild(preview);
+            terminal.appendChild(this.#swatchRow(palette.normal));
+            terminal.appendChild(this.#swatchRow(palette.bright));
+
+            this.#shadow.appendChild(header);
+            this.#shadow.appendChild(terminal);
+        }
+
+        #swatchRow(colors: string[]): HTMLDivElement {
+            const row = document.createElement("div");
+            row.className = "swatch-row";
+            for (const color of colors) {
+                const s = document.createElement("div");
+                s.className = "swatch";
+                s.style.background = color;
+                row.appendChild(s);
+            }
+            return row;
+        }
+    }
+
+    customElements.define("b3tty-palette-card", B3ttyPaletteCardImpl);
+
     class B3ttyDialogImpl extends HTMLElement implements B3ttyDialog {
         constructor() {
             super();
@@ -142,72 +325,6 @@ if (typeof HTMLElement !== "undefined") {
             super();
             const shadow = this.attachShadow({ mode: "open" });
 
-            const swatchRow = (colors: string[]): HTMLDivElement => {
-                const row = document.createElement("div");
-                row.className = "swatch-row";
-                for (const color of colors) {
-                    const s = document.createElement("div");
-                    s.className = "swatch";
-                    s.style.background = color;
-                    row.appendChild(s);
-                }
-                return row;
-            };
-
-            const paletteCard = (value: string, label: string, p: Palette): HTMLLabelElement => {
-                const card = document.createElement("label");
-                card.className = "card";
-
-                const header = document.createElement("div");
-                header.className = "card-header";
-                const radio = document.createElement("input");
-                radio.type = "radio";
-                radio.name = "theme";
-                radio.id = value;
-                radio.value = value;
-                const labelSpan = document.createElement("span");
-                labelSpan.textContent = label;
-                header.appendChild(radio);
-                header.appendChild(labelSpan);
-
-                const terminal = document.createElement("div");
-                terminal.className = "terminal";
-                terminal.style.background = p.bg;
-
-                const titlebar = document.createElement("div");
-                titlebar.className = "titlebar";
-                for (const color of ["#ff5f57", "#ffbd2e", "#28c841"]) {
-                    const dot = document.createElement("div");
-                    dot.className = "dot";
-                    dot.style.background = color;
-                    titlebar.appendChild(dot);
-                }
-
-                const preview = document.createElement("div");
-                preview.className = "preview-text";
-                preview.style.color = p.fg;
-                preview.appendChild(document.createTextNode("lorem "));
-                const sel = document.createElement("span");
-                sel.className = "sel";
-                sel.style.background = p.selBg;
-                sel.style.color = p.fg;
-                sel.textContent = "ipsum";
-                preview.appendChild(sel);
-                const cursor = document.createElement("span");
-                cursor.textContent = "\u00a0";
-                cursor.style.background = p.cursor;
-                preview.appendChild(cursor);
-
-                terminal.appendChild(titlebar);
-                terminal.appendChild(preview);
-                terminal.appendChild(swatchRow(p.normal));
-                terminal.appendChild(swatchRow(p.bright));
-
-                card.appendChild(header);
-                card.appendChild(terminal);
-                return card;
-            };
-
             const skipCard = (): HTMLLabelElement => {
                 const card = document.createElement("label");
                 card.className = "card skip-card";
@@ -264,23 +381,6 @@ if (typeof HTMLElement !== "undefined") {
                     font-family: sans-serif; font-size: 13px; font-weight: 600; color: #222;
                 }
                 input[type=radio] { cursor: pointer; accent-color: #444; }
-                .terminal {
-                    border-radius: 6px;
-                    padding: 10px 10px 8px;
-                    display: flex; flex-direction: column; gap: 7px;
-                    font-family: monospace; font-size: 11px;
-                    box-shadow: 0 2px 10px rgba(0,0,0,0.35);
-                    min-width: 196px;
-                }
-                .titlebar { display: flex; gap: 5px; margin-bottom: 1px; }
-                .dot { width: 9px; height: 9px; border-radius: 50%; }
-                .preview-text { padding: 1px 2px; line-height: 1.5; letter-spacing: 0.01em; }
-                .sel { padding: 0 2px; border-radius: 2px; }
-                .swatch-row { display: flex; gap: 3px; }
-                .swatch {
-                    width: 20px; height: 20px; border-radius: 4px;
-                    box-shadow: inset 0 0 0 1px rgba(128,128,128,0.25);
-                }
                 .skip-card { justify-content: center; min-width: 196px; }
                 .skip-note {
                     margin: 0; font-family: sans-serif; font-size: 12px; color: #666;
@@ -311,15 +411,6 @@ if (typeof HTMLElement !== "undefined") {
             options.className = "options";
             options.appendChild(skipCard());
 
-            Promise.all([getThemePalette("b3tty-dark"), getThemePalette("b3tty-light")])
-                .then(([dark, light]) => {
-                    options.prepend(paletteCard("b3tty-light", "B3tty Light", light));
-                    options.prepend(paletteCard("b3tty-dark", "B3tty Dark", dark));
-                })
-                .catch(() => {
-                    // Palette cards remain absent; the user can still select "No theme".
-                });
-
             const okBtn = document.createElement("button");
             okBtn.className = "ok-btn";
             okBtn.id = "ok-btn";
@@ -333,14 +424,48 @@ if (typeof HTMLElement !== "undefined") {
             shadow.appendChild(style);
             shadow.appendChild(backdrop);
 
-            options.addEventListener("change", () => {
+            let selectedValue: string | null = null;
+
+            // Palette card selection — b3tty-card-select is composed so it crosses
+            // the palette card's shadow boundary and reaches this listener.
+            options.addEventListener("b3tty-card-select", (e: Event) => {
+                for (const card of Array.from(options.querySelectorAll("b3tty-palette-card"))) {
+                    if (card !== e.target) card.removeAttribute("selected");
+                }
+                const skipRadio = shadow.querySelector<HTMLInputElement>("#skip");
+                if (skipRadio) skipRadio.checked = false;
+                selectedValue = (e as CustomEvent<{ value: string }>).detail.value;
                 okBtn.disabled = false;
             });
 
+            // Skip card selection via its radio input.
+            options.addEventListener("change", (e: Event) => {
+                const target = e.target as HTMLInputElement;
+                if (target.id === "skip") {
+                    for (const card of Array.from(options.querySelectorAll("b3tty-palette-card"))) {
+                        card.removeAttribute("selected");
+                    }
+                    selectedValue = "skip";
+                    okBtn.disabled = false;
+                }
+            });
+
+            Promise.all([getThemePalette("b3tty-dark"), getThemePalette("b3tty-light")])
+                .then(([dark, light]) => {
+                    const lightCard = document.createElement("b3tty-palette-card");
+                    (lightCard as unknown as B3ttyPaletteCard).setup("b3tty-light", "B3tty Light", light);
+                    const darkCard = document.createElement("b3tty-palette-card");
+                    (darkCard as unknown as B3ttyPaletteCard).setup("b3tty-dark", "B3tty Dark", dark);
+                    options.prepend(lightCard);
+                    options.prepend(darkCard);
+                })
+                .catch(() => {
+                    // Palette cards remain absent; the user can still select "No theme".
+                });
+
             okBtn.addEventListener("click", async () => {
-                const checked = shadow.querySelector<HTMLInputElement>("input[name=theme]:checked");
-                if (!checked) return;
-                await postSaveConfig(checked.value);
+                if (!selectedValue) return;
+                await postSaveConfig(selectedValue);
                 window.location.reload();
             });
         }
@@ -648,32 +773,17 @@ if (typeof HTMLElement !== "undefined") {
                     overflow-y: auto; flex: 1; min-height: 0;
                     padding: 4px 2px;
                 }
-                .card {
-                    display: flex; flex-direction: column;
-                    border-radius: 8px; border: 2px solid transparent;
-                    background: #cecece;
-                    cursor: pointer; transition: border-color 0.15s;
-                    user-select: none; overflow: hidden;
+                b3tty-palette-card {
+                    --palette-card-padding: 0;
+                    --palette-card-gap: 0;
+                    --palette-card-overflow: hidden;
+                    --palette-card-header-bg: #c8c8c8;
+                    --palette-card-header-padding: 8px 10px;
+                    --palette-card-header-font-size: 12px;
+                    --palette-card-terminal-gap: 6px;
+                    --palette-card-terminal-shadow: none;
+                    --palette-card-terminal-min-width: 0;
                 }
-                .card:has(input:checked) { border-color: #444; }
-                .card-header {
-                    display: flex; align-items: center; gap: 7px;
-                    padding: 8px 10px;
-                    font-family: sans-serif; font-size: 12px; font-weight: 600; color: #222;
-                    background: #c8c8c8;
-                }
-                input[type=radio] { cursor: pointer; accent-color: #444; }
-                .terminal {
-                    padding: 10px 10px 8px;
-                    display: flex; flex-direction: column; gap: 6px;
-                    font-family: monospace; font-size: 11px;
-                }
-                .titlebar { display: flex; gap: 5px; }
-                .dot { width: 9px; height: 9px; border-radius: 50%; }
-                .preview-text { line-height: 1.5; }
-                .sel { padding: 0 2px; border-radius: 2px; }
-                .swatch-row { display: flex; gap: 3px; }
-                .swatch { width: 20px; height: 20px; border-radius: 4px; box-shadow: inset 0 0 0 1px rgba(128,128,128,0.25); }
                 .loading {
                     font-family: sans-serif; font-size: 13px; color: #555;
                     text-align: center; padding: 20px; grid-column: 1 / -1;
@@ -730,13 +840,22 @@ if (typeof HTMLElement !== "undefined") {
             this.#shadow.appendChild(style);
             this.#shadow.appendChild(overlay);
 
+            // b3tty-card-select is composed, so it crosses the palette card's
+            // shadow boundary and bubbles up to this listener on #cards.
+            this.#cards.addEventListener("b3tty-card-select", (e: Event) => {
+                for (const card of Array.from(this.#cards.querySelectorAll("b3tty-palette-card"))) {
+                    if (card !== e.target) card.removeAttribute("selected");
+                }
+                this.#okBtn.disabled = false;
+            });
+
             cancelBtn.addEventListener("click", () => this.close());
             this.#okBtn.addEventListener("click", () => {
-                const checked = this.#shadow.querySelector<HTMLInputElement>("input[name=theme]:checked");
-                if (!checked) return;
+                const selected = this.#cards.querySelector<HTMLElement>("b3tty-palette-card[selected]");
+                if (!selected) return;
                 this.dispatchEvent(
                     new CustomEvent("b3tty-theme-selected", {
-                        detail: { name: checked.value },
+                        detail: { name: (selected as unknown as B3ttyPaletteCard).value },
                         bubbles: true,
                         composed: true,
                     })
@@ -763,84 +882,17 @@ if (typeof HTMLElement !== "undefined") {
                 this.#cards.innerHTML = "";
                 for (const { name, palette } of results) {
                     if (palette) {
-                        this.#cards.appendChild(this.#buildCard(name, formatThemeName(name), palette));
+                        const card = document.createElement("b3tty-palette-card");
+                        (card as unknown as B3ttyPaletteCard).setup(name, formatThemeName(name), palette);
+                        this.#cards.appendChild(card);
                     }
                 }
-                this.#cards.addEventListener("change", () => {
-                    this.#okBtn.disabled = false;
-                });
             });
         }
 
         close(): void {
             this.removeAttribute("open");
             this.#okBtn.disabled = true;
-        }
-
-        #swatchRow(colors: string[]): HTMLDivElement {
-            const row = document.createElement("div");
-            row.className = "swatch-row";
-            for (const color of colors) {
-                const s = document.createElement("div");
-                s.className = "swatch";
-                s.style.background = color;
-                row.appendChild(s);
-            }
-            return row;
-        }
-
-        #buildCard(value: string, label: string, p: Palette): HTMLLabelElement {
-            const card = document.createElement("label");
-            card.className = "card";
-
-            const header = document.createElement("div");
-            header.className = "card-header";
-            const radio = document.createElement("input");
-            radio.type = "radio";
-            radio.name = "theme";
-            radio.id = value;
-            radio.value = value;
-            const labelSpan = document.createElement("span");
-            labelSpan.textContent = label;
-            header.appendChild(radio);
-            header.appendChild(labelSpan);
-
-            const terminal = document.createElement("div");
-            terminal.className = "terminal";
-            terminal.style.background = p.bg;
-
-            const titlebar = document.createElement("div");
-            titlebar.className = "titlebar";
-            for (const color of ["#ff5f57", "#ffbd2e", "#28c841"]) {
-                const dot = document.createElement("div");
-                dot.className = "dot";
-                dot.style.background = color;
-                titlebar.appendChild(dot);
-            }
-
-            const preview = document.createElement("div");
-            preview.className = "preview-text";
-            preview.style.color = p.fg;
-            preview.appendChild(document.createTextNode("lorem "));
-            const sel = document.createElement("span");
-            sel.className = "sel";
-            sel.style.background = p.selBg;
-            sel.style.color = p.fg;
-            sel.textContent = "ipsum";
-            preview.appendChild(sel);
-            const cursor = document.createElement("span");
-            cursor.textContent = "\u00a0";
-            cursor.style.background = p.cursor;
-            preview.appendChild(cursor);
-
-            terminal.appendChild(titlebar);
-            terminal.appendChild(preview);
-            terminal.appendChild(this.#swatchRow(p.normal));
-            terminal.appendChild(this.#swatchRow(p.bright));
-
-            card.appendChild(header);
-            card.appendChild(terminal);
-            return card;
         }
     }
 
