@@ -38,13 +38,13 @@ func authBackoffDelay(n int) time.Duration {
 // when a value is missing, cannot be parsed as an integer, or falls outside the valid
 // uint16 range [0, 65535].
 func parseSizeParams(q url.Values) (uint16, uint16) {
-	cols, err := strconv.Atoi(q.Get("cols"))
-	if err != nil || !validateTerminalDimension(cols) {
-		cols = DEFAULT_COLS
+	cols, err := strconv.ParseUint(q.Get("cols"), 10, 16)
+	if err != nil {
+		cols = uint64(DEFAULT_COLS)
 	}
-	rows, err := strconv.Atoi(q.Get("rows"))
-	if err != nil || !validateTerminalDimension(rows) {
-		rows = DEFAULT_ROWS
+	rows, err := strconv.ParseUint(q.Get("rows"), 10, 16)
+	if err != nil {
+		rows = uint64(DEFAULT_ROWS)
 	}
 	return uint16(cols), uint16(rows)
 }
