@@ -14,6 +14,7 @@
             <div id="profile">{{ if ne .ProfileName "default" }}Profile: {{ .ProfileName }}{{ end }}</div>
             <b3tty-dialog id="dialog"></b3tty-dialog>
         <b3tty-theme-picker id="theme-picker"></b3tty-theme-picker>
+        <b3tty-theme-editor id="theme-editor"></b3tty-theme-editor>
         </div>
     </body>
     <script nonce="{{ .Nonce }}">window.B3TTY = {{ .ConfigJSON }};</script>

@@ -41,6 +41,7 @@ export interface TermConfig {
     backgroundImage?: boolean;
     themeNames?: string[];
     allThemeNames?: string[];
+    builtinThemeNames?: string[];
     profileNames?: string[];
     activeTheme?: string;
 }

@@ -35,20 +35,20 @@ b3tty is a browser-based terminal emulator. It runs a Go HTTP server that bridge
   - `start.go` — `b3tty start` subcommand; runs config, theme, and port validation, constructs a `src.TerminalServer` directly, then calls `src.Serve()`
   - `config.go` — typed YAML config structs and `validateConfig`; decodes the config file with `KnownFields(true)` to reject unknown keys and wrong types; intentionally separate from `src/models.go` to avoid coupling the runtime model to the config file shape
 - `src/` — core server logic
-  - `serve.go` — `TerminalServer` struct (all fields exported), `Serve(*TerminalServer, bool, bool)`, `GetCSPHeaders()`, `buildUIUrl`, `logProfileURLs`, `assets` embed
+  - `serve.go` — `TerminalServer` struct (all fields exported), `Serve(*TerminalServer, bool, bool)`, `GetCSPHeaders()`, `buildUIUrl`, `logProfileURLs`, `assets` embed; `TerminalServer.ConfigFile` is set by `cmd/start.go` from `viper.ConfigFileUsed()` and passed to all config-writing functions
   - `display_handler.go` — `displayTermHandler`, `setSizeHandler`, `backgroundHandler`; auth/backoff helpers (`authBackoffDelay`, `backoffBase`, `backoffMax`); `parseSizeParams`, `resolveProfileName`, `buildConfigJSON`; `templates/terminal.tmpl` embed
-  - `theme_handler.go` — `themePaletteHandler`, `themeConfigHandler`, `addThemeHandler`; `builtinThemes` map and all `default_themes/*.json` embeds; `defaultDarkTheme`, `defaultLightTheme`
+  - `theme_handler.go` — `themePaletteHandler`, `themeConfigHandler`, `addThemeHandler`, `editThemeHandler`; `builtinThemes` map and all `default_themes/*.json` embeds; `defaultDarkTheme`, `defaultLightTheme`
   - `setup_handler.go` — `renderSetupPage`, `themeSelectHandler`, `saveConfigHandler`; `templates/setup.tmpl` and `templates/theme-select.tmpl` embeds
   - `terminal_handler.go` — `terminalHandler`, `upgrader`, `parseResizeMessage`, `formatCommand`
   - `defaults.go` — named constants shared across `cmd/` and `src/`: default values (`DEFAULT_SHELL`, `DEFAULT_URI`, `DEFAULT_ROWS`, `DEFAULT_COLS`, etc.) and server constants (`BUFFER_SIZE`, `TOKEN_LENGTH`, `MAX_REQUEST_BODY_SIZE`)
-  - `models.go` — data structs: `Client`, `Server`, `TLS`, `Profile`, `Theme`, `TermConfig`, `CSPHeader`, `CSPHeaders`, `themePaletteResponse`, `themeConfigResponse`; `Theme.toColorMap()` converts the struct back to a hyphenated key map for use with `UpdateThemeInConfig`, skipping `BackgroundImage`
-  - `config.go` — `WriteDefaultConfig`, `buildConfigYAML`, and `UpdateThemeInConfig`; `UpdateThemeInConfig` reads `conf.yaml` as a generic `map[string]any`, sets the `theme:` key, adds theme colors to `themes:` if not already present, and writes the file back — preserving all existing settings
+  - `models.go` — data structs: `Client`, `Server`, `TLS`, `Profile`, `Theme`, `TermConfig`, `CSPHeader`, `CSPHeaders`, `themePaletteResponse`, `themeConfigResponse`; `Theme.toColorMap()` converts the struct back to a hyphenated key map for use with `UpdateThemeInConfig`/`SaveThemeToConfig`, skipping `BackgroundImage`
+  - `config.go` — `WriteDefaultConfig`, `buildConfigYAML`, `UpdateThemeInConfig`, `SaveThemeToConfig`, `ReadThemeNames`; `UpdateThemeInConfig` adds a theme to `themes:` only if absent (used for activation); `SaveThemeToConfig` always overwrites the entry (used for editing) while preserving `background-image` from the existing YAML entry; `ReadThemeNames` reads theme names directly from YAML (not Viper) to preserve exact key casing
   - `utils.go` — helpers: token generation, browser open, field name conversion, theme color validation, `ValidatePortNumber`
   - `logger.go` — leveled, color-aware logger used throughout `src` and called from `cmd` via `src.Info/Warn/Error/Fatal/Debug`
 - `src/client/` — frontend source (TypeScript, bundled by bun → `terminal.min.js`)
   - `terminal.ts` — main module; reads `window.B3TTY` for all config, initializes xterm.js, manages WebSocket lifecycle, handles menu bar and theme-picker events
-  - `components.ts` — five web components: `<b3tty-palette-card>`, `<b3tty-dialog>`, `<b3tty-theme-selector>`, `<b3tty-menu-bar>`, `<b3tty-theme-picker>`; exports TypeScript interfaces and `isB3tty*` type guards; all class definitions guarded by `typeof HTMLElement !== "undefined"` for bun test compatibility; `B3ttyPaletteCardImpl` is defined first so it is available when `B3ttyThemeSelectorImpl` and `B3ttyThemePickerImpl` call `document.createElement("b3tty-palette-card")` in their constructors
-  - `api.ts` — client-side HTTP helpers for all server endpoints (`/size`, `/theme`, `/theme-config`, `/add-theme`, `/save-config`)
+  - `components.ts` — six web components: `<b3tty-palette-card>`, `<b3tty-dialog>`, `<b3tty-theme-selector>`, `<b3tty-menu-bar>`, `<b3tty-theme-picker>`, `<b3tty-theme-editor>`; exports TypeScript interfaces and `isB3tty*` type guards; all class definitions guarded by `typeof HTMLElement !== "undefined"` for bun test compatibility; `B3ttyPaletteCardImpl` is defined first so it is available when other components call `document.createElement("b3tty-palette-card")`; shared module-level constants `BUTTON_STYLES` and `PALETTE_CARD_VARS` (CSS template strings) and `fetchPaletteCards(themeNames)` helper (returns `Array<{ card, name, palette }>`) are used by both `B3ttyThemePickerImpl` and `B3ttyThemeEditorImpl`
+  - `api.ts` — client-side HTTP helpers for all server endpoints (`/size`, `/theme`, `/theme-config`, `/add-theme`, `/save-config`, `/edit-theme`)
   - `validators.ts` — input validation: `isValidHttpProtocol`, `isValidWsProtocol`, `isValidPort`, `isValidUri`
   - `types.ts` — shared TypeScript interfaces: `TermConfig`, `ThemeActivateResponse`, `ClientConfig`, `ThemeConfig`, DOM/socket stubs; `isThemeActivateResponse` runtime type guard; `Window` augmented with `B3TTY?: TermConfig`
   - `package.json` / `bun.lock` — bun project; dependencies are `@xterm/xterm`, `@xterm/addon-fit`, `@xterm/addon-web-links`, `@xterm/addon-image`
@@ -74,12 +74,13 @@ b3tty is a browser-based terminal emulator. It runs a Go HTTP server that bridge
 1. `GET /` → `displayTermHandler`; returns 404 for any path other than `/`; validates `?token=`; if `ts.FirstRun` is true renders `setup.tmpl` (first-run flow) and returns; otherwise selects the active profile, builds `TermConfig` (sorted `themeNames`, `allThemeNames`, `profileNames`, `activeTheme`), and renders `terminal.tmpl`
 2. Static assets served from `/assets/` via the embedded directory
 3. `GET /background` → serves the configured background image file; returns 404 when none is configured
-4. `GET /theme?name=<n>` → `themePaletteHandler`; returns `{ bg, fg, selBg, cursor, normal[8], bright[8] }`; looks up `builtinThemes` first, then `ts.Themes`; color arrays follow ANSI display order (black, red, yellow, green, cyan, blue, magenta, white)
-5. `GET /theme-config?name=<n>` → returns `themeConfigResponse` (all `Theme` fields + `hasBackgroundImage`) without side effects; `POST` additionally activates the theme server-side, updates `ts.Client.Theme` and `ts.ActiveTheme`, and persists to `conf.yaml` via `UpdateThemeInConfig`; requires same-origin `Sec-Fetch-Site`
+4. `GET /theme?name=<n>` → `themePaletteHandler`; returns `{ bg, fg, selBg, cursor, normal[8], bright[8] }`; checks `ts.Themes` first (user-defined colors take priority), then falls back to `builtinThemes`; color arrays follow ANSI display order (black, red, yellow, green, cyan, blue, magenta, white)
+5. `GET /theme-config?name=<n>` → returns `themeConfigResponse` (all `Theme` fields + `hasBackgroundImage`) without side effects; also resolves built-in themes not yet in `ts.Themes`; `POST` additionally activates the theme server-side, updates `ts.Client.Theme` and `ts.ActiveTheme`, and persists to `conf.yaml` via `UpdateThemeInConfig`; requires same-origin `Sec-Fetch-Site`
 6. `POST /add-theme` → `addThemeHandler`; accepts `{ "theme": "<name>" }`; resolves from `builtinThemes` then `ts.Themes`; if built-in and not yet in `ts.Themes`, adds it in memory; persists via `UpdateThemeInConfig`; returns `themeConfigResponse` extended with `themeNames []string` (sorted `ts.Themes` keys after addition) so the client can refresh the Themes menu immediately
-7. `POST /save-config` → `saveConfigHandler`; first-run only (returns 404 when `ts.FirstRun` is false); accepts `{ "theme": "b3tty-dark" | "b3tty-light" | "skip" }`; writes `conf.yaml` and sets `ts.FirstRun = false`; requires same-origin `Sec-Fetch-Site`
-8. Page loads `terminal.min.js` as an ES module; module calls `fitAddon.fit()`, `await`s `POST /size` to size the pty, then opens `WS /ws` — size-before-websocket ordering is critical
-9. `WS /ws` → `terminalHandler`; forks a pty sized with `OrgCols`/`OrgRows`; two goroutines bridge pty↔WebSocket; a `done` channel closed via `sync.Once` lets the input goroutine distinguish clean PTY exit from unexpected WebSocket error; handler blocks on `<-done` to prevent goroutine leaks
+7. `POST /edit-theme` → `editThemeHandler`; accepts `{ "name": "<name>", "theme": {...Theme color fields...} }`; creates or overwrites a user-defined theme and activates it; preserves `BackgroundImage` from the existing in-memory theme (field is `json:"-"` so it is never in the request body); persists via `SaveThemeToConfig` which also preserves `background-image` in the YAML; returns `themeConfigResponse` with `HasBackgroundImage` set; requires same-origin `Sec-Fetch-Site`
+8. `POST /save-config` → `saveConfigHandler`; first-run only (returns 404 when `ts.FirstRun` is false); accepts `{ "theme": "b3tty-dark" | "b3tty-light" | "skip" }`; writes `conf.yaml` and sets `ts.FirstRun = false`; requires same-origin `Sec-Fetch-Site`
+9. Page loads `terminal.min.js` as an ES module; module calls `fitAddon.fit()`, `await`s `POST /size` to size the pty, then opens `WS /ws` — size-before-websocket ordering is critical
+10. `WS /ws` → `terminalHandler`; forks a pty sized with `OrgCols`/`OrgRows`; two goroutines bridge pty↔WebSocket; a `done` channel closed via `sync.Once` lets the input goroutine distinguish clean PTY exit from unexpected WebSocket error; handler blocks on `<-done` to prevent goroutine leaks
 
 **WebSocket message protocol (`/ws`):**
 - **pty output → browser:** binary messages; write deadline of 10s per message so a stalled browser cannot block the pty; decoded client-side with a persistent `TextDecoder("utf-8", { stream: true })` to handle split multi-byte sequences
@@ -93,14 +94,16 @@ b3tty is a browser-based terminal emulator. It runs a Go HTTP server that bridge
 - `applyThemeStyles(theme, hasBackgroundImage)` is shared by initial load and runtime theme switching; when `hasBackgroundImage` is true it sets a CSS `linear-gradient` tint over `url('/background')` and injects a `<style id="b3tty-bg-style">` to make `.xterm-viewport` transparent
 - `main()` uses an `AbortController` whose signal is passed to all `addEventListener` calls; `listenerController.abort()` in `socket.onclose` cleans up all listeners when the session ends
 - On WebSocket close: cursor is disabled, then the "Connection closed" dialog is shown only when `event.wasClean` is `false` — clean PTY exits suppress the dialog
-- Menu bar custom events: `b3tty-theme-change` → `handleThemeChange` (calls `postThemeConfig`, skips if already active theme); `b3tty-profile-change` → `handleProfileChange` (opens new tab); `b3tty-open-theme-selector` → `picker.open(config.allThemeNames)`; `b3tty-theme-selected` → `handleThemeSelected` (calls `postAddTheme`, refreshes Themes menu if `themeNames` in response)
+- Menu bar custom events: `b3tty-theme-change` → `handleThemeChange` (calls `postThemeConfig`, skips if already active theme); `b3tty-profile-change` → `handleProfileChange` (opens new tab); `b3tty-open-theme-selector` → `picker.open(config.allThemeNames)`; `b3tty-theme-selected` → `handleThemeSelected` (calls `postAddTheme`, refreshes Themes menu if `themeNames` in response); `b3tty-open-theme-editor` → `editor.open(config.themeNames, config.builtinThemeNames)`; `b3tty-theme-edited` → `handleThemeEdited` (applies edited theme to xterm.js and page styles, sets transparent background when `hasBackgroundImage`, refreshes menu bar)
+- All three runtime theme-apply paths (`handleThemeChange`, `handleThemeSelected`, `handleThemeEdited`) zero out `builtTheme.background` via `withAlpha(..., 0)` when `hasBackgroundImage` is true, so xterm renders transparently over the background image
 - When `columns=0`: window resize → debounced (100ms) `fitAddon.fit()` → `term.onResize` → sends resize JSON over WebSocket; `term.onResize` registered after initial fit to avoid spurious startup resize
 
 **Web components (`src/client/components.ts`):**
 
-`B3ttyPaletteCard` (`<b3tty-palette-card>`, used by `B3ttyThemeSelector` and `B3ttyThemePicker`):
+`B3ttyPaletteCard` (`<b3tty-palette-card>`, used by `B3ttyThemeSelector`, `B3ttyThemePicker`, and `B3ttyThemeEditor`):
 - `setup(value, label, palette)` populates the card with a theme name, display label, and color palette; `readonly value` and `readonly selected` reflect internal state
 - When clicked, sets its own `[selected]` attribute and dispatches a composed `b3tty-card-select` CustomEvent with `{ detail: { value: string } }`
+- `observedAttributes: ["selected"]` + `attributeChangedCallback` keep the internal radio input in sync when `[selected]` is toggled externally (e.g. by the theme editor's live-preview logic)
 - Styled from a parent shadow DOM via CSS custom properties (`--palette-card-padding`, `--palette-card-gap`, `--palette-card-overflow`, `--palette-card-header-bg`, `--palette-card-header-padding`, `--palette-card-header-font-size`, `--palette-card-terminal-gap`, `--palette-card-terminal-shadow`, `--palette-card-terminal-min-width`)
 - `isB3ttyPaletteCard(el)` type guard checks for `setup` function and `value`/`selected` properties
 
@@ -114,13 +117,20 @@ b3tty is a browser-based terminal emulator. It runs a Go HTTP server that bridge
 
 `B3ttyMenuBar` (`<b3tty-menu-bar>`, always present in `terminal.tmpl`):
 - 6px trigger strip at top of viewport; slides open on `mouseenter`, auto-closes after 5s or `pointerdown` outside
-- `setup(themeNames, profileNames, colors)` always includes a "Themes" section with "Select Theme…" as the first item; Profiles section only added when non-empty
-- Dispatches: `b3tty-menubar-open`, `b3tty-menubar-close`, `b3tty-theme-change`, `b3tty-profile-change`, `b3tty-open-theme-selector`
+- `setup(themeNames, profileNames, colors)` always includes a "Themes" section with "Select Theme…" and "Edit Theme…" as the first two items; Profiles section only added when non-empty
+- Dispatches: `b3tty-menubar-open`, `b3tty-menubar-close`, `b3tty-theme-change`, `b3tty-profile-change`, `b3tty-open-theme-selector`, `b3tty-open-theme-editor`
 
 `B3ttyThemePicker` (`<b3tty-theme-picker>`, hidden overlay in `terminal.tmpl`):
 - `open(themeNames)` / `close()` API; narrowed in `terminal.ts` via `isB3ttyThemePicker` type guard
-- `open` fetches all palette data in parallel; failed fetches are silently skipped; OK button disabled until a card is selected
+- `open` fetches all palette data in parallel via `fetchPaletteCards`; failed fetches are silently skipped; OK button disabled until a card is selected
 - On OK: dispatches `b3tty-theme-selected` (bubbles + composed); Cancel closes without interrupting the PTY session
+
+`B3ttyThemeEditor` (`<b3tty-theme-editor>`, hidden overlay in `terminal.tmpl`):
+- `open(themeNames, builtinThemeNames)` / `close()` API; narrowed in `terminal.ts` via `isB3ttyThemeEditor` type guard (tag-name check)
+- Left panel: "Create new theme" card (always first) + palette cards for existing user themes fetched via `fetchPaletteCards`; palette cache (`#paletteCache`) populated at open time so live preview can restore originals
+- Right panel: theme name input (read-only when editing an existing theme; validated against `builtinThemeNames` to prevent overwriting built-ins), core color fields (background, foreground, cursor, cursorAccent, selectionBackground, selectionForeground), ANSI color pairs (normal + bright for each of 8 colors) with inline color swatch previews
+- Live preview: selecting a card loads its colors into the right panel via `GET /theme-config`; each valid input change calls `#buildPreviewPalette()` (merges valid inputs over the cached base palette) and re-calls `setup()` on the selected card; switching cards or closing calls `#restoreSelectedCard()` to revert to the original palette
+- On OK: calls `postEditTheme(name, colorData)` → `POST /edit-theme`; dispatches `b3tty-theme-edited` with `{ name, response }`; Cancel closes without saving
 
 **CSS layout (`src/assets/terminal.css`):**
 - `#container`: full-viewport flex column with `box-sizing: border-box` padding; `#terminal` uses `flex: 1; min-height: 0` to grow and shrink correctly
@@ -129,7 +139,7 @@ b3tty is a browser-based terminal emulator. It runs a Go HTTP server that bridge
 **Security:**
 - CSP headers set on every page response via `GetCSPHeaders()`; `displayTermHandler` injects a per-request nonce into `script-src` for the inline `window.B3TTY` assignment; directives include `default-src 'none'`, `'wasm-unsafe-eval'` (required by xterm.js), `style-src 'self' 'unsafe-inline'` (required by xterm.js and background tinting), `frame-ancestors 'none'`
 - WebSocket `upgrader` rejects cross-origin upgrades: absent `Origin` is allowed (non-browser clients); browser-sent `Origin` must have `Host` matching `r.Host`
-- All mutating handlers (`setSizeHandler`, `themeConfigHandler`, `addThemeHandler`, `saveConfigHandler`) enforce same-origin CSRF via `Sec-Fetch-Site: same-origin`; absent header (non-browser) is allowed
+- All mutating handlers (`setSizeHandler`, `themeConfigHandler`, `addThemeHandler`, `editThemeHandler`, `saveConfigHandler`) enforce same-origin CSRF via `Sec-Fetch-Site: same-origin`; absent header (non-browser) is allowed
 - `displayTermHandler` applies exponential backoff on failed token validation: `authBackoffDelay(n)` returns 1s/2s/4s/8s/16s capped at 30s; `TerminalServer.AuthSleep` is injectable for tests; backoff skipped entirely when `NoAuth` is set
 - `terminalHandler` discards resize requests where either dimension is zero
 - `Theme.BackgroundImage` carries `json:"-"` — the file path is never sent to the browser; the client receives only `HasBackgroundImage bool`
@@ -141,10 +151,11 @@ b3tty is a browser-based terminal emulator. It runs a Go HTTP server that bridge
 **Key design notes:**
 - Version stored in `VERSION` file and injected at build time via `-ldflags`
 - `Theme.MapToTheme()` uses reflection to map hyphenated YAML keys (e.g. `bright-red`) to struct fields (e.g. `BrightRed`); `Theme.toColorMap()` is the inverse, omitting empty fields and always excluding `BackgroundImage`
-- `builtinThemes` (package-level in `theme_handler.go`) is populated at init time from all 10 embedded JSON files; built-in themes are NOT auto-registered in `ts.Themes` — they are only added to `ts.Themes` in memory when selected via `POST /add-theme`; `selection-background` is the correct key name (not `sel-bg`) — the wrong key causes `KnownFields` validation to reject the generated `conf.yaml` on restart
-- `TermConfig` / `NewTermConfig` in `models.go` is the canonical browser config shape; `ThemeNames` is the user-configured theme list (Themes menu), `AllThemeNames` is the union of all built-in and user-defined names (passed to `picker.open()`); `buildConfigJSON` in `display_handler.go` accepts a matching `allThemeNames` parameter
-- `themeConfigResponse` (in `models.go`) embeds `Theme` and adds `HasBackgroundImage bool`; carries `ThemeNames []string \`json:"themeNames,omitempty"\`` populated only by `addThemeHandler` after a theme is added
-- `TerminalServer` has all exported fields; `cmd/start.go` constructs and populates it directly before calling `Serve()`; no package-level globals for client/server/profiles/themes exist in `src`
+- `builtinThemes` (package-level in `theme_handler.go`) is populated at init time from all 10 embedded JSON files; built-in themes are NOT auto-registered in `ts.Themes` — they are only added to `ts.Themes` in memory when selected via `POST /add-theme`; `selection-background` is the correct key name (not `sel-bg`) — the wrong key causes `KnownFields` validation to reject the generated `conf.yaml` on restart; `themePaletteHandler` checks `ts.Themes` first so user-edited colors take priority over built-in defaults for the same name
+- `ReadThemeNames` in `config.go` reads theme names directly from YAML rather than via Viper because `viper.GetStringMap` lowercases all keys, which would corrupt mixed-case user theme names in `ts.Themes` and the Themes menu
+- `TermConfig` / `NewTermConfig` in `models.go` is the canonical browser config shape; `ThemeNames` is the user-configured theme list (Themes menu), `AllThemeNames` is the union of all built-in and user-defined names (passed to `picker.open()`), `BuiltinThemeNames` is the list of built-in theme names (passed to `editor.open()` so the editor can reject those names); `buildConfigJSON` in `display_handler.go` accepts matching `allThemeNames` and `builtinThemeNames` parameters
+- `themeConfigResponse` (in `models.go`) embeds `Theme` and adds `HasBackgroundImage bool`; carries `ThemeNames []string \`json:"themeNames,omitempty"\`` populated by `addThemeHandler` and `editThemeHandler`
+- `TerminalServer` has all exported fields; `cmd/start.go` constructs and populates it directly before calling `Serve()`; no package-level globals for client/server/profiles/themes exist in `src`; `ConfigFile` holds the resolved config path from `viper.ConfigFileUsed()` and is passed to all config-writing functions
 - `TerminalServer.FirstRun` is set by `cmd/start.go` when no config file is found; `saveConfigHandler` sets it to `false` after writing config so the browser can reload into the normal flow
 - Profiles keyed by name; `"default"` always present; selected via `?profile=<name>`; TLS changes default port from 8080 to 8443
 - `http.Server` timeouts: `ReadTimeout: 10s`, `WriteTimeout: 10s`, `IdleTimeout: 120s`; gorilla/websocket hijacks the connection on upgrade so WebSocket sessions are unaffected

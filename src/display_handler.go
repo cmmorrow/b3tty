@@ -66,8 +66,8 @@ func resolveProfileName(q url.Values, profiles map[string]Profile) string {
 // buildConfigJSON serialises a TermConfig derived from the given server, client, theme,
 // and available theme/profile name lists into JSON. The returned bytes are ready to
 // embed in the HTML template.
-func buildConfigJSON(srv *Server, clnt *Client, thm *Theme, themeNames []string, allThemeNames []string, profileNames []string, activeTheme string) ([]byte, error) {
-	cfg := NewTermConfig(srv, clnt, thm, themeNames, allThemeNames, profileNames, activeTheme)
+func buildConfigJSON(srv *Server, clnt *Client, thm *Theme, themeNames []string, allThemeNames []string, builtinThemeNames []string, profileNames []string, activeTheme string) ([]byte, error) {
+	cfg := NewTermConfig(srv, clnt, thm, themeNames, allThemeNames, builtinThemeNames, profileNames, activeTheme)
 	return json.Marshal(cfg)
 }
 
@@ -188,6 +188,12 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	sort.Strings(allThemeNames)
 	Debugf("All theme names: %s", strings.Join(allThemeNames, ", "))
 
+	builtinNames := make([]string, 0, len(builtinThemes))
+	for name := range builtinThemes {
+		builtinNames = append(builtinNames, name)
+	}
+	sort.Strings(builtinNames)
+
 	profileNames := make([]string, 0, len(ts.Profiles))
 	for name := range ts.Profiles {
 		profileNames = append(profileNames, name)
@@ -196,7 +202,7 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	Debugf("Profile names: %s", strings.Join(profileNames, ", "))
 
 	thm := ts.Client.Theme
-	cfgJSON, err := buildConfigJSON(ts.Server, ts.Client, &thm, themeNames, allThemeNames, profileNames, ts.ActiveTheme)
+	cfgJSON, err := buildConfigJSON(ts.Server, ts.Client, &thm, themeNames, allThemeNames, builtinNames, profileNames, ts.ActiveTheme)
 	if err != nil {
 		Errorf("config serialization error: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)

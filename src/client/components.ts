@@ -1,5 +1,6 @@
-import { getThemePalette, postSaveConfig } from "./api.ts";
+import { getThemePalette, getThemeConfig, postEditTheme, postSaveConfig } from "./api.ts";
 import type { Palette } from "./types.ts";
+import { isValidThemeColor } from "./validators.ts";
 
 /**
  * Interface for the b3tty-dialog web component. The concrete class is defined
@@ -33,6 +34,14 @@ export interface B3ttyMenuBar {
  */
 export interface B3ttyThemePicker {
     open(themeNames: string[]): void;
+    close(): void;
+}
+
+/**
+ * Interface for the b3tty-theme-editor web component.
+ */
+export interface B3ttyThemeEditor {
+    open(themeNames: string[], builtinThemeNames?: string[]): void;
     close(): void;
 }
 
@@ -88,6 +97,13 @@ export function isB3ttyThemePicker(el: Element): el is HTMLElement & B3ttyThemeP
 }
 
 /**
+ * Returns true when el is a b3tty-theme-editor element.
+ */
+export function isB3ttyThemeEditor(el: Element): el is HTMLElement & B3ttyThemeEditor {
+    return el.tagName.toLowerCase() === "b3tty-theme-editor";
+}
+
+/**
  * Returns true when el exposes the B3ttyPaletteCard contract (setup/value/selected).
  */
 export function isB3ttyPaletteCard(el: Element): el is HTMLElement & B3ttyPaletteCard {
@@ -102,12 +118,67 @@ function formatThemeName(name: string): string {
         .join(" ");
 }
 
+const BUTTON_STYLES = `
+    .cancel-btn {
+        padding: 8px 20px; border-radius: 5px;
+        border: 1px solid #aaa; background: #c8c8c8;
+        font-size: 14px; font-family: sans-serif; cursor: pointer;
+    }
+    .cancel-btn:hover { background: #b8b8b8; }
+    .ok-btn {
+        padding: 8px 28px; border-radius: 5px; border: none;
+        background: #444; color: #fff;
+        font-size: 14px; font-family: sans-serif; cursor: pointer;
+    }
+    .ok-btn:disabled { background: #aaa; cursor: not-allowed; }
+    .ok-btn:not(:disabled):hover { background: #222; }`;
+
+const PALETTE_CARD_VARS = `
+    b3tty-palette-card {
+        --palette-card-padding: 0;
+        --palette-card-gap: 0;
+        --palette-card-overflow: hidden;
+        --palette-card-header-bg: #c8c8c8;
+        --palette-card-header-padding: 8px 10px;
+        --palette-card-header-font-size: 12px;
+        --palette-card-terminal-gap: 6px;
+        --palette-card-terminal-shadow: none;
+        --palette-card-terminal-min-width: 0;
+    }`;
+
+function fetchPaletteCards(
+    themeNames: string[]
+): Promise<Array<{ card: HTMLElement; name: string; palette: Palette }>> {
+    return Promise.all(
+        themeNames.map((name) =>
+            getThemePalette(name)
+                .then((p) => ({ name, palette: p as Palette | null }))
+                .catch(() => ({ name, palette: null as Palette | null }))
+        )
+    ).then((results) => {
+        const entries: Array<{ card: HTMLElement; name: string; palette: Palette }> = [];
+        for (const { name, palette } of results) {
+            if (palette) {
+                const card = document.createElement("b3tty-palette-card");
+                (card as unknown as B3ttyPaletteCard).setup(name, formatThemeName(name), palette);
+                entries.push({ card, name, palette });
+            }
+        }
+        return entries;
+    });
+}
+
 if (typeof HTMLElement !== "undefined") {
     // Defined first so it is available when B3ttyThemeSelectorImpl and
     // B3ttyThemePickerImpl constructors call document.createElement("b3tty-palette-card").
     class B3ttyPaletteCardImpl extends HTMLElement implements B3ttyPaletteCard {
         #shadow: ShadowRoot;
         #value: string = "";
+        #radio: HTMLInputElement | null = null;
+
+        static get observedAttributes() {
+            return ["selected"];
+        }
 
         get selected(): boolean {
             return this.hasAttribute("selected");
@@ -115,6 +186,12 @@ if (typeof HTMLElement !== "undefined") {
 
         get value(): string {
             return this.#value;
+        }
+
+        attributeChangedCallback(name: string, _oldValue: string | null, newValue: string | null): void {
+            if (name === "selected" && this.#radio) {
+                this.#radio.checked = newValue !== null;
+            }
         }
 
         constructor() {
@@ -196,6 +273,8 @@ if (typeof HTMLElement !== "undefined") {
             radio.name = "theme";
             radio.id = value;
             radio.value = value;
+            radio.checked = this.hasAttribute("selected");
+            this.#radio = radio;
             const labelSpan = document.createElement("span");
             labelSpan.textContent = label;
             header.appendChild(radio);
@@ -651,6 +730,15 @@ if (typeof HTMLElement !== "undefined") {
                     this.#close();
                 });
                 dropdown.appendChild(selectItem);
+                const editItem = document.createElement("div");
+                editItem.className = "menu-item";
+                editItem.textContent = "Edit Theme…";
+                editItem.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    this.dispatchEvent(new CustomEvent("b3tty-open-theme-editor", { bubbles: true, composed: true }));
+                    this.#close();
+                });
+                dropdown.appendChild(editItem);
                 if (items.length > 0) {
                     const sep = document.createElement("div");
                     sep.className = "menu-separator";
@@ -773,35 +861,13 @@ if (typeof HTMLElement !== "undefined") {
                     overflow-y: auto; flex: 1; min-height: 0;
                     padding: 4px 2px;
                 }
-                b3tty-palette-card {
-                    --palette-card-padding: 0;
-                    --palette-card-gap: 0;
-                    --palette-card-overflow: hidden;
-                    --palette-card-header-bg: #c8c8c8;
-                    --palette-card-header-padding: 8px 10px;
-                    --palette-card-header-font-size: 12px;
-                    --palette-card-terminal-gap: 6px;
-                    --palette-card-terminal-shadow: none;
-                    --palette-card-terminal-min-width: 0;
-                }
+                ${PALETTE_CARD_VARS}
                 .loading {
                     font-family: sans-serif; font-size: 13px; color: #555;
                     text-align: center; padding: 20px; grid-column: 1 / -1;
                 }
                 .actions { display: flex; justify-content: flex-end; gap: 10px; }
-                .cancel-btn {
-                    padding: 8px 20px; border-radius: 5px;
-                    border: 1px solid #aaa; background: #c8c8c8;
-                    font-size: 14px; font-family: sans-serif; cursor: pointer;
-                }
-                .cancel-btn:hover { background: #b8b8b8; }
-                .ok-btn {
-                    padding: 8px 28px; border-radius: 5px; border: none;
-                    background: #444; color: #fff;
-                    font-size: 14px; font-family: sans-serif; cursor: pointer;
-                }
-                .ok-btn:disabled { background: #aaa; cursor: not-allowed; }
-                .ok-btn:not(:disabled):hover { background: #222; }
+                ${BUTTON_STYLES}
             `;
 
             const overlay = document.createElement("div");
@@ -872,21 +938,9 @@ if (typeof HTMLElement !== "undefined") {
             this.#cards.appendChild(loading);
             this.setAttribute("open", "");
 
-            Promise.all(
-                themeNames.map((name) =>
-                    getThemePalette(name)
-                        .then((p) => ({ name, palette: p as Palette | null }))
-                        .catch(() => ({ name, palette: null as Palette | null }))
-                )
-            ).then((results) => {
+            fetchPaletteCards(themeNames).then((entries) => {
                 this.#cards.innerHTML = "";
-                for (const { name, palette } of results) {
-                    if (palette) {
-                        const card = document.createElement("b3tty-palette-card");
-                        (card as unknown as B3ttyPaletteCard).setup(name, formatThemeName(name), palette);
-                        this.#cards.appendChild(card);
-                    }
-                }
+                for (const { card } of entries) this.#cards.appendChild(card);
             });
         }
 
@@ -897,4 +951,528 @@ if (typeof HTMLElement !== "undefined") {
     }
 
     customElements.define("b3tty-theme-picker", B3ttyThemePickerImpl);
+
+    class B3ttyThemeEditorImpl extends HTMLElement implements B3ttyThemeEditor {
+        #shadow: ShadowRoot;
+        #leftPanel: HTMLDivElement;
+        #nameInput: HTMLInputElement;
+        #nameError: HTMLSpanElement;
+        #colorInputs: Map<string, HTMLInputElement> = new Map();
+        #swatches: Map<string, HTMLSpanElement> = new Map();
+        #okBtn: HTMLButtonElement;
+        #selectedName: string | null = null;
+        #selectedCard: HTMLElement | null = null;
+        #selectedPalette: Palette | null = null;
+        #paletteCache: Map<string, Palette> = new Map();
+        #createCard: HTMLDivElement;
+        #createRadio: HTMLInputElement;
+        #isLoading = false;
+        #builtinThemeNames: Set<string> = new Set();
+
+        constructor() {
+            super();
+            this.#shadow = this.attachShadow({ mode: "open" });
+
+            const style = document.createElement("style");
+            style.textContent = `
+                :host { display: none; }
+                :host([open]) { display: block; }
+                .overlay {
+                    position: fixed; inset: 0;
+                    background: rgba(0,0,0,0.72);
+                    z-index: 10000;
+                    display: flex; align-items: center; justify-content: center;
+                    padding: 20px; box-sizing: border-box;
+                }
+                .modal {
+                    background: #e0e0e0;
+                    border-radius: 10px;
+                    padding: 20px;
+                    display: flex; flex-direction: row;
+                    width: min(780px, 100%); height: min(560px, 90vh);
+                    box-sizing: border-box;
+                    box-shadow: 0 8px 40px rgba(0,0,0,0.55);
+                    overflow: hidden;
+                }
+                .left-panel {
+                    width: 240px; flex-shrink: 0;
+                    display: flex; flex-direction: column; gap: 6px;
+                    overflow-y: auto; min-height: 0;
+                    padding-right: 10px;
+                    border-right: 1px solid #c0c0c0;
+                }
+                .create-card {
+                    display: flex; align-items: center; gap: 7px;
+                    padding: 8px 10px;
+                    background: #c8c8c8;
+                    border: 2px solid transparent;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-family: sans-serif; font-size: 13px; font-weight: 600; color: #222;
+                    user-select: none; flex-shrink: 0;
+                }
+                .create-card:hover { background: #bbb; }
+                .create-card[selected] { border-color: #444; background: #b8b8b8; }
+                .create-card input[type=radio] { cursor: pointer; accent-color: #444; }
+                ${PALETTE_CARD_VARS}
+                b3tty-palette-card { flex-shrink: 0; }
+                .right-panel {
+                    flex: 1; display: flex; flex-direction: column;
+                    padding-left: 16px; min-width: 0;
+                }
+                .name-section {
+                    display: flex; flex-direction: column; gap: 4px;
+                    flex-shrink: 0; padding-bottom: 10px;
+                    border-bottom: 1px solid #c8c8c8;
+                    margin-bottom: 8px;
+                }
+                .name-row {
+                    display: flex; align-items: center; gap: 8px;
+                }
+                .name-section label {
+                    font-family: sans-serif; font-size: 12px; color: #444;
+                    white-space: nowrap; min-width: 80px;
+                }
+                .name-input {
+                    flex: 1; font-family: sans-serif; font-size: 13px;
+                    padding: 4px 8px; border: 1px solid #aaa; border-radius: 3px;
+                    background: #f5f5f5;
+                }
+                .name-input:read-only { background: #e8e8e8; color: #555; }
+                .name-error {
+                    font-family: sans-serif; font-size: 11px; color: #c00;
+                    display: none;
+                }
+                .name-error.visible { display: block; }
+                .color-form {
+                    flex: 1; overflow-y: auto; min-height: 0;
+                    display: flex; flex-direction: column; gap: 4px;
+                }
+                .section-title {
+                    font-family: sans-serif; font-size: 11px; font-weight: 600;
+                    text-transform: uppercase; letter-spacing: 0.05em;
+                    color: #666; padding: 6px 0 2px;
+                }
+                .field-row {
+                    display: grid;
+                    grid-template-columns: 140px 1fr 22px;
+                    gap: 4px; align-items: center;
+                }
+                .field-row label {
+                    font-family: sans-serif; font-size: 12px; color: #444;
+                }
+                .ansi-header {
+                    display: grid;
+                    grid-template-columns: 68px 1fr 22px 1fr 22px;
+                    gap: 4px;
+                    font-family: sans-serif; font-size: 11px; font-weight: 600;
+                    color: #666; padding-bottom: 2px;
+                }
+                .ansi-row {
+                    display: grid;
+                    grid-template-columns: 68px 1fr 22px 1fr 22px;
+                    gap: 4px; align-items: center;
+                }
+                .ansi-row .color-label {
+                    font-family: sans-serif; font-size: 12px; color: #444;
+                }
+                .color-input {
+                    font-family: monospace; font-size: 12px;
+                    padding: 3px 6px; border: 1px solid #aaa; border-radius: 3px;
+                    background: #f5f5f5; width: 100%; box-sizing: border-box;
+                    min-width: 0;
+                }
+                .swatch {
+                    width: 18px; height: 18px;
+                    border-radius: 3px; border: 1px solid rgba(0,0,0,0.2);
+                    visibility: hidden;
+                }
+                .swatch.visible { visibility: visible; }
+                .actions {
+                    display: flex; justify-content: flex-end; gap: 10px;
+                    padding-top: 10px; flex-shrink: 0;
+                    border-top: 1px solid #c8c8c8; margin-top: 8px;
+                }
+                ${BUTTON_STYLES}
+            `;
+
+            const overlay = document.createElement("div");
+            overlay.className = "overlay";
+            const modal = document.createElement("div");
+            modal.className = "modal";
+            modal.setAttribute("role", "dialog");
+            modal.setAttribute("aria-modal", "true");
+
+            // --- Left panel ---
+            this.#leftPanel = document.createElement("div");
+            this.#leftPanel.className = "left-panel";
+
+            this.#createCard = document.createElement("div");
+            this.#createCard.className = "create-card";
+            this.#createRadio = document.createElement("input");
+            this.#createRadio.type = "radio";
+            this.#createRadio.name = "theme";
+            this.#createRadio.checked = true;
+            const createLabel = document.createElement("span");
+            createLabel.textContent = "Create new theme";
+            this.#createCard.appendChild(this.#createRadio);
+            this.#createCard.appendChild(createLabel);
+            this.#leftPanel.appendChild(this.#createCard);
+
+            // --- Right panel ---
+            const rightPanel = document.createElement("div");
+            rightPanel.className = "right-panel";
+
+            const nameSection = document.createElement("div");
+            nameSection.className = "name-section";
+            const nameRow = document.createElement("div");
+            nameRow.className = "name-row";
+            const nameLabel = document.createElement("label");
+            nameLabel.textContent = "Theme Name";
+            this.#nameInput = document.createElement("input");
+            this.#nameInput.type = "text";
+            this.#nameInput.className = "name-input";
+            this.#nameInput.placeholder = "Enter theme name";
+            this.#nameError = document.createElement("span");
+            this.#nameError.className = "name-error";
+            this.#nameError.textContent = "Cannot use a built-in theme name";
+            nameRow.appendChild(nameLabel);
+            nameRow.appendChild(this.#nameInput);
+            nameSection.appendChild(nameRow);
+            nameSection.appendChild(this.#nameError);
+
+            const colorForm = document.createElement("div");
+            colorForm.className = "color-form";
+
+            const coreTitle = document.createElement("div");
+            coreTitle.className = "section-title";
+            coreTitle.textContent = "Core Colors";
+            colorForm.appendChild(coreTitle);
+
+            for (const { key, label } of [
+                { key: "background", label: "Background" },
+                { key: "foreground", label: "Foreground" },
+                { key: "cursor", label: "Cursor" },
+                { key: "cursorAccent", label: "Cursor Accent" },
+                { key: "selectionBackground", label: "Selection Background" },
+                { key: "selectionForeground", label: "Selection Foreground" },
+            ]) {
+                const [row, input, swatch] = this.#makeColorRow(label);
+                this.#colorInputs.set(key, input);
+                this.#swatches.set(key, swatch);
+                colorForm.appendChild(row);
+            }
+
+            const ansiTitle = document.createElement("div");
+            ansiTitle.className = "section-title";
+            ansiTitle.textContent = "ANSI Colors";
+            colorForm.appendChild(ansiTitle);
+
+            const ansiHeader = document.createElement("div");
+            ansiHeader.className = "ansi-header";
+            ansiHeader.appendChild(document.createElement("span")); // color name column
+            const hNormal = document.createElement("span");
+            hNormal.textContent = "Normal";
+            ansiHeader.appendChild(hNormal);
+            ansiHeader.appendChild(document.createElement("span")); // swatch placeholder
+            const hBright = document.createElement("span");
+            hBright.textContent = "Bright";
+            ansiHeader.appendChild(hBright);
+            ansiHeader.appendChild(document.createElement("span")); // swatch placeholder
+            colorForm.appendChild(ansiHeader);
+
+            for (const [colorName, normalKey, brightKey] of [
+                ["Black", "black", "brightBlack"],
+                ["Red", "red", "brightRed"],
+                ["Yellow", "yellow", "brightYellow"],
+                ["Green", "green", "brightGreen"],
+                ["Cyan", "cyan", "brightCyan"],
+                ["Blue", "blue", "brightBlue"],
+                ["Magenta", "magenta", "brightMagenta"],
+                ["White", "white", "brightWhite"],
+            ] as [string, string, string][]) {
+                const ansiRow = document.createElement("div");
+                ansiRow.className = "ansi-row";
+                const colorLabel = document.createElement("span");
+                colorLabel.className = "color-label";
+                colorLabel.textContent = colorName;
+                ansiRow.appendChild(colorLabel);
+                for (const key of [normalKey, brightKey]) {
+                    const input = document.createElement("input");
+                    input.type = "text";
+                    input.className = "color-input";
+                    input.placeholder = "#rrggbb";
+                    const swatch = document.createElement("span");
+                    swatch.className = "swatch";
+                    input.addEventListener("input", () => {
+                        this.#updateSwatch(swatch, input.value);
+                        this.#validateForm();
+                    });
+                    this.#colorInputs.set(key, input);
+                    this.#swatches.set(key, swatch);
+                    ansiRow.appendChild(input);
+                    ansiRow.appendChild(swatch);
+                }
+                colorForm.appendChild(ansiRow);
+            }
+
+            const actions = document.createElement("div");
+            actions.className = "actions";
+            const cancelBtn = document.createElement("button");
+            cancelBtn.className = "cancel-btn";
+            cancelBtn.textContent = "Cancel";
+            this.#okBtn = document.createElement("button");
+            this.#okBtn.className = "ok-btn";
+            this.#okBtn.textContent = "OK";
+            this.#okBtn.disabled = true;
+            actions.appendChild(cancelBtn);
+            actions.appendChild(this.#okBtn);
+
+            rightPanel.appendChild(nameSection);
+            rightPanel.appendChild(colorForm);
+            rightPanel.appendChild(actions);
+
+            modal.appendChild(this.#leftPanel);
+            modal.appendChild(rightPanel);
+            overlay.appendChild(modal);
+            this.#shadow.appendChild(style);
+            this.#shadow.appendChild(overlay);
+
+            // Listeners
+            this.#nameInput.addEventListener("input", () => this.#validateForm());
+
+            this.#createCard.addEventListener("click", () => {
+                for (const card of Array.from(this.#leftPanel.querySelectorAll("b3tty-palette-card"))) {
+                    card.removeAttribute("selected");
+                }
+                this.#createCard.setAttribute("selected", "");
+                this.#createRadio.checked = true;
+                this.#restoreSelectedCard();
+                this.#selectedName = null;
+                this.#nameInput.value = "";
+                this.#clearInputs();
+                this.#isLoading = false;
+                this.#validateForm();
+            });
+
+            this.#leftPanel.addEventListener("b3tty-card-select", (e: Event) => {
+                const target = e.target as HTMLElement;
+                for (const card of Array.from(this.#leftPanel.querySelectorAll("b3tty-palette-card"))) {
+                    if (card !== target) card.removeAttribute("selected");
+                }
+                this.#createCard.removeAttribute("selected");
+                this.#createRadio.checked = false;
+                const name = (target as unknown as B3ttyPaletteCard).value;
+                this.#restoreSelectedCard();
+                this.#selectedName = name;
+                this.#selectedCard = target;
+                this.#selectedPalette = this.#paletteCache.get(name) ?? null;
+                this.#nameInput.value = name;
+                this.#isLoading = true;
+                this.#okBtn.disabled = true;
+                this.#clearInputs();
+                this.#loadThemeColors(name);
+            });
+
+            cancelBtn.addEventListener("click", () => this.close());
+            this.#okBtn.addEventListener("click", () => void this.#handleOk());
+        }
+
+        #makeColorRow(label: string): [HTMLDivElement, HTMLInputElement, HTMLSpanElement] {
+            const row = document.createElement("div");
+            row.className = "field-row";
+            const lbl = document.createElement("label");
+            lbl.textContent = label;
+            const input = document.createElement("input");
+            input.type = "text";
+            input.className = "color-input";
+            input.placeholder = "#rrggbb";
+            const swatch = document.createElement("span");
+            swatch.className = "swatch";
+            input.addEventListener("input", () => {
+                this.#updateSwatch(swatch, input.value);
+                this.#validateForm();
+            });
+            row.appendChild(lbl);
+            row.appendChild(input);
+            row.appendChild(swatch);
+            return [row, input, swatch];
+        }
+
+        #updateSwatch(swatch: HTMLSpanElement, value: string): void {
+            if (value && isValidThemeColor(value)) {
+                swatch.style.backgroundColor = value;
+                swatch.classList.add("visible");
+            } else {
+                swatch.classList.remove("visible");
+            }
+        }
+
+        #validateForm(): void {
+            if (this.#isLoading) {
+                this.#okBtn.disabled = true;
+                this.#nameError.classList.remove("visible");
+                return;
+            }
+            this.#updatePreview();
+            const name = this.#nameInput.value.trim();
+            if (!name) {
+                this.#okBtn.disabled = true;
+                this.#nameError.classList.remove("visible");
+                return;
+            }
+            if (this.#builtinThemeNames.has(name)) {
+                this.#okBtn.disabled = true;
+                this.#nameError.classList.add("visible");
+                return;
+            }
+            this.#nameError.classList.remove("visible");
+            for (const input of this.#colorInputs.values()) {
+                if (input.value && !isValidThemeColor(input.value)) {
+                    this.#okBtn.disabled = true;
+                    return;
+                }
+            }
+            this.#okBtn.disabled = false;
+        }
+
+        #restoreSelectedCard(): void {
+            if (!this.#selectedCard || !this.#selectedName) return;
+            const original = this.#paletteCache.get(this.#selectedName);
+            if (original) {
+                (this.#selectedCard as unknown as B3ttyPaletteCard).setup(
+                    this.#selectedName,
+                    formatThemeName(this.#selectedName),
+                    original
+                );
+            }
+            this.#selectedCard = null;
+            this.#selectedPalette = null;
+        }
+
+        #buildPreviewPalette(): Palette | null {
+            if (!this.#selectedPalette) return null;
+            const base = this.#selectedPalette;
+            const get = (key: string): string | null => {
+                const val = this.#colorInputs.get(key)?.value;
+                return val && isValidThemeColor(val) ? val : null;
+            };
+            const normalKeys = ["black", "red", "yellow", "green", "cyan", "blue", "magenta", "white"];
+            const brightKeys = [
+                "brightBlack",
+                "brightRed",
+                "brightYellow",
+                "brightGreen",
+                "brightCyan",
+                "brightBlue",
+                "brightMagenta",
+                "brightWhite",
+            ];
+            return {
+                bg: get("background") ?? base.bg,
+                fg: get("foreground") ?? base.fg,
+                selBg: get("selectionBackground") ?? base.selBg,
+                cursor: get("cursor") ?? base.cursor,
+                normal: normalKeys.map((k, i) => get(k) ?? base.normal[i]),
+                bright: brightKeys.map((k, i) => get(k) ?? base.bright[i]),
+            };
+        }
+
+        #updatePreview(): void {
+            if (!this.#selectedCard || !this.#selectedName || !this.#selectedPalette) return;
+            const palette = this.#buildPreviewPalette();
+            if (!palette) return;
+            (this.#selectedCard as unknown as B3ttyPaletteCard).setup(
+                this.#selectedName,
+                formatThemeName(this.#selectedName),
+                palette
+            );
+        }
+
+        #clearInputs(): void {
+            for (const [key, input] of this.#colorInputs) {
+                input.value = "";
+                const swatch = this.#swatches.get(key);
+                if (swatch) swatch.classList.remove("visible");
+            }
+        }
+
+        async #loadThemeColors(name: string): Promise<void> {
+            try {
+                const config = await getThemeConfig(name);
+                const data = config as unknown as Record<string, string>;
+                for (const [key, input] of this.#colorInputs) {
+                    const value = data[key] ?? "";
+                    input.value = value;
+                    const swatch = this.#swatches.get(key);
+                    if (swatch) this.#updateSwatch(swatch, value);
+                }
+            } catch {
+                // leave inputs as-is on failure
+            } finally {
+                this.#isLoading = false;
+                this.#validateForm();
+            }
+        }
+
+        async #handleOk(): Promise<void> {
+            const name = this.#nameInput.value.trim();
+            if (!name) return;
+            const themeData: Record<string, string> = {};
+            for (const [key, input] of this.#colorInputs) {
+                if (input.value) themeData[key] = input.value;
+            }
+            try {
+                const response = await postEditTheme(name, themeData);
+                this.dispatchEvent(
+                    new CustomEvent("b3tty-theme-edited", {
+                        detail: { name, response },
+                        bubbles: true,
+                        composed: true,
+                    })
+                );
+                this.close();
+            } catch {
+                // keep editor open so the user can retry
+            }
+        }
+
+        open(themeNames: string[], builtinThemeNames: string[] = []): void {
+            this.#builtinThemeNames = new Set(builtinThemeNames);
+            this.#selectedName = null;
+            this.#selectedCard = null;
+            this.#selectedPalette = null;
+            this.#paletteCache.clear();
+            this.#isLoading = false;
+            this.#nameInput.value = "";
+            this.#nameError.classList.remove("visible");
+            this.#clearInputs();
+            this.#okBtn.disabled = true;
+
+            // rebuild card list (keep create-card)
+            const existingCards = Array.from(this.#leftPanel.querySelectorAll("b3tty-palette-card"));
+            for (const card of existingCards) card.remove();
+            this.#createCard.setAttribute("selected", "");
+            this.#createRadio.checked = true;
+
+            this.setAttribute("open", "");
+
+            fetchPaletteCards(themeNames).then((entries) => {
+                for (const c of Array.from(this.#leftPanel.querySelectorAll("b3tty-palette-card"))) c.remove();
+                for (const { card, name, palette } of entries) {
+                    this.#paletteCache.set(name, palette);
+                    this.#leftPanel.appendChild(card);
+                }
+            });
+        }
+
+        close(): void {
+            this.removeAttribute("open");
+            this.#restoreSelectedCard();
+            this.#selectedName = null;
+            this.#nameError.classList.remove("visible");
+        }
+    }
+
+    customElements.define("b3tty-theme-editor", B3ttyThemeEditorImpl);
 }

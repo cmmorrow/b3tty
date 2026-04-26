@@ -222,11 +222,12 @@ type TermConfig struct {
 	HasBackgroundImage bool     `json:"backgroundImage"`
 	ThemeNames         []string `json:"themeNames"`
 	AllThemeNames      []string `json:"allThemeNames"`
+	BuiltinThemeNames  []string `json:"builtinThemeNames"`
 	ProfileNames       []string `json:"profileNames"`
 	ActiveTheme        string   `json:"activeTheme"`
 }
 
-func NewTermConfig(srv *Server, clnt *Client, thm *Theme, themeNames []string, allThemeNames []string, profileNames []string, activeTheme string) *TermConfig {
+func NewTermConfig(srv *Server, clnt *Client, thm *Theme, themeNames []string, allThemeNames []string, builtinThemeNames []string, profileNames []string, activeTheme string) *TermConfig {
 	return &TermConfig{
 		TLS:                srv.TLS.Enabled,
 		CursorBlink:        clnt.CursorBlink,
@@ -241,6 +242,7 @@ func NewTermConfig(srv *Server, clnt *Client, thm *Theme, themeNames []string, a
 		HasBackgroundImage: thm.BackgroundImage != "",
 		ThemeNames:         themeNames,
 		AllThemeNames:      allThemeNames,
+		BuiltinThemeNames:  builtinThemeNames,
 		ProfileNames:       profileNames,
 		ActiveTheme:        activeTheme,
 	}

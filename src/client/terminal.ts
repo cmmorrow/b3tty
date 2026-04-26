@@ -16,8 +16,8 @@ import type {
 import { isValidHttpProtocol, isValidWsProtocol, isValidPort, isValidUri } from "./validators.ts";
 import { postSize, postThemeConfig, postAddTheme } from "./api.ts";
 import "./components.ts";
-import type { B3ttyDialog, B3ttyMenuBar, B3ttyThemePicker } from "./components.ts";
-import { isB3ttyDialog, isB3ttyMenuBar, isB3ttyThemePicker } from "./components.ts";
+import type { B3ttyDialog, B3ttyMenuBar, B3ttyThemePicker, B3ttyThemeEditor } from "./components.ts";
+import { isB3ttyDialog, isB3ttyMenuBar, isB3ttyThemePicker, isB3ttyThemeEditor } from "./components.ts";
 
 export const THEME_KEYS = [
     "foreground",
@@ -423,6 +423,45 @@ export async function handleThemeSelected(
 }
 
 /**
+ * Applies an edited or newly created theme to the terminal and menu bar.
+ * Called when the b3tty-theme-editor dispatches "b3tty-theme-edited". The full
+ * ThemeActivateResponse is carried in the event detail so no extra fetch is needed.
+ */
+export async function handleThemeEdited(
+    e: Event,
+    term: Terminal,
+    menuBar: B3ttyMenuBar,
+    config: TermConfig,
+    activeTheme: { current: string }
+): Promise<void> {
+    const { name, response: newTheme } = (e as CustomEvent<{ name: string; response: ThemeActivateResponse }>).detail;
+
+    const builtTheme = buildTheme(newTheme);
+    if (newTheme.hasBackgroundImage) {
+        builtTheme.background = withAlpha(newTheme.background || "#000", 0);
+    }
+    term.options.theme = builtTheme;
+    applyThemeStyles(newTheme, newTheme.hasBackgroundImage);
+
+    if (newTheme.themeNames) {
+        config.themeNames = newTheme.themeNames;
+        if (!config.allThemeNames?.includes(name)) {
+            config.allThemeNames = [...(config.allThemeNames ?? []), name].sort();
+        }
+        menuBar.setup(config.themeNames, config.profileNames ?? [], {
+            bg: setLight(newTheme.foreground),
+            fg: setDark(newTheme.background),
+        });
+    } else {
+        menuBar.updateColors({
+            bg: setLight(newTheme.foreground),
+            fg: setDark(newTheme.background),
+        });
+    }
+    activeTheme.current = name;
+}
+
+/**
  * Permanently disables and hides the terminal cursor after the WebSocket closes.
  * cursorInactiveStyle "none" hides the cursor when the terminal loses focus; the
  * focus listener ensures a subsequent click cannot briefly restore it.
@@ -534,6 +573,28 @@ export async function main(config: TermConfig): Promise<void> {
             picker.addEventListener(
                 "b3tty-theme-selected",
                 (e) => handleThemeSelected(e, term, menuBar, picker!, config, activeTheme),
+                { signal }
+            );
+        }
+
+        const editorEl = document.getElementById("theme-editor");
+        let editor: (HTMLElement & B3ttyThemeEditor) | null = null;
+        if (editorEl && isB3ttyThemeEditor(editorEl)) {
+            editor = editorEl;
+        }
+
+        menuBarEl.addEventListener(
+            "b3tty-open-theme-editor",
+            () => {
+                editor?.open(config.allThemeNames ?? [], config.builtinThemeNames ?? []);
+            },
+            { signal }
+        );
+
+        if (editor) {
+            editor.addEventListener(
+                "b3tty-theme-edited",
+                (e) => handleThemeEdited(e, term, menuBar, config, activeTheme),
                 { signal }
             );
         }
