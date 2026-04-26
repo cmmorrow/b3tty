@@ -29,6 +29,7 @@ type TerminalServer struct {
 	ProfileName    string
 	StartupProfile string
 	ActiveTheme    string
+	ConfigFile     string
 	FailedAttempts int
 	FirstRun       bool
 	BackoffMu      sync.Mutex
@@ -196,6 +197,7 @@ func Serve(ts *TerminalServer, shouldOpenBrowser bool, useTLS bool) {
 	mux.HandleFunc("/theme-config", ts.themeConfigHandler)
 	mux.HandleFunc("/theme-select", ts.themeSelectHandler)
 	mux.HandleFunc("/add-theme", ts.addThemeHandler)
+	mux.HandleFunc("/edit-theme", ts.editThemeHandler)
 	mux.HandleFunc("/save-config", ts.saveConfigHandler)
 	httpServer := &http.Server{
 		Addr:         addr,

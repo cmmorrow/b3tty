@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"os"
-	"strings"
 
 	"github.com/cmmorrow/b3tty/src"
 	"github.com/spf13/cobra"
@@ -128,12 +127,17 @@ func initConfig() {
 				os.Exit(3)
 			}
 			theme.MapToTheme(themeCfg.AllSettings())
-			activeThemeName = strings.ToLower(themeName)
+			activeThemeName = themeName
 		}
 
 		if viper.IsSet("themes") {
-			// src.Themes = make(map[string]src.Theme)
-			for name := range viper.GetStringMap("themes") {
+			// ReadThemeNames reads directly from YAML to preserve key case;
+			// viper.GetStringMap lowercases all keys.
+			themeNames, err := src.ReadThemeNames(viper.ConfigFileUsed())
+			if err != nil {
+				src.Warnf("could not read theme names from config: %v", err)
+			}
+			for _, name := range themeNames {
 				var t src.Theme
 				if themeCfg := viper.Sub("themes." + name); themeCfg != nil {
 					t.MapToTheme(themeCfg.AllSettings())
@@ -142,18 +146,11 @@ func initConfig() {
 			}
 		}
 
-		// Guarantee the active theme is always in themes. viper's
-		// GetStringMap can return an empty map for a single-entry themes
-		// section in some YAML parser versions, which would leave the active
-		// theme absent from the menu bar list even though it is fully loaded.
-		// Use strings.ToLower to match the keys GetStringMap already stored.
+		// Guarantee the active theme is always in themes when the themes section
+		// is missing or empty (some YAML parser versions return an empty map).
 		if themeName != "" {
-			// if src.Themes == nil {
-			// 	src.Themes = make(map[string]src.Theme)
-			// }
-			lowerName := strings.ToLower(themeName)
-			if _, exists := themes[lowerName]; !exists {
-				themes[lowerName] = theme
+			if _, exists := themes[themeName]; !exists {
+				themes[themeName] = theme
 			}
 		}
 

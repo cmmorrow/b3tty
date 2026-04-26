@@ -25,8 +25,16 @@ import {
     handleThemeChange,
     handleProfileChange,
     handleThemeSelected,
+    handleThemeEdited,
 } from "./terminal.ts";
-import { isValidHttpProtocol, isValidWsProtocol, isValidPort, isValidUri, MAX_UINT16 } from "./validators.ts";
+import {
+    isValidHttpProtocol,
+    isValidWsProtocol,
+    isValidPort,
+    isValidUri,
+    isValidThemeColor,
+    MAX_UINT16,
+} from "./validators.ts";
 import { isB3ttyDialog, isB3ttyMenuBar } from "./components.ts";
 import { isThemeActivateResponse } from "./types.ts";
 
@@ -1820,5 +1828,221 @@ describe("handleThemeSelected", () => {
             { current: "b3tty-dark" }
         );
         expect(config.themeNames).toEqual(["b3tty-dark", "dracula"]);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// isValidThemeColor
+// ---------------------------------------------------------------------------
+
+describe("isValidThemeColor", () => {
+    it("returns true for empty string", () => {
+        expect(isValidThemeColor("")).toBe(true);
+    });
+    it("returns true for 3-digit hex", () => {
+        expect(isValidThemeColor("#fff")).toBe(true);
+    });
+    it("returns true for 6-digit hex", () => {
+        expect(isValidThemeColor("#aabbcc")).toBe(true);
+    });
+    it("returns true for 6-digit uppercase hex", () => {
+        expect(isValidThemeColor("#AABBCC")).toBe(true);
+    });
+    it("returns true for named color 'red'", () => {
+        expect(isValidThemeColor("red")).toBe(true);
+    });
+    it("returns true for named color 'cornflowerblue'", () => {
+        expect(isValidThemeColor("cornflowerblue")).toBe(true);
+    });
+    it("returns false for 5-digit hex", () => {
+        expect(isValidThemeColor("#14181")).toBe(false);
+    });
+    it("returns false for invalid hex chars", () => {
+        expect(isValidThemeColor("#gggggg")).toBe(false);
+    });
+    it("returns false for CSS rgb() function", () => {
+        expect(isValidThemeColor("rgb(0,0,0)")).toBe(false);
+    });
+    it("returns false for named color with space", () => {
+        expect(isValidThemeColor("dark blue")).toBe(false);
+    });
+    it("returns false for hex-like string without leading #", () => {
+        expect(isValidThemeColor("14181d")).toBe(false);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// handleThemeEdited
+// ---------------------------------------------------------------------------
+
+describe("handleThemeEdited", () => {
+    let savedDocument: unknown;
+
+    beforeEach(() => {
+        savedDocument = (globalThis as Record<string, unknown>)["document"];
+    });
+
+    afterEach(() => {
+        (globalThis as Record<string, unknown>)["document"] = savedDocument;
+        mock.restore();
+    });
+
+    function makeEditedEvent(name: string, overrides: Record<string, unknown> = {}): Event {
+        return {
+            detail: {
+                name,
+                response: {
+                    hasBackgroundImage: false,
+                    foreground: "#f8f8f2",
+                    background: "#282a36",
+                    ...overrides,
+                },
+            },
+        } as unknown as Event;
+    }
+
+    function makeMenuBar() {
+        return {
+            setup: mock((_t: string[], _p: string[], _c: unknown) => {}),
+            updateColors: mock((_c: unknown) => {}),
+        };
+    }
+
+    function makeConfig(overrides: Record<string, unknown> = {}) {
+        return {
+            tls: false,
+            uri: "localhost",
+            port: 8080,
+            fontSize: 14,
+            fontFamily: "monospace",
+            cursorBlink: true,
+            rows: 0,
+            columns: 0,
+            theme: {},
+            themeNames: ["b3tty-dark"],
+            profileNames: [],
+            allThemeNames: ["b3tty-dark"],
+            ...overrides,
+        };
+    }
+
+    it("applies the new theme to term.options.theme", async () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const term = terminalFactory(makeConfig());
+        await handleThemeEdited(
+            makeEditedEvent("my-theme", { foreground: "#f8f8f2", background: "#282a36" }),
+            term,
+            makeMenuBar(),
+            makeConfig(),
+            { current: "b3tty-dark" }
+        );
+        expect(term.options.theme?.foreground).toBe("#f8f8f2");
+        expect(term.options.theme?.background).toBe("#282a36");
+    });
+
+    it("overrides theme background to transparent when hasBackgroundImage is true", async () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const term = terminalFactory(makeConfig());
+        await handleThemeEdited(
+            makeEditedEvent("my-theme", { hasBackgroundImage: true, background: "#282a36" }),
+            term,
+            makeMenuBar(),
+            makeConfig(),
+            { current: "b3tty-dark" }
+        );
+        expect(term.options.theme?.background).toBe("rgba(40, 42, 54, 0)");
+    });
+
+    it("updates activeTheme.current", async () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const activeTheme = { current: "b3tty-dark" };
+        await handleThemeEdited(
+            makeEditedEvent("my-theme"),
+            terminalFactory(makeConfig()),
+            makeMenuBar(),
+            makeConfig(),
+            activeTheme
+        );
+        expect(activeTheme.current).toBe("my-theme");
+    });
+
+    it("calls menuBar.setup when response includes themeNames", async () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const menuBar = makeMenuBar();
+        const config = makeConfig({ themeNames: ["b3tty-dark"] });
+        await handleThemeEdited(
+            makeEditedEvent("my-theme", { themeNames: ["b3tty-dark", "my-theme"] }),
+            terminalFactory(makeConfig()),
+            menuBar,
+            config,
+            { current: "b3tty-dark" }
+        );
+        expect(menuBar.setup).toHaveBeenCalledTimes(1);
+        expect(menuBar.setup.mock.calls[0]![0]).toEqual(["b3tty-dark", "my-theme"]);
+        expect(menuBar.updateColors).not.toHaveBeenCalled();
+    });
+
+    it("calls menuBar.updateColors when response does not include themeNames", async () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const menuBar = makeMenuBar();
+        await handleThemeEdited(
+            makeEditedEvent("my-theme", { foreground: "#cdd6f4", background: "#1e1e2e" }),
+            terminalFactory(makeConfig()),
+            menuBar,
+            makeConfig(),
+            { current: "b3tty-dark" }
+        );
+        expect(menuBar.updateColors).toHaveBeenCalledWith({ bg: "#cdd6f4", fg: "#1e1e2e" });
+        expect(menuBar.setup).not.toHaveBeenCalled();
+    });
+
+    it("updates config.themeNames when response includes themeNames", async () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const config = makeConfig({ themeNames: ["b3tty-dark"] });
+        await handleThemeEdited(
+            makeEditedEvent("my-theme", { themeNames: ["b3tty-dark", "my-theme"] }),
+            terminalFactory(makeConfig()),
+            makeMenuBar(),
+            config,
+            { current: "b3tty-dark" }
+        );
+        expect(config.themeNames).toEqual(["b3tty-dark", "my-theme"]);
+    });
+
+    it("adds new theme name to config.allThemeNames when not already present", async () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const config = makeConfig({ allThemeNames: ["b3tty-dark"], themeNames: ["b3tty-dark"] });
+        await handleThemeEdited(
+            makeEditedEvent("my-theme", { themeNames: ["b3tty-dark", "my-theme"] }),
+            terminalFactory(makeConfig()),
+            makeMenuBar(),
+            config,
+            { current: "b3tty-dark" }
+        );
+        expect(config.allThemeNames).toContain("my-theme");
+    });
+
+    it("does not duplicate name in config.allThemeNames if already present", async () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const config = makeConfig({
+            allThemeNames: ["b3tty-dark", "my-theme"],
+            themeNames: ["b3tty-dark", "my-theme"],
+        });
+        await handleThemeEdited(
+            makeEditedEvent("my-theme", { themeNames: ["b3tty-dark", "my-theme"] }),
+            terminalFactory(makeConfig()),
+            makeMenuBar(),
+            config,
+            { current: "b3tty-dark" }
+        );
+        expect(config.allThemeNames!.filter((n) => n === "my-theme").length).toBe(1);
     });
 });

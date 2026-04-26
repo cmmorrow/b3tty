@@ -69,15 +69,15 @@ func (ts *TerminalServer) themePaletteHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 	name := r.URL.Query().Get("name")
-	colors, ok := builtinThemes[name]
-	if !ok {
-		theme, ok := ts.Themes[name]
-		if !ok {
-			Warnf("unknown theme name: %q", name)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		colors = theme.toColorMap()
+	var colors map[string]any
+	if t, ok := ts.Themes[name]; ok {
+		colors = t.toColorMap()
+	} else if builtinColors, ok := builtinThemes[name]; ok {
+		colors = builtinColors
+	} else {
+		Warnf("unknown theme name: %q", name)
+		w.WriteHeader(http.StatusBadRequest)
+		return
 	}
 
 	normalOrder := []string{"black", "red", "yellow", "green", "cyan", "blue", "magenta", "white"}
@@ -146,8 +146,14 @@ func (ts *TerminalServer) themeConfigHandler(w http.ResponseWriter, r *http.Requ
 	}
 	theme, ok := ts.Themes[name]
 	if !ok {
-		http.NotFound(w, r)
-		return
+		if builtinColors, ok := builtinThemes[name]; ok {
+			var t Theme
+			t.MapToTheme(builtinColors)
+			theme = t
+		} else {
+			http.NotFound(w, r)
+			return
+		}
 	}
 	if r.Method == "POST" {
 		ts.Client.Theme = theme
@@ -158,7 +164,7 @@ func (ts *TerminalServer) themeConfigHandler(w http.ResponseWriter, r *http.Requ
 		} else {
 			colors = theme.toColorMap()
 		}
-		if err := UpdateThemeInConfig(name, colors); err != nil {
+		if err := UpdateThemeInConfig(ts.ConfigFile, name, colors); err != nil {
 			Errorf("theme-config: failed to update config: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
@@ -221,7 +227,7 @@ func (ts *TerminalServer) addThemeHandler(w http.ResponseWriter, r *http.Request
 	ts.Client.Theme = ts.Themes[req.Theme]
 	ts.ActiveTheme = req.Theme
 
-	if err := UpdateThemeInConfig(req.Theme, colors); err != nil {
+	if err := UpdateThemeInConfig(ts.ConfigFile, req.Theme, colors); err != nil {
 		Errorf("add-theme: failed to update config: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -241,5 +247,73 @@ func (ts *TerminalServer) addThemeHandler(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		Errorf("add-theme response error: %v", err)
+	}
+}
+
+// editThemeHandler creates or overwrites a user-defined theme and activates it.
+// POST /edit-theme  body: {"name":"<name>","theme":{...Theme fields...}}
+func (ts *TerminalServer) editThemeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		Warnf("%s %s: method not allowed: %s", r.Method, r.URL.Path, r.Method)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
+		Warnf("%s %s: forbidden: cross-origin request from Sec-Fetch-Site %q", r.Method, r.URL.Path, site)
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, MAX_REQUEST_BODY_SIZE)
+	var req struct {
+		Name  string `json:"name"`
+		Theme Theme  `json:"theme"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		Warnf("%s %s: bad request: %v", r.Method, r.URL.Path, err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" {
+		Warnf("%s %s: bad request: missing name", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if err := ValidateTheme(&req.Theme); err != nil {
+		Warnf("%s %s: bad request: %v", r.Method, r.URL.Path, err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	if ts.Themes == nil {
+		ts.Themes = make(map[string]Theme)
+	}
+	if existing, ok := ts.Themes[req.Name]; ok && existing.BackgroundImage != "" {
+		req.Theme.BackgroundImage = existing.BackgroundImage
+	}
+	ts.Themes[req.Name] = req.Theme
+	ts.Client.Theme = req.Theme
+	ts.ActiveTheme = req.Name
+
+	if err := SaveThemeToConfig(ts.ConfigFile, req.Name, req.Theme.toColorMap()); err != nil {
+		Errorf("edit-theme: failed to save config: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	Debugf("saved theme %q", req.Name)
+	themeNames := make([]string, 0, len(ts.Themes))
+	for name := range ts.Themes {
+		themeNames = append(themeNames, name)
+	}
+	sort.Strings(themeNames)
+	resp := themeConfigResponse{
+		Theme:             req.Theme,
+		HasBackgroundImage: req.Theme.BackgroundImage != "",
+		ThemeNames:        themeNames,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		Errorf("edit-theme response error: %v", err)
 	}
 }

@@ -434,13 +434,13 @@ func TestBuildConfigJSON(t *testing.T) {
 	thm := &Theme{Foreground: "#ffffff", Background: "#000000"}
 
 	t.Run("returns valid JSON", func(t *testing.T) {
-		data, err := buildConfigJSON(srv, clnt, thm, nil, nil, nil, "")
+		data, err := buildConfigJSON(srv, clnt, thm, nil, nil, nil, nil, "")
 		require.NoError(t, err)
 		assert.True(t, json.Valid(data))
 	})
 
 	t.Run("JSON contains expected scalar fields", func(t *testing.T) {
-		data, err := buildConfigJSON(srv, clnt, thm, nil, nil, nil, "")
+		data, err := buildConfigJSON(srv, clnt, thm, nil, nil, nil, nil, "")
 		require.NoError(t, err)
 
 		var result map[string]any
@@ -457,7 +457,7 @@ func TestBuildConfigJSON(t *testing.T) {
 	})
 
 	t.Run("JSON embeds theme colours", func(t *testing.T) {
-		data, err := buildConfigJSON(srv, clnt, thm, nil, nil, nil, "")
+		data, err := buildConfigJSON(srv, clnt, thm, nil, nil, nil, nil, "")
 		require.NoError(t, err)
 
 		var result map[string]any
@@ -471,7 +471,7 @@ func TestBuildConfigJSON(t *testing.T) {
 
 	t.Run("TLS enabled is reflected in JSON", func(t *testing.T) {
 		tlsSrv := &Server{Uri: "example.com", Port: 8443, TLS: TLS{Enabled: true}}
-		data, err := buildConfigJSON(tlsSrv, clnt, thm, nil, nil, nil, "")
+		data, err := buildConfigJSON(tlsSrv, clnt, thm, nil, nil, nil, nil, "")
 		require.NoError(t, err)
 
 		var result map[string]any
@@ -481,7 +481,7 @@ func TestBuildConfigJSON(t *testing.T) {
 
 	t.Run("empty theme produces valid JSON", func(t *testing.T) {
 		emptyTheme := &Theme{}
-		data, err := buildConfigJSON(srv, clnt, emptyTheme, nil, nil, nil, "")
+		data, err := buildConfigJSON(srv, clnt, emptyTheme, nil, nil, nil, nil, "")
 		require.NoError(t, err)
 		assert.True(t, json.Valid(data))
 	})
@@ -1151,6 +1151,22 @@ func TestThemePaletteHandler(t *testing.T) {
 		assert.Equal(t, "#bad5fb", resp.SelBg)
 		assert.Equal(t, "#526fff", resp.Cursor)
 	})
+
+	t.Run("GET user-customized builtin in ts.Themes takes precedence over builtinThemes", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		ts.Themes = map[string]Theme{
+			"b3tty-dark": {Foreground: "#custom", Background: "#000001"},
+		}
+		req := httptest.NewRequest(http.MethodGet, "/theme?name=b3tty-dark", nil)
+		w := httptest.NewRecorder()
+		ts.themePaletteHandler(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp themePaletteResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "#custom", resp.Fg)
+		assert.Equal(t, "#000001", resp.Bg)
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -1361,5 +1377,206 @@ func TestThemeConfigHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		ts.themeConfigHandler(w, req)
 		assert.NotContains(t, w.Body.String(), "/path/to/bg.jpg")
+	})
+
+	t.Run("GET for builtin theme not in ts.Themes returns 200 with builtin colors", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		ts.Themes = map[string]Theme{} // empty — b3tty-dark not registered
+		req := httptest.NewRequest(http.MethodGet, "/theme-config?name=b3tty-dark", nil)
+		w := httptest.NewRecorder()
+		ts.themeConfigHandler(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp themeConfigResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "#d4d4d4", resp.Foreground)
+		assert.Equal(t, "#1e1e1e", resp.Background)
+	})
+
+	t.Run("GET user-customized builtin in ts.Themes takes precedence over builtinThemes", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		ts.Themes = map[string]Theme{
+			"b3tty-dark": {Foreground: "#custom", Background: "#000001"},
+		}
+		req := httptest.NewRequest(http.MethodGet, "/theme-config?name=b3tty-dark", nil)
+		w := httptest.NewRecorder()
+		ts.themeConfigHandler(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp themeConfigResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "#custom", resp.Foreground)
+		assert.Equal(t, "#000001", resp.Background)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// editThemeHandler
+// ---------------------------------------------------------------------------
+
+func TestEditThemeHandler(t *testing.T) {
+	editBody := func(name, fg, bg string) string {
+		return `{"name":"` + name + `","theme":{"foreground":"` + fg + `","background":"` + bg + `"}}`
+	}
+
+	t.Run("GET returns 405", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		req := httptest.NewRequest(http.MethodGet, "/edit-theme", nil)
+		w := httptest.NewRecorder()
+		logged := captureLog(func() { ts.editThemeHandler(w, req) })
+		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+		assert.Contains(t, logged, "method not allowed")
+	})
+
+	t.Run("POST with cross-site Sec-Fetch-Site returns 403", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		body := strings.NewReader(editBody("my-theme", "#fff", "#000"))
+		req := httptest.NewRequest(http.MethodPost, "/edit-theme", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		w := httptest.NewRecorder()
+		logged := captureLog(func() { ts.editThemeHandler(w, req) })
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, logged, "forbidden")
+		assert.Empty(t, ts.Themes)
+	})
+
+	t.Run("POST with missing name returns 400", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		body := strings.NewReader(`{"name":"","theme":{"foreground":"#fff"}}`)
+		req := httptest.NewRequest(http.MethodPost, "/edit-theme", body)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		logged := captureLog(func() { ts.editThemeHandler(w, req) })
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, logged, "missing name")
+	})
+
+	t.Run("POST with invalid color returns 400", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		body := strings.NewReader(`{"name":"bad","theme":{"foreground":"not#valid"}}`)
+		req := httptest.NewRequest(http.MethodPost, "/edit-theme", body)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		logged := captureLog(func() { ts.editThemeHandler(w, req) })
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, logged, "bad request")
+	})
+
+	t.Run("POST creates new theme in ts.Themes and activates it", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		ts := newTestTerminalServer()
+		body := strings.NewReader(editBody("my-theme", "#ffffff", "#000000"))
+		req := httptest.NewRequest(http.MethodPost, "/edit-theme", body)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		ts.editThemeHandler(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		require.Contains(t, ts.Themes, "my-theme")
+		assert.Equal(t, "#ffffff", ts.Themes["my-theme"].Foreground)
+		assert.Equal(t, "my-theme", ts.ActiveTheme)
+		assert.Equal(t, "#ffffff", ts.Client.Theme.Foreground)
+	})
+
+	t.Run("POST overwrites existing theme colors in ts.Themes", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		ts := newTestTerminalServer()
+		ts.Themes = map[string]Theme{
+			"my-theme": {Foreground: "#aaaaaa", Background: "#bbbbbb"},
+		}
+		body := strings.NewReader(editBody("my-theme", "#ffffff", "#112233"))
+		req := httptest.NewRequest(http.MethodPost, "/edit-theme", body)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		ts.editThemeHandler(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "#ffffff", ts.Themes["my-theme"].Foreground)
+		assert.Equal(t, "#112233", ts.Themes["my-theme"].Background)
+	})
+
+	t.Run("POST response includes sorted themeNames", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		ts := newTestTerminalServer()
+		ts.Themes = map[string]Theme{
+			"alpha": {Foreground: "#111"},
+		}
+		body := strings.NewReader(editBody("zebra", "#fff", "#000"))
+		req := httptest.NewRequest(http.MethodPost, "/edit-theme", body)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		ts.editThemeHandler(w, req)
+
+		var resp themeConfigResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		require.Equal(t, []string{"alpha", "zebra"}, resp.ThemeNames)
+	})
+
+	t.Run("POST response contains activated theme colors", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		ts := newTestTerminalServer()
+		body := strings.NewReader(editBody("my-theme", "#aabbcc", "#112233"))
+		req := httptest.NewRequest(http.MethodPost, "/edit-theme", body)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		ts.editThemeHandler(w, req)
+
+		var resp themeConfigResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "#aabbcc", resp.Foreground)
+		assert.Equal(t, "#112233", resp.Background)
+	})
+
+	t.Run("POST hasBackgroundImage is always false", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		ts := newTestTerminalServer()
+		body := strings.NewReader(editBody("my-theme", "#fff", "#000"))
+		req := httptest.NewRequest(http.MethodPost, "/edit-theme", body)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		ts.editThemeHandler(w, req)
+
+		var resp themeConfigResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.False(t, resp.HasBackgroundImage)
+	})
+
+	t.Run("POST without Sec-Fetch-Site (non-browser client) is allowed", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		ts := newTestTerminalServer()
+		body := strings.NewReader(editBody("my-theme", "#fff", "#000"))
+		req := httptest.NewRequest(http.MethodPost, "/edit-theme", body)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		ts.editThemeHandler(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("POST with same-origin Sec-Fetch-Site is allowed", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		ts := newTestTerminalServer()
+		body := strings.NewReader(editBody("my-theme", "#fff", "#000"))
+		req := httptest.NewRequest(http.MethodPost, "/edit-theme", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		w := httptest.NewRecorder()
+		ts.editThemeHandler(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("BackgroundImage path cannot be sent via JSON (json:\"-\" tag)", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		ts := newTestTerminalServer()
+		// Even if a caller tries to set backgroundImage, json:"-" ensures it is ignored
+		body := strings.NewReader(`{"name":"my-theme","theme":{"foreground":"#fff","backgroundImage":"/etc/passwd"}}`)
+		req := httptest.NewRequest(http.MethodPost, "/edit-theme", body)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		ts.editThemeHandler(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Empty(t, ts.Themes["my-theme"].BackgroundImage)
+		assert.NotContains(t, w.Body.String(), "/etc/passwd")
 	})
 }

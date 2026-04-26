@@ -69,3 +69,32 @@ export async function postSaveConfig(theme: string): Promise<void> {
         body: JSON.stringify({ theme }),
     });
 }
+
+/**
+ * GETs /theme-config?name=<name> to retrieve all color fields for a theme.
+ * Throws if the request fails or the response fails the type guard.
+ */
+export async function getThemeConfig(name: string): Promise<ThemeActivateResponse> {
+    const res = await fetch(`/theme-config?name=${encodeURIComponent(name)}`);
+    if (!res.ok) throw new Error(`Failed to fetch config for theme "${name}": ${res.status}`);
+    const parsed: unknown = await res.json();
+    if (!isThemeActivateResponse(parsed)) throw new Error(`Unexpected theme-config response shape`);
+    return parsed;
+}
+
+/**
+ * POSTs to /edit-theme to create or overwrite a theme with the given name and colors.
+ * Returns the activated theme config so the caller can apply it to the terminal.
+ * Throws if the request fails or the response fails the type guard.
+ */
+export async function postEditTheme(name: string, theme: Record<string, string>): Promise<ThemeActivateResponse> {
+    const res = await fetch("/edit-theme", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, theme }),
+    });
+    if (!res.ok) throw new Error(`Failed to edit theme "${name}": ${res.status}`);
+    const parsed: unknown = await res.json();
+    if (!isThemeActivateResponse(parsed)) throw new Error(`Unexpected edit-theme response shape`);
+    return parsed;
+}

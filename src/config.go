@@ -114,15 +114,17 @@ func WriteDefaultConfig(themeName string, colors map[string]any) error {
 	return os.WriteFile(configPath, []byte(yaml), 0644)
 }
 
-// UpdateThemeInConfig reads the existing conf.yaml (creating it if absent), sets the
-// active theme name, and adds the theme's color entries to the themes section if they
-// are not already present. Existing settings are preserved.
-func UpdateThemeInConfig(themeName string, colors map[string]any) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
+// UpdateThemeInConfig reads the existing config file at configPath (creating it if
+// absent), sets the active theme name, and adds the theme's color entries to the
+// themes section if they are not already present. Existing settings are preserved.
+func UpdateThemeInConfig(configPath string, themeName string, colors map[string]any) error {
+	if configPath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		configPath = filepath.Join(home, DOT_CONFIG_PATH, B3TTY_CONFIG_PATH, CONFIG_FILE_NAME)
 	}
-	configPath := filepath.Join(home, DOT_CONFIG_PATH, B3TTY_CONFIG_PATH, CONFIG_FILE_NAME)
 
 	cfg := map[string]any{}
 	if data, err := os.ReadFile(configPath); err == nil && len(data) > 0 {
@@ -160,6 +162,82 @@ func UpdateThemeInConfig(themeName string, colors map[string]any) error {
 		return err
 	}
 	return os.WriteFile(configPath, out, 0644)
+}
+
+// SaveThemeToConfig reads the existing config file at configPath (creating it if
+// absent), sets the active theme name, and writes the theme's color entries to the
+// themes section, overwriting any existing entry for that theme name.
+func SaveThemeToConfig(configPath string, themeName string, colors map[string]any) error {
+	if configPath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		configPath = filepath.Join(home, DOT_CONFIG_PATH, B3TTY_CONFIG_PATH, CONFIG_FILE_NAME)
+	}
+
+	cfg := map[string]any{}
+	if data, err := os.ReadFile(configPath); err == nil && len(data) > 0 {
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return fmt.Errorf("SaveThemeToConfig: parse existing config: %w", err)
+		}
+	}
+
+	cfg["theme"] = themeName
+
+	if _, ok := cfg["themes"]; !ok {
+		cfg["themes"] = map[string]any{}
+	}
+	themesSection, ok := cfg["themes"].(map[string]any)
+	if !ok {
+		themesSection = map[string]any{}
+		cfg["themes"] = themesSection
+	}
+
+	themeColors := make(map[string]any, len(colors))
+	for k, v := range colors {
+		if s, ok := v.(string); ok && ValidateThemeColor(s) {
+			themeColors[k] = s
+		}
+	}
+	// Preserve background-image from the existing entry: toColorMap() omits it
+	// because it is a file path, not a color, so it would be silently dropped
+	// by the ValidateThemeColor filter above.
+	if existing, ok := themesSection[themeName].(map[string]any); ok {
+		if bgImg, ok := existing["background-image"].(string); ok && bgImg != "" {
+			themeColors["background-image"] = bgImg
+		}
+	}
+	themesSection[themeName] = themeColors
+
+	out, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("SaveThemeToConfig: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(configPath, out, 0644)
+}
+
+// ReadThemeNames reads the config file at path and returns the names from the
+// themes section, preserving their exact case as written in the YAML.
+func ReadThemeNames(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var raw struct {
+		Themes map[string]any `yaml:"themes"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(raw.Themes))
+	for name := range raw.Themes {
+		names = append(names, name)
+	}
+	return names, nil
 }
 
 // ValidateConfig opens the YAML file at path, decodes it into typed structs

@@ -32,3 +32,15 @@ export function isValidUri(uri: string): boolean {
     const labelRe = /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$/;
     return uri.split(".").every((label) => labelRe.test(label));
 }
+
+/**
+ * Returns true if value is a valid theme color: empty string, CSS hex color
+ * (#rgb or #rrggbb), or a letters-only named CSS color.
+ * Mirrors the backend ValidateThemeColor function in src/utils.go.
+ */
+export function isValidThemeColor(value: string): boolean {
+    if (value === "") return true;
+    if (/^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(value)) return true;
+    if (/^[a-zA-Z]+$/.test(value)) return true;
+    return false;
+}
