@@ -573,3 +573,150 @@ themes:
 		assert.Equal(t, "/home/user/bg.png", palette["background-image"])
 	})
 }
+
+// ---------------------------------------------------------------------------
+// SaveProfileToConfig
+// ---------------------------------------------------------------------------
+
+func TestSaveProfileToConfig(t *testing.T) {
+	readConfig := func(path string) map[string]any {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		var out map[string]any
+		require.NoError(t, yaml.Unmarshal(data, &out))
+		return out
+	}
+
+	profile := func(shell, title, wd, root string, commands []string) Profile {
+		return NewProfile(shell, wd, root, title, commands)
+	}
+
+	t.Run("creates profiles section in empty file", func(t *testing.T) {
+		path := writeTempConfig(t, "")
+		require.NoError(t, SaveProfileToConfig(path, "dev", profile("/bin/bash", "Dev", "~/dev", "/", []string{"echo ready"})))
+		out := readConfig(path)
+		profiles, ok := out["profiles"].(map[string]any)
+		require.True(t, ok)
+		assert.Contains(t, profiles, "dev")
+	})
+
+	t.Run("writes all profile fields", func(t *testing.T) {
+		path := writeTempConfig(t, "")
+		require.NoError(t, SaveProfileToConfig(path, "dev", profile("/bin/zsh", "Dev", "~/projects", "/opt", []string{"npm start", "echo ready"})))
+		out := readConfig(path)
+		entry := out["profiles"].(map[string]any)["dev"].(map[string]any)
+		assert.Equal(t, "/bin/zsh", entry["shell"])
+		assert.Equal(t, "Dev", entry["title"])
+		assert.Equal(t, "~/projects", entry["working-directory"])
+		assert.Equal(t, "/opt", entry["root"])
+		commands, _ := entry["commands"].([]any)
+		assert.Equal(t, "npm start", commands[0])
+		assert.Equal(t, "echo ready", commands[1])
+	})
+
+	t.Run("overwrites existing profile entry", func(t *testing.T) {
+		path := writeTempConfig(t, `
+profiles:
+  dev:
+    shell: /bin/bash
+    title: Old Title
+`)
+		require.NoError(t, SaveProfileToConfig(path, "dev", profile("/bin/zsh", "New Title", "~/dev", "/", nil)))
+		out := readConfig(path)
+		entry := out["profiles"].(map[string]any)["dev"].(map[string]any)
+		assert.Equal(t, "/bin/zsh", entry["shell"])
+		assert.Equal(t, "New Title", entry["title"])
+	})
+
+	t.Run("preserves other profiles", func(t *testing.T) {
+		path := writeTempConfig(t, `
+profiles:
+  existing:
+    shell: /bin/sh
+`)
+		require.NoError(t, SaveProfileToConfig(path, "new", profile("/bin/bash", "", "", "", nil)))
+		out := readConfig(path)
+		profiles := out["profiles"].(map[string]any)
+		assert.Contains(t, profiles, "existing")
+		assert.Contains(t, profiles, "new")
+	})
+
+	t.Run("preserves other top-level sections", func(t *testing.T) {
+		path := writeTempConfig(t, `
+theme: b3tty-dark
+`)
+		require.NoError(t, SaveProfileToConfig(path, "dev", profile("", "", "", "", nil)))
+		out := readConfig(path)
+		assert.Equal(t, "b3tty-dark", out["theme"])
+	})
+
+	t.Run("output passes ValidateConfig", func(t *testing.T) {
+		path := writeTempConfig(t, "")
+		require.NoError(t, SaveProfileToConfig(path, "dev", profile("/bin/zsh", "Dev", "~/dev", "/", []string{"echo hello"})))
+		assert.NoError(t, ValidateConfig(path))
+	})
+}
+
+// ---------------------------------------------------------------------------
+// DeleteProfileFromConfig
+// ---------------------------------------------------------------------------
+
+func TestDeleteProfileFromConfig(t *testing.T) {
+	readConfig := func(path string) map[string]any {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		var out map[string]any
+		require.NoError(t, yaml.Unmarshal(data, &out))
+		return out
+	}
+
+	t.Run("removes named profile entry", func(t *testing.T) {
+		path := writeTempConfig(t, `
+profiles:
+  dev:
+    shell: /bin/bash
+  work:
+    shell: /bin/zsh
+`)
+		require.NoError(t, DeleteProfileFromConfig(path, "dev"))
+		out := readConfig(path)
+		profiles := out["profiles"].(map[string]any)
+		assert.NotContains(t, profiles, "dev")
+		assert.Contains(t, profiles, "work")
+	})
+
+	t.Run("preserves other top-level sections", func(t *testing.T) {
+		path := writeTempConfig(t, `
+theme: b3tty-dark
+profiles:
+  dev:
+    shell: /bin/bash
+`)
+		require.NoError(t, DeleteProfileFromConfig(path, "dev"))
+		out := readConfig(path)
+		assert.Equal(t, "b3tty-dark", out["theme"])
+	})
+
+	t.Run("no-op when profiles section is absent", func(t *testing.T) {
+		path := writeTempConfig(t, `
+theme: b3tty-dark
+`)
+		assert.NoError(t, DeleteProfileFromConfig(path, "dev"))
+		out := readConfig(path)
+		assert.Equal(t, "b3tty-dark", out["theme"])
+	})
+
+	t.Run("no-op when named profile is absent", func(t *testing.T) {
+		path := writeTempConfig(t, `
+profiles:
+  work:
+    shell: /bin/zsh
+`)
+		assert.NoError(t, DeleteProfileFromConfig(path, "nonexistent"))
+		out := readConfig(path)
+		profiles := out["profiles"].(map[string]any)
+		assert.Contains(t, profiles, "work")
+	})
+}

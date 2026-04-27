@@ -1,5 +1,13 @@
-import { getThemePalette, getThemeConfig, postEditTheme, postSaveConfig } from "./api.ts";
-import type { Palette } from "./types.ts";
+import {
+    getThemePalette,
+    getThemeConfig,
+    postEditTheme,
+    postSaveConfig,
+    getProfileConfig,
+    postEditProfile,
+    postDeleteProfile,
+} from "./api.ts";
+import type { Palette, ProfileConfig } from "./types.ts";
 import { isValidThemeColor } from "./validators.ts";
 
 /**
@@ -101,6 +109,21 @@ export function isB3ttyThemePicker(el: Element): el is HTMLElement & B3ttyThemeP
  */
 export function isB3ttyThemeEditor(el: Element): el is HTMLElement & B3ttyThemeEditor {
     return el.tagName.toLowerCase() === "b3tty-theme-editor";
+}
+
+/**
+ * Interface for the b3tty-profile-editor web component.
+ */
+export interface B3ttyProfileEditor {
+    open(profileNames: string[]): void;
+    close(): void;
+}
+
+/**
+ * Returns true when el is a b3tty-profile-editor element.
+ */
+export function isB3ttyProfileEditor(el: Element): el is HTMLElement & B3ttyProfileEditor {
+    return el.tagName.toLowerCase() === "b3tty-profile-editor";
 }
 
 /**
@@ -695,12 +718,10 @@ if (typeof HTMLElement !== "undefined") {
             this.#menubar.innerHTML = "";
             this.#activeSection = null;
 
-            // Always add the Themes section — even when themeNames is empty — so
-            // "Select Theme…" is always accessible from the menu bar.
+            // Always add both sections so "Edit Theme…" and "Edit Profile…" are
+            // always accessible regardless of how many themes/profiles are configured.
             this.#menubar.appendChild(this.#buildSection("themes", "Themes", themeNames));
-            if (profileNames.length > 0) {
-                this.#menubar.appendChild(this.#buildSection("profiles", "Profiles", profileNames));
-            }
+            this.#menubar.appendChild(this.#buildSection("profiles", "Profiles", profileNames));
         }
 
         updateColors(colors: MenuBarColors): void {
@@ -746,27 +767,62 @@ if (typeof HTMLElement !== "undefined") {
                 }
             }
 
-            for (const name of items) {
-                const item = document.createElement("div");
-                item.className = "menu-item";
-                item.textContent = name;
-                item.addEventListener("click", (e) => {
+            if (type === "profiles") {
+                const editProfileItem = document.createElement("div");
+                editProfileItem.className = "menu-item";
+                editProfileItem.textContent = "Edit Profile…";
+                editProfileItem.addEventListener("click", (e) => {
                     e.stopPropagation();
-                    const eventName = type === "themes" ? "b3tty-theme-change" : "b3tty-profile-change";
-                    this.dispatchEvent(
-                        new CustomEvent(eventName, {
-                            detail: { name },
-                            bubbles: true,
-                            composed: true,
-                        })
-                    );
-                    if (type === "themes") {
-                        this.#toggleSection(type);
-                    } else {
-                        this.#close();
-                    }
+                    this.dispatchEvent(new CustomEvent("b3tty-open-profile-editor", { bubbles: true, composed: true }));
+                    this.#close();
                 });
-                dropdown.appendChild(item);
+                dropdown.appendChild(editProfileItem);
+                const switchable = items.filter((n) => n !== "default");
+                if (switchable.length > 0) {
+                    const sep = document.createElement("div");
+                    sep.className = "menu-separator";
+                    dropdown.appendChild(sep);
+                    for (const name of switchable) {
+                        const item = document.createElement("div");
+                        item.className = "menu-item";
+                        item.textContent = name;
+                        item.addEventListener("click", (e) => {
+                            e.stopPropagation();
+                            this.dispatchEvent(
+                                new CustomEvent("b3tty-profile-change", {
+                                    detail: { name },
+                                    bubbles: true,
+                                    composed: true,
+                                })
+                            );
+                            this.#close();
+                        });
+                        dropdown.appendChild(item);
+                    }
+                }
+            } else {
+                for (const name of items) {
+                    const item = document.createElement("div");
+                    item.className = "menu-item";
+                    item.textContent = name;
+                    item.addEventListener("click", (e) => {
+                        e.stopPropagation();
+                        const eventName = type === "themes" ? "b3tty-theme-change" : "b3tty-profile-change";
+                        this.dispatchEvent(
+                            new CustomEvent(eventName, {
+                                detail: { name },
+                                bubbles: true,
+                                composed: true,
+                            })
+                        );
+                        if (type === "themes") {
+                            this.#toggleSection(type);
+                        } else {
+                            this.#close();
+                        }
+                    });
+                    dropdown.appendChild(item);
+                }
             }
 
             sectionLabel.addEventListener("click", (e) => {
@@ -1475,4 +1531,508 @@ if (typeof HTMLElement !== "undefined") {
     }
 
     customElements.define("b3tty-theme-editor", B3ttyThemeEditorImpl);
+
+    class B3ttyProfileEditorImpl extends HTMLElement implements B3ttyProfileEditor {
+        #shadow: ShadowRoot;
+        #leftPanel: HTMLDivElement;
+        #createCard: HTMLDivElement;
+        #createRadio: HTMLInputElement;
+        #nameInput: HTMLInputElement;
+        #nameError: HTMLSpanElement;
+        #shellInput: HTMLInputElement;
+        #titleInput: HTMLInputElement;
+        #wdInput: HTMLInputElement;
+        #rootInput: HTMLInputElement;
+        #commandsArea: HTMLTextAreaElement;
+        #lineNumbers: HTMLDivElement;
+        #okBtn: HTMLButtonElement;
+        #deleteBtn: HTMLButtonElement;
+        #selectedName: string | null = null;
+        #selectedCard: HTMLDivElement | null = null;
+        #isLoading = false;
+
+        constructor() {
+            super();
+            this.#shadow = this.attachShadow({ mode: "open" });
+
+            const style = document.createElement("style");
+            style.textContent = `
+                :host { display: none; }
+                :host([open]) { display: block; }
+                .overlay {
+                    position: fixed; inset: 0;
+                    background: rgba(0,0,0,0.72);
+                    z-index: 10000;
+                    display: flex; align-items: center; justify-content: center;
+                    padding: 20px; box-sizing: border-box;
+                }
+                .modal {
+                    background: #e0e0e0;
+                    border-radius: 10px;
+                    padding: 20px;
+                    display: flex; flex-direction: row;
+                    width: min(680px, 100%); height: min(500px, 90vh);
+                    box-sizing: border-box;
+                    box-shadow: 0 8px 40px rgba(0,0,0,0.55);
+                    overflow: hidden;
+                }
+                .left-panel {
+                    width: 200px; flex-shrink: 0;
+                    display: flex; flex-direction: column; gap: 6px;
+                    overflow-y: auto; min-height: 0;
+                    padding-right: 10px;
+                    border-right: 1px solid #c0c0c0;
+                }
+                .create-card {
+                    display: flex; align-items: center; gap: 7px;
+                    padding: 8px 10px;
+                    background: #c8c8c8;
+                    border: 2px solid transparent;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-family: sans-serif; font-size: 13px; font-weight: 600; color: #222;
+                    user-select: none; flex-shrink: 0;
+                }
+                .create-card:hover { background: #bbb; }
+                .create-card[selected] { border-color: #444; background: #b8b8b8; }
+                .create-card input[type=radio] { cursor: pointer; accent-color: #444; }
+                .profile-card {
+                    display: flex; align-items: center; gap: 7px;
+                    padding: 8px 10px;
+                    background: #c8c8c8;
+                    border: 2px solid transparent;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-family: sans-serif; font-size: 13px; color: #222;
+                    user-select: none; flex-shrink: 0;
+                }
+                .profile-card:hover { background: #bbb; }
+                .profile-card[selected] { border-color: #444; background: #b8b8b8; }
+                .profile-card input[type=radio] { cursor: pointer; accent-color: #444; }
+                .right-panel {
+                    flex: 1; display: flex; flex-direction: column;
+                    padding-left: 16px; min-width: 0;
+                }
+                .fields-section {
+                    display: flex; flex-direction: column; gap: 6px;
+                    flex-shrink: 0; padding-bottom: 10px;
+                    border-bottom: 1px solid #c8c8c8;
+                    margin-bottom: 8px;
+                }
+                .field-row {
+                    display: grid;
+                    grid-template-columns: 120px 1fr;
+                    gap: 6px; align-items: center;
+                }
+                .field-row label {
+                    font-family: sans-serif; font-size: 12px; color: #444;
+                    white-space: nowrap;
+                }
+                .field-row label .required {
+                    color: #c00;
+                }
+                .field-input {
+                    font-family: sans-serif; font-size: 13px;
+                    padding: 4px 8px; border: 1px solid #aaa; border-radius: 3px;
+                    background: #f5f5f5; box-sizing: border-box;
+                }
+                .field-input:read-only { background: #e8e8e8; color: #555; }
+                .name-error {
+                    grid-column: 2;
+                    font-family: sans-serif; font-size: 11px; color: #c00;
+                    display: none;
+                }
+                .name-error.visible { display: block; }
+                .commands-section {
+                    flex: 1; display: flex; flex-direction: column; gap: 4px;
+                    min-height: 0;
+                }
+                .commands-label {
+                    font-family: sans-serif; font-size: 12px; color: #444;
+                    flex-shrink: 0;
+                }
+                .commands-wrapper {
+                    display: flex;
+                    border: 1px solid #aaa;
+                    border-radius: 3px;
+                    overflow: hidden;
+                    flex: 1; min-height: 0;
+                    background: #f5f5f5;
+                    font-family: monospace;
+                    font-size: 12px;
+                    line-height: 1.5em;
+                }
+                .line-numbers {
+                    width: 32px;
+                    padding: 4px 4px;
+                    background: #ddd;
+                    color: #888;
+                    text-align: right;
+                    user-select: none;
+                    overflow: hidden;
+                    white-space: pre;
+                    line-height: inherit;
+                    flex-shrink: 0;
+                    box-sizing: border-box;
+                }
+                .commands-area {
+                    flex: 1;
+                    padding: 4px 6px;
+                    border: none;
+                    outline: none;
+                    resize: none;
+                    background: transparent;
+                    font-family: inherit;
+                    font-size: inherit;
+                    line-height: inherit;
+                    overflow: auto;
+                    white-space: pre;
+                    box-sizing: border-box;
+                }
+                .actions {
+                    display: flex; justify-content: flex-end; gap: 10px;
+                    align-items: center;
+                    padding-top: 10px; flex-shrink: 0;
+                    border-top: 1px solid #c8c8c8; margin-top: 8px;
+                }
+                .delete-btn {
+                    margin-right: auto;
+                    padding: 8px 16px; border-radius: 5px;
+                    border: 1px solid #c44; background: #f5d5d5;
+                    font-size: 14px; font-family: sans-serif; cursor: pointer; color: #c00;
+                }
+                .delete-btn:hover { background: #f0b8b8; }
+                ${BUTTON_STYLES}
+            `;
+
+            const overlay = document.createElement("div");
+            overlay.className = "overlay";
+            const modal = document.createElement("div");
+            modal.className = "modal";
+            modal.setAttribute("role", "dialog");
+            modal.setAttribute("aria-modal", "true");
+
+            // --- Left panel ---
+            this.#leftPanel = document.createElement("div");
+            this.#leftPanel.className = "left-panel";
+
+            this.#createCard = document.createElement("div");
+            this.#createCard.className = "create-card";
+            this.#createCard.setAttribute("selected", "");
+            this.#createRadio = document.createElement("input");
+            this.#createRadio.type = "radio";
+            this.#createRadio.name = "profile";
+            this.#createRadio.checked = true;
+            const createLabel = document.createElement("span");
+            createLabel.textContent = "Create new profile";
+            this.#createCard.appendChild(this.#createRadio);
+            this.#createCard.appendChild(createLabel);
+            this.#leftPanel.appendChild(this.#createCard);
+
+            // --- Right panel ---
+            const rightPanel = document.createElement("div");
+            rightPanel.className = "right-panel";
+
+            const fieldsSection = document.createElement("div");
+            fieldsSection.className = "fields-section";
+
+            const makeFieldRow = (
+                labelText: string,
+                required: boolean,
+                placeholder: string
+            ): [HTMLDivElement, HTMLInputElement] => {
+                const row = document.createElement("div");
+                row.className = "field-row";
+                const lbl = document.createElement("label");
+                if (required) {
+                    lbl.innerHTML = `${labelText} <span class="required">*</span>`;
+                } else {
+                    lbl.textContent = labelText;
+                }
+                const input = document.createElement("input");
+                input.type = "text";
+                input.className = "field-input";
+                input.placeholder = placeholder;
+                row.appendChild(lbl);
+                row.appendChild(input);
+                return [row, input];
+            };
+
+            const [nameRow, nameInput] = makeFieldRow("Profile Name", true, "Enter profile name");
+            this.#nameInput = nameInput;
+            this.#nameError = document.createElement("span");
+            this.#nameError.className = "name-error";
+            this.#nameError.textContent = "Cannot use 'default' as a profile name";
+            nameRow.appendChild(this.#nameError);
+            fieldsSection.appendChild(nameRow);
+
+            const [shellRow, shellInput] = makeFieldRow("Shell", false, "e.g. /bin/zsh");
+            this.#shellInput = shellInput;
+            fieldsSection.appendChild(shellRow);
+
+            const [titleRow, titleInput] = makeFieldRow("Title", false, "Terminal window title");
+            this.#titleInput = titleInput;
+            fieldsSection.appendChild(titleRow);
+
+            const [wdRow, wdInput] = makeFieldRow("Working Directory", false, "e.g. ~/projects");
+            this.#wdInput = wdInput;
+            fieldsSection.appendChild(wdRow);
+
+            const [rootRow, rootInput] = makeFieldRow("Root", false, "e.g. /");
+            this.#rootInput = rootInput;
+            fieldsSection.appendChild(rootRow);
+
+            // --- Commands editor ---
+            const commandsSection = document.createElement("div");
+            commandsSection.className = "commands-section";
+
+            const commandsLabel = document.createElement("div");
+            commandsLabel.className = "commands-label";
+            commandsLabel.textContent = "Commands (one per line, run on startup):";
+            commandsSection.appendChild(commandsLabel);
+
+            const commandsWrapper = document.createElement("div");
+            commandsWrapper.className = "commands-wrapper";
+
+            this.#lineNumbers = document.createElement("div");
+            this.#lineNumbers.className = "line-numbers";
+            this.#lineNumbers.textContent = "1";
+
+            this.#commandsArea = document.createElement("textarea");
+            this.#commandsArea.className = "commands-area";
+            this.#commandsArea.placeholder = "npm start";
+            this.#commandsArea.spellcheck = false;
+            this.#commandsArea.setAttribute("wrap", "off");
+
+            commandsWrapper.appendChild(this.#lineNumbers);
+            commandsWrapper.appendChild(this.#commandsArea);
+            commandsSection.appendChild(commandsWrapper);
+
+            // --- Actions ---
+            const actions = document.createElement("div");
+            actions.className = "actions";
+
+            this.#deleteBtn = document.createElement("button");
+            this.#deleteBtn.className = "delete-btn";
+            this.#deleteBtn.textContent = "Delete Profile";
+            this.#deleteBtn.style.display = "none";
+
+            const cancelBtn = document.createElement("button");
+            cancelBtn.className = "cancel-btn";
+            cancelBtn.textContent = "Cancel";
+
+            this.#okBtn = document.createElement("button");
+            this.#okBtn.className = "ok-btn";
+            this.#okBtn.textContent = "OK";
+            this.#okBtn.disabled = true;
+
+            actions.appendChild(this.#deleteBtn);
+            actions.appendChild(cancelBtn);
+            actions.appendChild(this.#okBtn);
+
+            // --- Assemble ---
+            rightPanel.appendChild(fieldsSection);
+            rightPanel.appendChild(commandsSection);
+            rightPanel.appendChild(actions);
+            modal.appendChild(this.#leftPanel);
+            modal.appendChild(rightPanel);
+            overlay.appendChild(modal);
+            this.#shadow.appendChild(style);
+            this.#shadow.appendChild(overlay);
+
+            // --- Event listeners ---
+            this.#nameInput.addEventListener("input", () => this.#validateForm());
+
+            this.#commandsArea.addEventListener("input", () => this.#syncLineNumbers());
+            this.#commandsArea.addEventListener("scroll", () => {
+                this.#lineNumbers.scrollTop = this.#commandsArea.scrollTop;
+            });
+
+            this.#createCard.addEventListener("click", () => {
+                this.#selectCreateCard();
+            });
+
+            this.#leftPanel.addEventListener("click", (e) => {
+                const card = (e.target as HTMLElement).closest(".profile-card") as HTMLDivElement | null;
+                if (!card) return;
+                const name = (card as HTMLDivElement).dataset["profileName"];
+                if (!name) return;
+                this.#selectProfileCard(card, name);
+            });
+
+            cancelBtn.addEventListener("click", () => this.close());
+            this.#deleteBtn.addEventListener("click", () => void this.#handleDelete());
+            this.#okBtn.addEventListener("click", () => void this.#handleOk());
+        }
+
+        open(profileNames: string[]): void {
+            this.#selectedName = null;
+            this.#selectedCard = null;
+            this.#isLoading = false;
+            this.#clearForm();
+            this.#okBtn.disabled = true;
+            this.#deleteBtn.style.display = "none";
+            this.#nameInput.readOnly = false;
+
+            for (const card of Array.from(this.#leftPanel.querySelectorAll(".profile-card"))) {
+                card.remove();
+            }
+            this.#selectCreateCard();
+
+            const filtered = profileNames.filter((n) => n !== "default");
+            for (const name of filtered) {
+                this.#leftPanel.appendChild(this.#makeProfileCard(name));
+            }
+            this.setAttribute("open", "");
+        }
+
+        close(): void {
+            this.removeAttribute("open");
+            this.#selectedName = null;
+            this.#nameError.classList.remove("visible");
+        }
+
+        #makeProfileCard(name: string): HTMLDivElement {
+            const card = document.createElement("div");
+            card.className = "profile-card";
+            card.dataset["profileName"] = name;
+            const radio = document.createElement("input");
+            radio.type = "radio";
+            radio.name = "profile";
+            const lbl = document.createElement("span");
+            lbl.textContent = name;
+            card.appendChild(radio);
+            card.appendChild(lbl);
+            return card;
+        }
+
+        #selectCreateCard(): void {
+            for (const c of Array.from(this.#leftPanel.querySelectorAll(".profile-card"))) {
+                c.removeAttribute("selected");
+                (c.querySelector("input[type=radio]") as HTMLInputElement | null)!.checked = false;
+            }
+            this.#createCard.setAttribute("selected", "");
+            this.#createRadio.checked = true;
+            this.#selectedName = null;
+            this.#selectedCard = null;
+            this.#nameInput.readOnly = false;
+            this.#deleteBtn.style.display = "none";
+            this.#clearForm();
+        }
+
+        #selectProfileCard(card: HTMLDivElement, name: string): void {
+            this.#createCard.removeAttribute("selected");
+            this.#createRadio.checked = false;
+            for (const c of Array.from(this.#leftPanel.querySelectorAll(".profile-card"))) {
+                c.removeAttribute("selected");
+                (c.querySelector("input[type=radio]") as HTMLInputElement | null)!.checked = false;
+            }
+            card.setAttribute("selected", "");
+            (card.querySelector("input[type=radio]") as HTMLInputElement | null)!.checked = true;
+            this.#selectedName = name;
+            this.#selectedCard = card;
+            this.#nameInput.value = name;
+            this.#nameInput.readOnly = true;
+            this.#deleteBtn.style.display = "";
+            this.#isLoading = true;
+            this.#okBtn.disabled = true;
+            void this.#loadProfileConfig(name);
+        }
+
+        async #loadProfileConfig(name: string): Promise<void> {
+            try {
+                const cfg = await getProfileConfig(name);
+                this.#shellInput.value = cfg.shell ?? "";
+                this.#titleInput.value = cfg.title ?? "";
+                this.#wdInput.value = cfg.workingDirectory ?? "";
+                this.#rootInput.value = cfg.root ?? "";
+                this.#commandsArea.value = (cfg.commands ?? []).join("\n");
+                this.#syncLineNumbers();
+            } catch {
+                // Silently keep existing form state on load failure.
+            } finally {
+                this.#isLoading = false;
+                this.#validateForm();
+            }
+        }
+
+        #clearForm(): void {
+            this.#nameInput.value = "";
+            this.#shellInput.value = "";
+            this.#titleInput.value = "";
+            this.#wdInput.value = "";
+            this.#rootInput.value = "";
+            this.#commandsArea.value = "";
+            this.#syncLineNumbers();
+            this.#nameError.classList.remove("visible");
+        }
+
+        #syncLineNumbers(): void {
+            const lineCount = this.#commandsArea.value === "" ? 1 : this.#commandsArea.value.split("\n").length;
+            this.#lineNumbers.textContent = Array.from({ length: lineCount }, (_, i) => i + 1).join("\n");
+            this.#lineNumbers.scrollTop = this.#commandsArea.scrollTop;
+        }
+
+        #validateForm(): void {
+            if (this.#isLoading) {
+                this.#okBtn.disabled = true;
+                return;
+            }
+            const name = this.#nameInput.value.trim();
+            if (name === "default") {
+                this.#nameError.classList.add("visible");
+                this.#okBtn.disabled = true;
+                return;
+            }
+            this.#nameError.classList.remove("visible");
+            this.#okBtn.disabled = name === "";
+        }
+
+        async #handleOk(): Promise<void> {
+            const name = this.#nameInput.value.trim();
+            if (!name) return;
+            const rawCommands = this.#commandsArea.value.split("\n");
+            const commands = rawCommands.filter((line) => line !== "");
+            const profile: ProfileConfig = {
+                shell: this.#shellInput.value.trim(),
+                title: this.#titleInput.value.trim(),
+                workingDirectory: this.#wdInput.value.trim(),
+                root: this.#rootInput.value.trim(),
+                commands,
+            };
+            try {
+                const response = await postEditProfile(name, profile);
+                this.dispatchEvent(
+                    new CustomEvent("b3tty-profile-edited", {
+                        detail: { name, response },
+                        bubbles: true,
+                        composed: true,
+                    })
+                );
+                this.close();
+            } catch {
+                // Keep editor open so user can retry.
+            }
+        }
+
+        async #handleDelete(): Promise<void> {
+            const name = this.#selectedName;
+            if (!name) return;
+            try {
+                const response = await postDeleteProfile(name);
+                this.dispatchEvent(
+                    new CustomEvent("b3tty-profile-edited", {
+                        detail: { name: null, response },
+                        bubbles: true,
+                        composed: true,
+                    })
+                );
+                this.close();
+            } catch {
+                // Keep editor open so user can retry.
+            }
+        }
+    }
+
+    customElements.define("b3tty-profile-editor", B3ttyProfileEditorImpl);
 }

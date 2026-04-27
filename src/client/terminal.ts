@@ -6,6 +6,7 @@ import { ImageAddon } from "@xterm/addon-image";
 import type {
     TermConfig,
     ThemeActivateResponse,
+    EditProfileResponse,
     BellElementLike,
     SocketLike,
     SocketMessageEvent,
@@ -16,8 +17,20 @@ import type {
 import { isValidHttpProtocol, isValidWsProtocol, isValidPort, isValidUri } from "./validators.ts";
 import { postSize, postThemeConfig, postAddTheme } from "./api.ts";
 import "./components.ts";
-import type { B3ttyDialog, B3ttyMenuBar, B3ttyThemePicker, B3ttyThemeEditor } from "./components.ts";
-import { isB3ttyDialog, isB3ttyMenuBar, isB3ttyThemePicker, isB3ttyThemeEditor } from "./components.ts";
+import type {
+    B3ttyDialog,
+    B3ttyMenuBar,
+    B3ttyThemePicker,
+    B3ttyThemeEditor,
+    B3ttyProfileEditor,
+} from "./components.ts";
+import {
+    isB3ttyDialog,
+    isB3ttyMenuBar,
+    isB3ttyThemePicker,
+    isB3ttyThemeEditor,
+    isB3ttyProfileEditor,
+} from "./components.ts";
 
 export const THEME_KEYS = [
     "foreground",
@@ -423,6 +436,19 @@ export async function handleThemeSelected(
 }
 
 /**
+ * Updates the menu bar after a profile is saved or deleted.
+ * Called when b3tty-profile-editor dispatches "b3tty-profile-edited".
+ */
+export async function handleProfileEdited(e: Event, menuBar: B3ttyMenuBar, config: TermConfig): Promise<void> {
+    const { response } = (e as CustomEvent<{ name: string | null; response: EditProfileResponse }>).detail;
+    config.profileNames = response.profileNames;
+    menuBar.setup(config.themeNames ?? [], config.profileNames, {
+        bg: setLight(config.theme.foreground),
+        fg: setDark(config.theme.background),
+    });
+}
+
+/**
  * Applies an edited or newly created theme to the terminal and menu bar.
  * Called when the b3tty-theme-editor dispatches "b3tty-theme-edited". The full
  * ThemeActivateResponse is carried in the event detail so no extra fetch is needed.
@@ -597,6 +623,27 @@ export async function main(config: TermConfig): Promise<void> {
                 (e) => handleThemeEdited(e, term, menuBar, config, activeTheme),
                 { signal }
             );
+        }
+
+        const profileEditorEl = document.getElementById("profile-editor");
+        let profileEditor: (HTMLElement & B3ttyProfileEditor) | null = null;
+        if (profileEditorEl && isB3ttyProfileEditor(profileEditorEl)) {
+            profileEditor = profileEditorEl;
+        }
+
+        menuBarEl.addEventListener(
+            "b3tty-open-profile-editor",
+            () => {
+                const editableNames = (config.profileNames ?? []).filter((n) => n !== "default");
+                profileEditor?.open(editableNames);
+            },
+            { signal }
+        );
+
+        if (profileEditor) {
+            profileEditor.addEventListener("b3tty-profile-edited", (e) => handleProfileEdited(e, menuBar, config), {
+                signal,
+            });
         }
     }
 

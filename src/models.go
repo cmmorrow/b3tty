@@ -269,6 +269,21 @@ type themeConfigResponse struct {
 	ThemeNames         []string `json:"themeNames,omitempty"`
 }
 
+// profileConfigResponse is the JSON shape returned by GET /profile-config.
+type profileConfigResponse struct {
+	Shell            string   `json:"shell"`
+	WorkingDirectory string   `json:"workingDirectory"`
+	Title            string   `json:"title"`
+	Root             string   `json:"root"`
+	Commands         []string `json:"commands"`
+}
+
+// editProfileResponse is returned by POST /edit-profile and POST /delete-profile.
+// ProfileNames is the sorted list of all non-default profile names after the operation.
+type editProfileResponse struct {
+	ProfileNames []string `json:"profileNames"`
+}
+
 // CSPHeader represents a single Content-Security-Policy directive, consisting of
 // a directive name (e.g. "script-src") and one or more source values
 // (e.g. "self", "nonce-abc123"). Values are rendered without surrounding quotes

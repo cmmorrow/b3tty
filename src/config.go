@@ -240,6 +240,85 @@ func ReadThemeNames(path string) ([]string, error) {
 	return names, nil
 }
 
+// SaveProfileToConfig reads the existing config file at configPath (creating it if
+// absent), upserts the named profile in the profiles section, and writes the file back.
+func SaveProfileToConfig(configPath string, name string, p Profile) error {
+	if configPath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		configPath = filepath.Join(home, DOT_CONFIG_PATH, B3TTY_CONFIG_PATH, CONFIG_FILE_NAME)
+	}
+
+	cfg := map[string]any{}
+	if data, err := os.ReadFile(configPath); err == nil && len(data) > 0 {
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return fmt.Errorf("SaveProfileToConfig: parse existing config: %w", err)
+		}
+	}
+
+	if _, ok := cfg["profiles"]; !ok {
+		cfg["profiles"] = map[string]any{}
+	}
+	profilesSection, ok := cfg["profiles"].(map[string]any)
+	if !ok {
+		profilesSection = map[string]any{}
+		cfg["profiles"] = profilesSection
+	}
+
+	entry := map[string]any{
+		"shell":             p.Shell,
+		"title":            p.Title,
+		"working-directory": p.WorkingDirectory,
+		"root":             p.Root,
+		"commands":         p.Commands,
+	}
+	profilesSection[name] = entry
+
+	out, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("SaveProfileToConfig: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(configPath, out, 0644)
+}
+
+// DeleteProfileFromConfig reads the existing config file at configPath, removes the
+// named entry from the profiles section, and writes the file back. No-ops if the
+// profiles section or the named entry is absent.
+func DeleteProfileFromConfig(configPath string, name string) error {
+	if configPath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		configPath = filepath.Join(home, DOT_CONFIG_PATH, B3TTY_CONFIG_PATH, CONFIG_FILE_NAME)
+	}
+
+	cfg := map[string]any{}
+	if data, err := os.ReadFile(configPath); err == nil && len(data) > 0 {
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return fmt.Errorf("DeleteProfileFromConfig: parse existing config: %w", err)
+		}
+	}
+
+	if profilesSection, ok := cfg["profiles"].(map[string]any); ok {
+		delete(profilesSection, name)
+	}
+
+	out, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("DeleteProfileFromConfig: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(configPath, out, 0644)
+}
+
 // ValidateConfig opens the YAML file at path, decodes it into typed structs
 // with KnownFields(true) enabled, and returns a descriptive error (including
 // the line number from the YAML parser) if any field has the wrong type or any
