@@ -199,6 +199,9 @@ func Serve(ts *TerminalServer, shouldOpenBrowser bool, useTLS bool) {
 	mux.HandleFunc("/add-theme", ts.addThemeHandler)
 	mux.HandleFunc("/edit-theme", ts.editThemeHandler)
 	mux.HandleFunc("/save-config", ts.saveConfigHandler)
+	mux.HandleFunc("/profile-config", ts.profileConfigHandler)
+	mux.HandleFunc("/edit-profile", ts.editProfileHandler)
+	mux.HandleFunc("/delete-profile", ts.deleteProfileHandler)
 	httpServer := &http.Server{
 		Addr:         addr,
 		Handler:      mux,

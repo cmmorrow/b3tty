@@ -63,6 +63,22 @@ export function isThemeActivateResponse(val: unknown): val is ThemeActivateRespo
     );
 }
 
+export interface ProfileConfig {
+    shell: string;
+    workingDirectory: string;
+    title: string;
+    root: string;
+    commands: string[];
+}
+
+export interface EditProfileResponse {
+    profileNames: string[];
+}
+
+export function isEditProfileResponse(val: unknown): val is EditProfileResponse {
+    return typeof val === "object" && val !== null && Array.isArray((val as Record<string, unknown>)["profileNames"]);
+}
+
 export interface ClientConfig {
     cursorBlink: boolean;
     fontFamily: string;
