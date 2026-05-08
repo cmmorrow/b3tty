@@ -284,6 +284,31 @@ type editProfileResponse struct {
 	ProfileNames []string `json:"profileNames"`
 }
 
+// settingsServerConfig holds the subset of server settings exposed via the
+// Settings overlay. These fields require a server restart to take effect.
+type settingsServerConfig struct {
+	Port      int  `json:"port"`
+	NoAuth    bool `json:"noAuth"`
+	NoBrowser bool `json:"noBrowser"`
+}
+
+// settingsTerminalConfig holds the terminal settings exposed via the
+// Settings overlay. Font and cursor fields apply to the live session;
+// rows and columns only persist to the config file.
+type settingsTerminalConfig struct {
+	FontFamily  string `json:"fontFamily"`
+	FontSize    int    `json:"fontSize"`
+	CursorBlink bool   `json:"cursorBlink"`
+	Rows        int    `json:"rows"`
+	Columns     int    `json:"columns"`
+}
+
+// settingsConfigResponse is the JSON shape for GET and POST /settings.
+type settingsConfigResponse struct {
+	Server   settingsServerConfig   `json:"server"`
+	Terminal settingsTerminalConfig `json:"terminal"`
+}
+
 // CSPHeader represents a single Content-Security-Policy directive, consisting of
 // a directive name (e.g. "script-src") and one or more source values
 // (e.g. "self", "nonce-abc123"). Values are rendered without surrounding quotes

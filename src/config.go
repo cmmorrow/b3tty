@@ -319,6 +319,61 @@ func DeleteProfileFromConfig(configPath string, name string) error {
 	return os.WriteFile(configPath, out, 0644)
 }
 
+// SaveSettingsToConfig reads the existing config file at configPath (creating it if
+// absent), updates the server and terminal sections with the provided values, and
+// writes the file back. Existing settings not covered by the structs are preserved.
+func SaveSettingsToConfig(configPath string, server settingsServerConfig, terminal settingsTerminalConfig) error {
+	if configPath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		configPath = filepath.Join(home, DOT_CONFIG_PATH, B3TTY_CONFIG_PATH, CONFIG_FILE_NAME)
+	}
+
+	cfg := map[string]any{}
+	if data, err := os.ReadFile(configPath); err == nil && len(data) > 0 {
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return fmt.Errorf("SaveSettingsToConfig: parse existing config: %w", err)
+		}
+	}
+
+	if _, ok := cfg["server"]; !ok {
+		cfg["server"] = map[string]any{}
+	}
+	serverSection, ok := cfg["server"].(map[string]any)
+	if !ok {
+		serverSection = map[string]any{}
+		cfg["server"] = serverSection
+	}
+	serverSection["port"] = server.Port
+	serverSection["no-auth"] = server.NoAuth
+	serverSection["no-browser"] = server.NoBrowser
+
+	if _, ok := cfg["terminal"]; !ok {
+		cfg["terminal"] = map[string]any{}
+	}
+	termSection, ok := cfg["terminal"].(map[string]any)
+	if !ok {
+		termSection = map[string]any{}
+		cfg["terminal"] = termSection
+	}
+	termSection["font-family"] = terminal.FontFamily
+	termSection["font-size"] = terminal.FontSize
+	termSection["cursor-blink"] = terminal.CursorBlink
+	termSection["rows"] = terminal.Rows
+	termSection["columns"] = terminal.Columns
+
+	out, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("SaveSettingsToConfig: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(configPath, out, 0644)
+}
+
 // ValidateConfig opens the YAML file at path, decodes it into typed structs
 // with KnownFields(true) enabled, and returns a descriptive error (including
 // the line number from the YAML parser) if any field has the wrong type or any

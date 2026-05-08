@@ -1,5 +1,5 @@
-import { isThemeActivateResponse, isEditProfileResponse } from "./types.ts";
-import type { ThemeActivateResponse, Palette, ProfileConfig, EditProfileResponse } from "./types.ts";
+import { isThemeActivateResponse, isEditProfileResponse, isSettingsConfig } from "./types.ts";
+import type { ThemeActivateResponse, Palette, ProfileConfig, EditProfileResponse, SettingsConfig } from "./types.ts";
 
 /**
  * POSTs to /add-theme to apply and persist the chosen theme.
@@ -131,6 +131,35 @@ export async function postDeleteProfile(name: string): Promise<EditProfileRespon
     if (!res.ok) throw new Error(`Failed to delete profile "${name}": ${res.status}`);
     const parsed: unknown = await res.json();
     if (!isEditProfileResponse(parsed)) throw new Error(`Unexpected delete-profile response shape`);
+    return parsed;
+}
+
+/**
+ * GETs /settings to retrieve the current server and terminal settings.
+ * Throws if the request fails or the response fails the type guard.
+ */
+export async function getSettings(): Promise<SettingsConfig> {
+    const res = await fetch("/settings");
+    if (!res.ok) throw new Error(`Failed to fetch settings: ${res.status}`);
+    const parsed: unknown = await res.json();
+    if (!isSettingsConfig(parsed)) throw new Error("Unexpected settings response shape");
+    return parsed;
+}
+
+/**
+ * POSTs to /settings to persist server and terminal settings.
+ * Terminal fields apply to the live session; server fields require a restart.
+ * Throws if the request fails or the response fails the type guard.
+ */
+export async function postSettings(settings: SettingsConfig): Promise<SettingsConfig> {
+    const res = await fetch("/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settings),
+    });
+    if (!res.ok) throw new Error(`Failed to save settings: ${res.status}`);
+    const parsed: unknown = await res.json();
+    if (!isSettingsConfig(parsed)) throw new Error("Unexpected settings response shape");
     return parsed;
 }
 

@@ -32,6 +32,7 @@ type TerminalServer struct {
 	ConfigFile     string
 	FailedAttempts int
 	FirstRun       bool
+	NoBrowser      bool
 	BackoffMu      sync.Mutex
 	// AuthSleep is the function used to pause on auth failures. It defaults to
 	// time.Sleep and can be replaced in tests with a no-op to avoid real delays.
@@ -202,6 +203,7 @@ func Serve(ts *TerminalServer, shouldOpenBrowser bool, useTLS bool) {
 	mux.HandleFunc("/profile-config", ts.profileConfigHandler)
 	mux.HandleFunc("/edit-profile", ts.editProfileHandler)
 	mux.HandleFunc("/delete-profile", ts.deleteProfileHandler)
+	mux.HandleFunc("/settings", ts.settingsHandler)
 	httpServer := &http.Server{
 		Addr:         addr,
 		Handler:      mux,

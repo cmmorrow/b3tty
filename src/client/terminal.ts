@@ -13,9 +13,10 @@ import type {
     TerminalLike,
     ClientConfig,
     ThemeConfig,
+    SettingsConfig,
 } from "./types.ts";
 import { isValidHttpProtocol, isValidWsProtocol, isValidPort, isValidUri } from "./validators.ts";
-import { postSize, postThemeConfig, postAddTheme } from "./api.ts";
+import { postSize, postThemeConfig, postAddTheme, getSettings } from "./api.ts";
 import "./components.ts";
 import type {
     B3ttyDialog,
@@ -23,6 +24,7 @@ import type {
     B3ttyThemePicker,
     B3ttyThemeEditor,
     B3ttyProfileEditor,
+    B3ttySettingsEditor,
 } from "./components.ts";
 import {
     isB3ttyDialog,
@@ -30,6 +32,7 @@ import {
     isB3ttyThemePicker,
     isB3ttyThemeEditor,
     isB3ttyProfileEditor,
+    isB3ttySettingsEditor,
 } from "./components.ts";
 
 export const THEME_KEYS = [
@@ -127,7 +130,9 @@ export function buildTermOptions(
 ): ITerminalOptions & ITerminalInitOnlyOptions {
     const options: ITerminalOptions & ITerminalInitOnlyOptions = {
         cursorBlink: config.cursorBlink,
-        fontFamily: `${config.fontFamily}, Menlo, DejaVu Sans Mono, Ubuntu Mono, Inconsolata, Fira, monospace`,
+        fontFamily: config.fontFamily
+            ? `${config.fontFamily}, Menlo, DejaVu Sans Mono, Ubuntu Mono, Inconsolata, Fira, monospace`
+            : `Menlo, DejaVu Sans Mono, Ubuntu Mono, Inconsolata, Fira, monospace`,
         fontSize: config.fontSize,
     };
     if (allowTransparency) options.allowTransparency = true;
@@ -337,7 +342,10 @@ export function applyThemeStyles(
  */
 export function applyPageStyles(config: TermConfig): void {
     document.documentElement.style.setProperty("--b3tty-font-size", `${config.fontSize}px`);
-    document.documentElement.style.setProperty("--b3tty-font-family", `"${config.fontFamily}", monospace`);
+    document.documentElement.style.setProperty(
+        "--b3tty-font-family",
+        config.fontFamily ? `"${config.fontFamily}", monospace` : "monospace"
+    );
     applyThemeStyles(config.theme, !!config.backgroundImage);
 }
 
@@ -485,6 +493,28 @@ export async function handleThemeEdited(
         });
     }
     activeTheme.current = name;
+}
+
+/**
+ * Applies saved terminal settings (font, cursor) to the live xterm.js Terminal.
+ * Rows and columns changes are not applied to the live session since they require
+ * a PTY resize — they persist to the config file only and take effect on restart.
+ */
+export function handleSettingsEdited(e: Event, term: Terminal, config: TermConfig): void {
+    const { response } = (e as CustomEvent<{ response: SettingsConfig }>).detail;
+    const t = response.terminal;
+    term.options.cursorBlink = t.cursorBlink;
+    if (t.fontFamily && t.fontFamily !== "na") {
+        term.options.fontFamily = `${t.fontFamily}, Menlo, DejaVu Sans Mono, Ubuntu Mono, Inconsolata, Fira, monospace`;
+        document.documentElement.style.setProperty("--b3tty-font-family", `"${t.fontFamily}", monospace`);
+    }
+    if (t.fontSize > 0) {
+        term.options.fontSize = t.fontSize;
+        document.documentElement.style.setProperty("--b3tty-font-size", `${t.fontSize}px`);
+    }
+    config.fontFamily = t.fontFamily;
+    config.fontSize = t.fontSize;
+    config.cursorBlink = t.cursorBlink;
 }
 
 /**
@@ -642,6 +672,28 @@ export async function main(config: TermConfig): Promise<void> {
 
         if (profileEditor) {
             profileEditor.addEventListener("b3tty-profile-edited", (e) => handleProfileEdited(e, menuBar, config), {
+                signal,
+            });
+        }
+
+        const settingsEditorEl = document.getElementById("settings-editor");
+        let settingsEditor: (HTMLElement & B3ttySettingsEditor) | null = null;
+        if (settingsEditorEl && isB3ttySettingsEditor(settingsEditorEl)) {
+            settingsEditor = settingsEditorEl;
+        }
+
+        menuBarEl.addEventListener(
+            "b3tty-open-settings-editor",
+            () => {
+                void getSettings().then((settings) => {
+                    settingsEditor?.open(settings);
+                });
+            },
+            { signal }
+        );
+
+        if (settingsEditor) {
+            settingsEditor.addEventListener("b3tty-settings-edited", (e) => handleSettingsEdited(e, term, config), {
                 signal,
             });
         }
