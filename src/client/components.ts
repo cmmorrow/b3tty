@@ -6,8 +6,9 @@ import {
     getProfileConfig,
     postEditProfile,
     postDeleteProfile,
+    postSettings,
 } from "./api.ts";
-import type { Palette, ProfileConfig } from "./types.ts";
+import type { Palette, ProfileConfig, SettingsConfig } from "./types.ts";
 import { isValidThemeColor } from "./validators.ts";
 
 /**
@@ -124,6 +125,21 @@ export interface B3ttyProfileEditor {
  */
 export function isB3ttyProfileEditor(el: Element): el is HTMLElement & B3ttyProfileEditor {
     return el.tagName.toLowerCase() === "b3tty-profile-editor";
+}
+
+/**
+ * Interface for the b3tty-settings-editor web component.
+ */
+export interface B3ttySettingsEditor {
+    open(settings: SettingsConfig): void;
+    close(): void;
+}
+
+/**
+ * Returns true when el is a b3tty-settings-editor element.
+ */
+export function isB3ttySettingsEditor(el: Element): el is HTMLElement & B3ttySettingsEditor {
+    return el.tagName.toLowerCase() === "b3tty-settings-editor";
 }
 
 /**
@@ -718,8 +734,8 @@ if (typeof HTMLElement !== "undefined") {
             this.#menubar.innerHTML = "";
             this.#activeSection = null;
 
-            // Always add both sections so "Edit Theme…" and "Edit Profile…" are
-            // always accessible regardless of how many themes/profiles are configured.
+            // Always add all three sections so all actions are always accessible.
+            this.#menubar.appendChild(this.#buildSection("b3tty", "b3tty", []));
             this.#menubar.appendChild(this.#buildSection("themes", "Themes", themeNames));
             this.#menubar.appendChild(this.#buildSection("profiles", "Profiles", profileNames));
         }
@@ -740,6 +756,20 @@ if (typeof HTMLElement !== "undefined") {
 
             const dropdown = document.createElement("div");
             dropdown.className = "dropdown";
+
+            if (type === "b3tty") {
+                const settingsItem = document.createElement("div");
+                settingsItem.className = "menu-item";
+                settingsItem.textContent = "Settings\u2026";
+                settingsItem.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    this.dispatchEvent(
+                        new CustomEvent("b3tty-open-settings-editor", { bubbles: true, composed: true })
+                    );
+                    this.#close();
+                });
+                dropdown.appendChild(settingsItem);
+            }
 
             if (type === "themes") {
                 const selectItem = document.createElement("div");
@@ -2035,4 +2065,463 @@ if (typeof HTMLElement !== "undefined") {
     }
 
     customElements.define("b3tty-profile-editor", B3ttyProfileEditorImpl);
+
+    class B3ttySettingsEditorImpl extends HTMLElement implements B3ttySettingsEditor {
+        #shadow: ShadowRoot;
+        #activeTab: "server" | "terminal" = "server";
+
+        // Server tab inputs
+        #portInput: HTMLInputElement;
+        #noAuthInput: HTMLInputElement;
+        #noBrowserInput: HTMLInputElement;
+
+        // Terminal tab inputs
+        #fontFamilyInput: HTMLInputElement;
+        #fontSizeInput: HTMLInputElement;
+        #cursorBlinkInput: HTMLInputElement;
+        #rowsInput: HTMLInputElement;
+        #columnsInput: HTMLInputElement;
+
+        // Footer buttons
+        #cancelBtn: HTMLButtonElement;
+        #okBtn: HTMLButtonElement;
+
+        // Tab buttons
+        #tabBtns: Map<string, HTMLButtonElement> = new Map();
+
+        // Tab panels
+        #panels: Map<string, HTMLDivElement> = new Map();
+
+        // Restart notes (shown only when relevant fields are modified)
+        #serverRestartNote: HTMLDivElement;
+        #termRestartNote: HTMLDivElement;
+
+        // Original values for dirty tracking
+        #origServer: { port: string; noAuth: boolean; noBrowser: boolean } | null = null;
+        #origTerminal: {
+            fontFamily: string;
+            fontSize: string;
+            cursorBlink: boolean;
+            rows: string;
+            columns: string;
+        } | null = null;
+
+        constructor() {
+            super();
+            this.#shadow = this.attachShadow({ mode: "open" });
+
+            const style = document.createElement("style");
+            style.textContent = `
+                :host { display: none; }
+                :host([open]) { display: block; }
+                .overlay {
+                    position: fixed; inset: 0;
+                    background: rgba(0,0,0,0.72);
+                    z-index: 10000;
+                    display: flex; align-items: center; justify-content: center;
+                    padding: 20px; box-sizing: border-box;
+                }
+                .modal {
+                    background: #e0e0e0;
+                    border-radius: 10px;
+                    display: flex; flex-direction: column;
+                    width: min(820px, 100%); height: min(580px, 90vh);
+                    box-sizing: border-box;
+                    box-shadow: 0 8px 40px rgba(0,0,0,0.55);
+                    overflow: hidden;
+                }
+                .tab-bar {
+                    display: flex; flex-direction: row;
+                    background: #c8c8c8;
+                    border-bottom: 1px solid #b0b0b0;
+                    flex-shrink: 0;
+                }
+                .tab-btn {
+                    padding: 10px 20px;
+                    border: none; background: transparent;
+                    font-family: sans-serif; font-size: 13px; font-weight: 500;
+                    cursor: pointer; color: #555;
+                    border-bottom: 2px solid transparent;
+                }
+                .tab-btn:hover { color: #222; background: #bbb; }
+                .tab-btn.active { color: #111; border-bottom-color: #444; background: #e0e0e0; }
+                .tab-content {
+                    flex: 1; overflow: hidden; min-height: 0;
+                    display: flex; flex-direction: column;
+                }
+                .panel {
+                    display: none; flex: 1; overflow-y: auto;
+                    padding: 20px; flex-direction: column; gap: 12px;
+                    min-height: 0;
+                }
+                .panel.active { display: flex; }
+                .field-group {
+                    display: flex; flex-direction: column; gap: 4px;
+                }
+                .field-label {
+                    font-family: sans-serif; font-size: 12px;
+                    font-weight: 600; color: #333;
+                }
+                .field-desc {
+                    font-family: sans-serif; font-size: 11px; color: #666;
+                    line-height: 1.4;
+                }
+                .field-row {
+                    display: flex; align-items: center; gap: 10px;
+                }
+                .text-input {
+                    flex: 1; max-width: 280px;
+                    font-family: sans-serif; font-size: 13px;
+                    padding: 5px 8px; border: 1px solid #aaa; border-radius: 3px;
+                    background: #f5f5f5; box-sizing: border-box;
+                }
+                .number-input {
+                    width: 90px;
+                    font-family: sans-serif; font-size: 13px;
+                    padding: 5px 8px; border: 1px solid #aaa; border-radius: 3px;
+                    background: #f5f5f5; box-sizing: border-box;
+                }
+                .toggle {
+                    width: 36px; height: 20px;
+                    appearance: none; -webkit-appearance: none;
+                    background: #bbb; border-radius: 10px;
+                    cursor: pointer; position: relative;
+                    transition: background 0.2s;
+                    flex-shrink: 0;
+                }
+                .toggle:checked { background: #444; }
+                .toggle::after {
+                    content: ""; position: absolute;
+                    width: 16px; height: 16px;
+                    background: #fff; border-radius: 50%;
+                    top: 2px; left: 2px;
+                    transition: left 0.2s;
+                    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+                }
+                .toggle:checked::after { left: 18px; }
+                .restart-note {
+                    font-family: sans-serif; font-size: 12px; color: #c00;
+                    padding: 4px 0; margin-top: 4px;
+                    display: none;
+                }
+                .restart-note.visible { display: block; }
+                .section-divider {
+                    height: 1px; background: #c0c0c0; margin: 4px 0;
+                }
+                .footer {
+                    display: flex; justify-content: flex-end; gap: 10px;
+                    padding: 12px 20px; border-top: 1px solid #c0c0c0;
+                    flex-shrink: 0; background: #e0e0e0;
+                }
+                ${BUTTON_STYLES}
+            `;
+
+            const overlay = document.createElement("div");
+            overlay.className = "overlay";
+            const modal = document.createElement("div");
+            modal.className = "modal";
+            modal.setAttribute("role", "dialog");
+            modal.setAttribute("aria-modal", "true");
+
+            // --- Tab bar ---
+            const tabBar = document.createElement("div");
+            tabBar.className = "tab-bar";
+            for (const [id, label] of [
+                ["server", "Server"],
+                ["terminal", "Terminal"],
+            ] as [string, string][]) {
+                const btn = document.createElement("button");
+                btn.className = "tab-btn" + (id === "server" ? " active" : "");
+                btn.textContent = label;
+                btn.addEventListener("click", () => this.#switchTab(id as "server" | "terminal"));
+                this.#tabBtns.set(id, btn);
+                tabBar.appendChild(btn);
+            }
+
+            // --- Tab content wrapper ---
+            const tabContent = document.createElement("div");
+            tabContent.className = "tab-content";
+
+            // --- Server panel ---
+            const serverPanel = document.createElement("div");
+            serverPanel.className = "panel active";
+            this.#panels.set("server", serverPanel);
+
+            this.#portInput = document.createElement("input");
+            this.#portInput.type = "number";
+            this.#portInput.className = "number-input";
+            this.#portInput.min = "1";
+            this.#portInput.max = "65535";
+            serverPanel.appendChild(this.#makeSettingGroup("Port", "The TCP port b3tty listens on.", this.#portInput));
+
+            this.#noAuthInput = document.createElement("input");
+            this.#noAuthInput.type = "checkbox";
+            this.#noAuthInput.className = "toggle";
+            serverPanel.appendChild(
+                this.#makeSettingGroup(
+                    "Disable Authentication",
+                    "When enabled, the API token check is skipped. Reduces security posture.",
+                    this.#noAuthInput
+                )
+            );
+
+            this.#noBrowserInput = document.createElement("input");
+            this.#noBrowserInput.type = "checkbox";
+            this.#noBrowserInput.className = "toggle";
+            serverPanel.appendChild(
+                this.#makeSettingGroup(
+                    "Disable Auto-Open Browser",
+                    "When enabled, b3tty will not automatically open a browser tab on startup.",
+                    this.#noBrowserInput
+                )
+            );
+
+            this.#serverRestartNote = document.createElement("div");
+            this.#serverRestartNote.className = "restart-note";
+            this.#serverRestartNote.textContent = "⚠ Server settings will not take effect until b3tty is restarted.";
+            serverPanel.appendChild(this.#serverRestartNote);
+
+            // --- Terminal panel ---
+            const terminalPanel = document.createElement("div");
+            terminalPanel.className = "panel";
+            this.#panels.set("terminal", terminalPanel);
+
+            this.#fontFamilyInput = document.createElement("input");
+            this.#fontFamilyInput.type = "text";
+            this.#fontFamilyInput.className = "text-input";
+            this.#fontFamilyInput.placeholder = "e.g. Fira Code, JetBrains Mono";
+            terminalPanel.appendChild(
+                this.#makeSettingGroup(
+                    "Font Family",
+                    "Primary font for the terminal. Falls back to Menlo, monospace if unavailable.",
+                    this.#fontFamilyInput
+                )
+            );
+
+            this.#fontSizeInput = document.createElement("input");
+            this.#fontSizeInput.type = "number";
+            this.#fontSizeInput.className = "number-input";
+            this.#fontSizeInput.min = "6";
+            this.#fontSizeInput.max = "72";
+            terminalPanel.appendChild(
+                this.#makeSettingGroup(
+                    "Font Size (px)",
+                    "Terminal font size in pixels. Applied immediately.",
+                    this.#fontSizeInput
+                )
+            );
+
+            this.#cursorBlinkInput = document.createElement("input");
+            this.#cursorBlinkInput.type = "checkbox";
+            this.#cursorBlinkInput.className = "toggle";
+            terminalPanel.appendChild(
+                this.#makeSettingGroup(
+                    "Cursor Blink",
+                    "When enabled, the cursor blinks. Applied immediately.",
+                    this.#cursorBlinkInput
+                )
+            );
+
+            const divider = document.createElement("div");
+            divider.className = "section-divider";
+            terminalPanel.appendChild(divider);
+
+            this.#rowsInput = document.createElement("input");
+            this.#rowsInput.type = "number";
+            this.#rowsInput.className = "number-input";
+            this.#rowsInput.min = "1";
+            terminalPanel.appendChild(
+                this.#makeSettingGroup("Rows", "Fixed terminal height in rows. Requires restart.", this.#rowsInput)
+            );
+
+            this.#columnsInput = document.createElement("input");
+            this.#columnsInput.type = "number";
+            this.#columnsInput.className = "number-input";
+            this.#columnsInput.min = "0";
+            terminalPanel.appendChild(
+                this.#makeSettingGroup(
+                    "Columns",
+                    "Fixed terminal width in columns. Set to 0 to auto-fit to window. Requires restart.",
+                    this.#columnsInput
+                )
+            );
+
+            this.#termRestartNote = document.createElement("div");
+            this.#termRestartNote.className = "restart-note";
+            this.#termRestartNote.textContent = "⚠ Rows and Columns require a restart to take effect.";
+            terminalPanel.appendChild(this.#termRestartNote);
+
+            tabContent.appendChild(serverPanel);
+            tabContent.appendChild(terminalPanel);
+
+            // --- Footer ---
+            const footer = document.createElement("div");
+            footer.className = "footer";
+            this.#cancelBtn = document.createElement("button");
+            this.#cancelBtn.className = "cancel-btn";
+            this.#cancelBtn.textContent = "Cancel";
+            this.#okBtn = document.createElement("button");
+            this.#okBtn.className = "ok-btn";
+            this.#okBtn.textContent = "OK";
+            footer.appendChild(this.#cancelBtn);
+            footer.appendChild(this.#okBtn);
+
+            modal.appendChild(tabBar);
+            modal.appendChild(tabContent);
+            modal.appendChild(footer);
+            overlay.appendChild(modal);
+            this.#shadow.appendChild(style);
+            this.#shadow.appendChild(overlay);
+
+            this.#cancelBtn.addEventListener("click", () => this.close());
+            this.#okBtn.addEventListener("click", () => void this.#handleSettingsOk());
+
+            for (const el of [
+                this.#portInput,
+                this.#fontFamilyInput,
+                this.#fontSizeInput,
+                this.#rowsInput,
+                this.#columnsInput,
+            ]) {
+                el.addEventListener("input", () => this.#checkDirty());
+            }
+            for (const el of [this.#noAuthInput, this.#noBrowserInput, this.#cursorBlinkInput]) {
+                el.addEventListener("change", () => this.#checkDirty());
+            }
+        }
+
+        #makeSettingGroup(label: string, desc: string, input: HTMLElement): HTMLDivElement {
+            const group = document.createElement("div");
+            group.className = "field-group";
+            const lbl = document.createElement("div");
+            lbl.className = "field-label";
+            lbl.textContent = label;
+            const row = document.createElement("div");
+            row.className = "field-row";
+            row.appendChild(input);
+            const descEl = document.createElement("div");
+            descEl.className = "field-desc";
+            descEl.textContent = desc;
+            group.appendChild(lbl);
+            group.appendChild(row);
+            group.appendChild(descEl);
+            return group;
+        }
+
+        #switchTab(tab: "server" | "terminal"): void {
+            this.#activeTab = tab;
+            for (const [id, btn] of this.#tabBtns) {
+                btn.classList.toggle("active", id === tab);
+            }
+            for (const [id, panel] of this.#panels) {
+                panel.classList.toggle("active", id === tab);
+            }
+        }
+
+        #checkDirty(): void {
+            if (!this.#origServer || !this.#origTerminal) return;
+
+            const serverChanged =
+                this.#portInput.value !== this.#origServer.port ||
+                this.#noAuthInput.checked !== this.#origServer.noAuth ||
+                this.#noBrowserInput.checked !== this.#origServer.noBrowser;
+
+            const termChanged =
+                this.#fontFamilyInput.value !== this.#origTerminal.fontFamily ||
+                this.#fontSizeInput.value !== this.#origTerminal.fontSize ||
+                this.#cursorBlinkInput.checked !== this.#origTerminal.cursorBlink;
+
+            const rowsColsChanged =
+                this.#rowsInput.value !== this.#origTerminal.rows ||
+                this.#columnsInput.value !== this.#origTerminal.columns;
+
+            this.#okBtn.disabled = !serverChanged && !termChanged && !rowsColsChanged;
+            this.#serverRestartNote.classList.toggle("visible", serverChanged);
+            this.#termRestartNote.classList.toggle("visible", rowsColsChanged);
+        }
+
+        // -----------------------------------------------------------------------
+        // Settings OK handler
+        // -----------------------------------------------------------------------
+
+        async #handleSettingsOk(): Promise<void> {
+            const port = parseInt(this.#portInput.value, 10);
+            const fontSize = parseInt(this.#fontSizeInput.value, 10);
+            if (isNaN(port) || port < 1 || port > 65535) return;
+            if (isNaN(fontSize) || fontSize < 1) return;
+
+            const settings: SettingsConfig = {
+                server: {
+                    port,
+                    noAuth: this.#noAuthInput.checked,
+                    noBrowser: this.#noBrowserInput.checked,
+                },
+                terminal: {
+                    fontFamily: this.#fontFamilyInput.value.trim(),
+                    fontSize,
+                    cursorBlink: this.#cursorBlinkInput.checked,
+                    rows: parseInt(this.#rowsInput.value, 10) || 0,
+                    columns: parseInt(this.#columnsInput.value, 10) || 0,
+                },
+            };
+            try {
+                const response = await postSettings(settings);
+                this.dispatchEvent(
+                    new CustomEvent("b3tty-settings-edited", {
+                        detail: { response },
+                        bubbles: true,
+                        composed: true,
+                    })
+                );
+                this.close();
+            } catch {
+                // Keep modal open for retry.
+            }
+        }
+
+        // -----------------------------------------------------------------------
+        // Public API
+        // -----------------------------------------------------------------------
+
+        open(settings: SettingsConfig): void {
+            this.#portInput.value = String(settings.server.port);
+            this.#noAuthInput.checked = settings.server.noAuth;
+            this.#noBrowserInput.checked = settings.server.noBrowser;
+
+            const displayFontFamily = settings.terminal.fontFamily === "na" ? "" : settings.terminal.fontFamily;
+            this.#fontFamilyInput.value = displayFontFamily;
+            this.#fontSizeInput.value = String(settings.terminal.fontSize);
+            this.#cursorBlinkInput.checked = settings.terminal.cursorBlink;
+            this.#rowsInput.value = String(settings.terminal.rows);
+            this.#columnsInput.value = String(settings.terminal.columns);
+
+            this.#origServer = {
+                port: this.#portInput.value,
+                noAuth: this.#noAuthInput.checked,
+                noBrowser: this.#noBrowserInput.checked,
+            };
+            this.#origTerminal = {
+                fontFamily: displayFontFamily,
+                fontSize: this.#fontSizeInput.value,
+                cursorBlink: this.#cursorBlinkInput.checked,
+                rows: this.#rowsInput.value,
+                columns: this.#columnsInput.value,
+            };
+
+            this.#okBtn.disabled = true;
+            this.#serverRestartNote.classList.remove("visible");
+            this.#termRestartNote.classList.remove("visible");
+
+            this.#switchTab("server");
+            this.setAttribute("open", "");
+        }
+
+        close(): void {
+            this.#origServer = null;
+            this.#origTerminal = null;
+            this.removeAttribute("open");
+        }
+    }
+
+    customElements.define("b3tty-settings-editor", B3ttySettingsEditorImpl);
 }

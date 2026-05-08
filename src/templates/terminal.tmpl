@@ -2,7 +2,7 @@
 <html>
     <head>
         <title>{{ if .Title }}{{ .Title }}{{ else }}b3tty{{ end }}</title>
-        <link rel="stylesheet" href="/assets/xterm.6.0.0.min.css" />
+        <link rel="stylesheet" href="/assets/xterm.min.css" />
         <link rel="stylesheet" href="/assets/terminal.css" />
         <link rel="shortcut icon" href="/assets/favicon.ico" />
     </head>
@@ -16,6 +16,7 @@
         <b3tty-theme-picker id="theme-picker"></b3tty-theme-picker>
         <b3tty-theme-editor id="theme-editor"></b3tty-theme-editor>
         <b3tty-profile-editor id="profile-editor"></b3tty-profile-editor>
+        <b3tty-settings-editor id="settings-editor"></b3tty-settings-editor>
         </div>
     </body>
     <script nonce="{{ .Nonce }}">window.B3TTY = {{ .ConfigJSON }};</script>

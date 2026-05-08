@@ -74,6 +74,7 @@ configuration. For additional security, b3tty supports TLS over https and wss.`,
 			ActiveTheme:    activeThemeName,
 			ConfigFile:     viper.ConfigFileUsed(),
 			FirstRun:       !configFileFound,
+			NoBrowser:      noBrowser,
 			AuthSleep:      time.Sleep,
 		}
 		src.Serve(&ts, !noBrowser, tls)

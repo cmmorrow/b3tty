@@ -34,6 +34,7 @@ format-check:
 
 client:
 	bun build src/client/terminal.ts --outfile src/assets/terminal.min.js --target browser --minify
+	cp src/client/node_modules/@xterm/xterm/css/xterm.css src/assets/xterm.min.css
 
 build: client
 	@echo "Building $(BINARY_NAME) version $(PACKAGE_VERSION)"

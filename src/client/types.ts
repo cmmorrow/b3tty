@@ -117,6 +117,36 @@ export interface Palette {
     bright: string[];
 }
 
+export interface SettingsServerConfig {
+    port: number;
+    noAuth: boolean;
+    noBrowser: boolean;
+}
+
+export interface SettingsTerminalConfig {
+    fontFamily: string;
+    fontSize: number;
+    cursorBlink: boolean;
+    rows: number;
+    columns: number;
+}
+
+export interface SettingsConfig {
+    server: SettingsServerConfig;
+    terminal: SettingsTerminalConfig;
+}
+
+export function isSettingsConfig(val: unknown): val is SettingsConfig {
+    if (typeof val !== "object" || val === null) return false;
+    const v = val as Record<string, unknown>;
+    return (
+        typeof v["server"] === "object" &&
+        v["server"] !== null &&
+        typeof v["terminal"] === "object" &&
+        v["terminal"] !== null
+    );
+}
+
 declare global {
     interface Window {
         B3TTY?: TermConfig;
