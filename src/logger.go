@@ -1,6 +1,7 @@
 package src
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -138,5 +139,71 @@ func Debugf(format string, args ...any) {
 func Debug(msg string) {
 	if debugEnabled {
 		log.Println(debugLabel(), msg)
+	}
+}
+
+// CommandLogger prints colorized messages without timestamps or level label
+// prefixes. It is intended for use in CLI subcommands where output should
+// read as clean user-facing text rather than structured server log lines.
+// Level is indicated by color only: white for Info, yellow for Warn, red for
+// Error and Fatal, and magenta for Debug.
+type CommandLogger struct {
+	l *log.Logger
+}
+
+// NewCommandLogger returns a CommandLogger that writes to stdout with no
+// timestamp or prefix.
+func NewCommandLogger() *CommandLogger {
+	return &CommandLogger{l: log.New(os.Stdout, "", 0)}
+}
+
+func (c *CommandLogger) colorize(color, s string) string {
+	if useColor {
+		return color + s + ansiReset
+	}
+	return s
+}
+
+func (c *CommandLogger) Info(msg string) {
+	c.l.Println(c.colorize(ansiCyan, msg))
+}
+
+func (c *CommandLogger) Infof(format string, args ...any) {
+	c.l.Println(c.colorize(ansiCyan, fmt.Sprintf(format, args...)))
+}
+
+func (c *CommandLogger) Warn(msg string) {
+	c.l.Println(c.colorize(ansiYellow, msg))
+}
+
+func (c *CommandLogger) Warnf(format string, args ...any) {
+	c.l.Println(c.colorize(ansiYellow, fmt.Sprintf(format, args...)))
+}
+
+func (c *CommandLogger) Error(msg string) {
+	c.l.Println(c.colorize(ansiRed, msg))
+}
+
+func (c *CommandLogger) Errorf(format string, args ...any) {
+	c.l.Println(c.colorize(ansiRed, fmt.Sprintf(format, args...)))
+}
+
+func (c *CommandLogger) Fatal(msg string) {
+	c.l.Fatal(c.colorize(ansiRed, msg))
+}
+
+func (c *CommandLogger) Fatalf(format string, args ...any) {
+	c.l.Fatal(c.colorize(ansiRed, fmt.Sprintf(format, args...)))
+}
+
+func (c *CommandLogger) Debug(msg string) {
+	if debugEnabled {
+		c.l.Println(c.colorize(ansiMagenta, msg))
+	}
+}
+
+func (c *CommandLogger) Debugf(format string, args ...any) {
+	if debugEnabled {
+		c.l.Println(c.colorize(ansiMagenta, fmt.Sprintf(format, args...)))
 	}
 }

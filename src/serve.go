@@ -11,6 +11,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 //go:embed assets
@@ -34,6 +36,8 @@ type TerminalServer struct {
 	FirstRun       bool
 	NoBrowser      bool
 	BackoffMu      sync.Mutex
+	WSClients      map[*websocket.Conn]*wsClient
+	WSClientsMu    sync.Mutex
 	// AuthSleep is the function used to pause on auth failures. It defaults to
 	// time.Sleep and can be replaced in tests with a no-op to avoid real delays.
 	AuthSleep func(time.Duration)
@@ -151,7 +155,12 @@ func buildUIUrl(protocol, addr, tokenQuery, startupProfile string) string {
 
 // Serve wires up the HTTP mux and starts the server.
 func Serve(ts *TerminalServer, shouldOpenBrowser bool, useTLS bool) {
+	ts.WSClients = make(map[*websocket.Conn]*wsClient)
 	Debug("starting b3tty server....")
+
+	if existing, err := ReadLockFile(); err == nil && existing != nil {
+		Warnf("lock file found: another b3tty instance may already be running on port %d (pid %d)", existing.Port, existing.PID)
+	}
 
 	var err error
 	var tokenQuery = ""
@@ -170,12 +179,16 @@ func Serve(ts *TerminalServer, shouldOpenBrowser bool, useTLS bool) {
 		tokenQuery = "?token=" + ts.Token
 	}
 
+	if err := WriteLockFile(ts.Server.Port, os.Getpid(), ts.Token, protocol); err != nil {
+		Warnf("could not write lock file: %v", err)
+	}
+
 	addr := ts.Server.Addr().Host
 	uiUrl := buildUIUrl(protocol, addr, tokenQuery, ts.StartupProfile)
 
 	Debugf("open-browser on start up: %v", shouldOpenBrowser)
 	if shouldOpenBrowser {
-		err = openBrowser(uiUrl)
+		err = OpenBrowser(uiUrl)
 		if err != nil {
 			Fatal("failed to open default browser")
 		}
@@ -227,6 +240,9 @@ func Serve(ts *TerminalServer, shouldOpenBrowser bool, useTLS bool) {
 
 	select {
 	case err = <-serverErr:
+		if removeErr := RemoveLockFile(); removeErr != nil {
+			Warnf("could not remove lock file: %v", removeErr)
+		}
 		if err != nil && err != http.ErrServerClosed {
 			Fatalf("%s server error: %v", protocol, err)
 		}
@@ -235,7 +251,13 @@ func Serve(ts *TerminalServer, shouldOpenBrowser bool, useTLS bool) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err = httpServer.Shutdown(ctx); err != nil {
+			if removeErr := RemoveLockFile(); removeErr != nil {
+				Warnf("could not remove lock file: %v", removeErr)
+			}
 			Fatalf("server shutdown error: %v", err)
+		}
+		if removeErr := RemoveLockFile(); removeErr != nil {
+			Warnf("could not remove lock file: %v", removeErr)
 		}
 	}
 }

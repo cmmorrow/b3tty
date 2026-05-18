@@ -14,6 +14,7 @@ import type {
     ClientConfig,
     ThemeConfig,
     SettingsConfig,
+    SettingsTerminalConfig,
 } from "./types.ts";
 import { isValidHttpProtocol, isValidWsProtocol, isValidPort, isValidUri } from "./validators.ts";
 import { postSize, postThemeConfig, postAddTheme, getSettings } from "./api.ts";
@@ -136,8 +137,8 @@ export function buildTermOptions(
         fontSize: config.fontSize,
     };
     if (allowTransparency) options.allowTransparency = true;
-    if (config.rows) options.rows = config.rows;
-    if (config.columns) options.cols = config.columns;
+    options.rows = config.rows;
+    options.cols = config.columns;
     if (Object.keys(theme).length > 0) options.theme = theme;
     return options;
 }
@@ -175,14 +176,61 @@ export function handleSocketMessage(
     event: SocketMessageEvent,
     decoder: TextDecoder,
     term: TerminalLike,
-    writeCallback?: () => void
+    writeCallback?: () => void,
+    onSettings?: (t: SettingsTerminalConfig) => void,
+    onTheme?: (name: string, theme: ThemeActivateResponse) => void
 ): void {
-    const data = event.data instanceof ArrayBuffer ? decoder.decode(event.data, { stream: true }) : event.data;
+    if (!(event.data instanceof ArrayBuffer)) {
+        if (typeof event.data === "string" && event.data.length > 0) {
+            try {
+                const msg = JSON.parse(event.data) as {
+                    type: string;
+                    terminal?: SettingsTerminalConfig;
+                    name?: string;
+                    theme?: ThemeActivateResponse;
+                };
+                if (msg.type === "settings" && msg.terminal && onSettings) {
+                    onSettings(msg.terminal);
+                } else if (msg.type === "theme" && msg.name && msg.theme && onTheme) {
+                    onTheme(msg.name, msg.theme);
+                }
+            } catch {}
+        }
+        return;
+    }
+    const data = decoder.decode(event.data, { stream: true });
     if (writeCallback !== undefined) {
         term.write(data, writeCallback);
     } else {
         term.write(data);
     }
+}
+
+/**
+ * Applies a theme received via WebSocket broadcast to the live terminal session.
+ * Called when the server pushes a "theme" control message — for example when the
+ * theme is changed via `b3tty theme set` from the CLI. Updates the xterm.js theme,
+ * page background styles, and menu bar colors. When menuBar is null the color
+ * update is skipped.
+ */
+export function applyThemeBroadcast(
+    name: string,
+    themeResp: ThemeActivateResponse,
+    term: Terminal,
+    menuBar: B3ttyMenuBar | null,
+    activeTheme: { current: string }
+): void {
+    const builtTheme = buildTheme(themeResp);
+    if (themeResp.hasBackgroundImage) {
+        builtTheme.background = withAlpha(themeResp.background || "#000", 0);
+    }
+    term.options.theme = builtTheme;
+    applyThemeStyles(themeResp, themeResp.hasBackgroundImage);
+    menuBar?.updateColors({
+        bg: setLight(themeResp.foreground),
+        fg: setDark(themeResp.background),
+    });
+    activeTheme.current = name;
 }
 
 /**
@@ -497,14 +545,13 @@ export async function handleThemeEdited(
 
 /**
  * Applies saved terminal settings (font, cursor) to the live xterm.js Terminal.
- * Rows and columns changes are not applied to the live session since they require
- * a PTY resize — they persist to the config file only and take effect on restart.
+ * When the session started in fixed-size mode (auto-resize false), rows and columns
+ * are also applied live via term.resize(); the registered term.onResize listener
+ * propagates the new dimensions to the server PTY over WebSocket.
  */
-export function handleSettingsEdited(e: Event, term: Terminal, config: TermConfig): void {
-    const { response } = (e as CustomEvent<{ response: SettingsConfig }>).detail;
-    const t = response.terminal;
+export function applyTerminalSettings(t: SettingsTerminalConfig, term: Terminal, config: TermConfig): void {
     term.options.cursorBlink = t.cursorBlink;
-    if (t.fontFamily && t.fontFamily !== "na") {
+    if (t.fontFamily) {
         term.options.fontFamily = `${t.fontFamily}, Menlo, DejaVu Sans Mono, Ubuntu Mono, Inconsolata, Fira, monospace`;
         document.documentElement.style.setProperty("--b3tty-font-family", `"${t.fontFamily}", monospace`);
     }
@@ -515,6 +562,17 @@ export function handleSettingsEdited(e: Event, term: Terminal, config: TermConfi
     config.fontFamily = t.fontFamily;
     config.fontSize = t.fontSize;
     config.cursorBlink = t.cursorBlink;
+    if (!config.autoResize) {
+        config.rows = t.rows;
+        config.columns = t.columns;
+        term.resize(t.columns, t.rows);
+    }
+    config.autoResize = t.autoResize;
+}
+
+export function handleSettingsEdited(e: Event, term: Terminal, config: TermConfig): void {
+    const { response } = (e as CustomEvent<{ response: SettingsConfig }>).detail;
+    applyTerminalSettings(response.terminal, term, config);
 }
 
 /**
@@ -541,7 +599,7 @@ export async function main(config: TermConfig): Promise<void> {
     term.open(requireElement("terminal"));
 
     let fitAddon: FitAddon | undefined;
-    if (!config.columns) {
+    if (config.autoResize ?? true) {
         fitAddon = new FitAddon();
         term.loadAddon(fitAddon);
         fitAddon.fit();
@@ -568,11 +626,26 @@ export async function main(config: TermConfig): Promise<void> {
     const decoder = new TextDecoder("utf-8");
     const { onBeforeSend, writeCallback } = buildDebugHooks(!!config.debug);
 
+    let menuBar: (HTMLElement & B3ttyMenuBar) | null = null;
+    const activeTheme = { current: config.activeTheme ?? "" };
+
     socket.onmessage = (event) => {
         if (socket.readyState !== 1) {
             console.log("websocket not ready!");
         }
-        handleSocketMessage(event as SocketMessageEvent, decoder, term, writeCallback);
+        handleSocketMessage(
+            event as SocketMessageEvent,
+            decoder,
+            term,
+            writeCallback,
+            (t) => {
+                applyTerminalSettings(t, term, config);
+                requestAnimationFrame(() => fitAddon?.fit());
+            },
+            (name, themeResp) => {
+                applyThemeBroadcast(name, themeResp, term, menuBar, activeTheme);
+            }
+        );
     };
 
     const dialogEl = requireElement("dialog");
@@ -592,7 +665,7 @@ export async function main(config: TermConfig): Promise<void> {
     const menuBarEl = document.getElementById("menubar");
     if (menuBarEl) {
         if (!isB3ttyMenuBar(menuBarEl)) throw new Error("Element #menubar is not a B3ttyMenuBar");
-        const menuBar: B3ttyMenuBar = menuBarEl;
+        menuBar = menuBarEl;
         menuBar.setup(config.themeNames ?? [], config.profileNames ?? [], {
             bg: setLight(config.theme.foreground),
             fg: setDark(config.theme.background),
@@ -605,7 +678,6 @@ export async function main(config: TermConfig): Promise<void> {
             signal,
         });
 
-        const activeTheme = { current: config.activeTheme ?? "" };
         menuBarEl.addEventListener("b3tty-theme-change", (e) => handleThemeChange(e, term, menuBar, activeTheme), {
             signal,
         });
@@ -693,17 +765,24 @@ export async function main(config: TermConfig): Promise<void> {
         );
 
         if (settingsEditor) {
-            settingsEditor.addEventListener("b3tty-settings-edited", (e) => handleSettingsEdited(e, term, config), {
-                signal,
-            });
+            settingsEditor.addEventListener(
+                "b3tty-settings-edited",
+                (e) => {
+                    handleSettingsEdited(e, term, config);
+                    requestAnimationFrame(() => fitAddon?.fit());
+                },
+                {
+                    signal,
+                }
+            );
         }
     }
 
-    if (!config.columns) {
-        term.onResize(({ cols, rows }) => {
-            sendResizeMessage(socket, cols, rows);
-        });
+    term.onResize(({ cols, rows }) => {
+        sendResizeMessage(socket, cols, rows);
+    });
 
+    if (config.autoResize ?? true) {
         let resizeTimer: ReturnType<typeof setTimeout>;
         window.addEventListener(
             "resize",

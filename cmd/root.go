@@ -11,6 +11,7 @@ import (
 var Version = "latest"
 
 var cfgFile string
+var cmdLog = src.NewCommandLogger()
 var profiles map[string]src.Profile
 var configFileFound bool
 var activeThemeName string
@@ -87,7 +88,7 @@ func initConfig() {
 	configFileFound = viper.ConfigFileUsed() != "" || cfgFile != ""
 
 	if configFileFound {
-		src.Infof("using config file: %s", viper.ConfigFileUsed())
+		src.Debugf("using config file: %s", viper.ConfigFileUsed())
 
 		if viper.IsSet("server.port") {
 			port = viper.GetInt("server.port")
@@ -112,6 +113,9 @@ func initConfig() {
 		}
 		if viper.IsSet("terminal.columns") {
 			columns = viper.GetInt("terminal.columns")
+		}
+		if viper.IsSet("terminal.auto-resize") {
+			autoResize = viper.GetBool("terminal.auto-resize")
 		}
 		if viper.IsSet("terminal.font-family") {
 			fontFamily = viper.GetString("terminal.font-family")

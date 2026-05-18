@@ -15,16 +15,18 @@ import (
 type Client struct {
 	Rows        int
 	Columns     int
+	AutoResize  bool
 	CursorBlink bool
 	FontFamily  string
 	FontSize    int
 	Theme       Theme
 }
 
-func NewClient(rows *int, columns *int, blink *bool, fontFamily *string, fontSize *int, theme *Theme) *Client {
+func NewClient(rows *int, columns *int, autoResize *bool, blink *bool, fontFamily *string, fontSize *int, theme *Theme) *Client {
 	return &Client{
 		Rows:        *rows,
 		Columns:     *columns,
+		AutoResize:  *autoResize,
 		CursorBlink: *blink,
 		FontFamily:  *fontFamily,
 		FontSize:    *fontSize,
@@ -215,6 +217,7 @@ type TermConfig struct {
 	FontSize           int      `json:"fontSize"`
 	Rows               int      `json:"rows"`
 	Columns            int      `json:"columns"`
+	AutoResize         bool     `json:"autoResize"`
 	Theme              Theme    `json:"theme"`
 	Uri                string   `json:"uri"`
 	Port               int      `json:"port"`
@@ -235,6 +238,7 @@ func NewTermConfig(srv *Server, clnt *Client, thm *Theme, themeNames []string, a
 		FontSize:           clnt.FontSize,
 		Rows:               clnt.Rows,
 		Columns:            clnt.Columns,
+		AutoResize:         clnt.AutoResize,
 		Theme:              *thm,
 		Uri:                srv.Uri,
 		Port:               srv.Port,
@@ -284,29 +288,30 @@ type editProfileResponse struct {
 	ProfileNames []string `json:"profileNames"`
 }
 
-// settingsServerConfig holds the subset of server settings exposed via the
+// SettingsServerConfig holds the subset of server settings exposed via the
 // Settings overlay. These fields require a server restart to take effect.
-type settingsServerConfig struct {
+type SettingsServerConfig struct {
 	Port      int  `json:"port"`
 	NoAuth    bool `json:"noAuth"`
 	NoBrowser bool `json:"noBrowser"`
 }
 
-// settingsTerminalConfig holds the terminal settings exposed via the
+// SettingsTerminalConfig holds the terminal settings exposed via the
 // Settings overlay. Font and cursor fields apply to the live session;
-// rows and columns only persist to the config file.
-type settingsTerminalConfig struct {
+// auto-resize, rows, and columns only persist to the config file.
+type SettingsTerminalConfig struct {
 	FontFamily  string `json:"fontFamily"`
 	FontSize    int    `json:"fontSize"`
 	CursorBlink bool   `json:"cursorBlink"`
+	AutoResize  bool   `json:"autoResize"`
 	Rows        int    `json:"rows"`
 	Columns     int    `json:"columns"`
 }
 
 // settingsConfigResponse is the JSON shape for GET and POST /settings.
 type settingsConfigResponse struct {
-	Server   settingsServerConfig   `json:"server"`
-	Terminal settingsTerminalConfig `json:"terminal"`
+	Server   SettingsServerConfig   `json:"server"`
+	Terminal SettingsTerminalConfig `json:"terminal"`
 }
 
 // CSPHeader represents a single Content-Security-Policy directive, consisting of

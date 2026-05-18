@@ -2079,6 +2079,7 @@ if (typeof HTMLElement !== "undefined") {
         #fontFamilyInput: HTMLInputElement;
         #fontSizeInput: HTMLInputElement;
         #cursorBlinkInput: HTMLInputElement;
+        #autoResizeInput: HTMLInputElement;
         #rowsInput: HTMLInputElement;
         #columnsInput: HTMLInputElement;
 
@@ -2102,6 +2103,7 @@ if (typeof HTMLElement !== "undefined") {
             fontFamily: string;
             fontSize: string;
             cursorBlink: boolean;
+            autoResize: boolean;
             rows: string;
             columns: string;
         } | null = null;
@@ -2181,6 +2183,7 @@ if (typeof HTMLElement !== "undefined") {
                     padding: 5px 8px; border: 1px solid #aaa; border-radius: 3px;
                     background: #f5f5f5; box-sizing: border-box;
                 }
+                .number-input:disabled { opacity: 0.4; cursor: not-allowed; }
                 .toggle {
                     width: 36px; height: 20px;
                     appearance: none; -webkit-appearance: none;
@@ -2326,29 +2329,44 @@ if (typeof HTMLElement !== "undefined") {
             divider.className = "section-divider";
             terminalPanel.appendChild(divider);
 
+            this.#autoResizeInput = document.createElement("input");
+            this.#autoResizeInput.type = "checkbox";
+            this.#autoResizeInput.className = "toggle";
+            terminalPanel.appendChild(
+                this.#makeSettingGroup(
+                    "Auto-Resize",
+                    "When enabled, the terminal resizes to fill the browser window. When disabled, Rows and Columns below set the fixed dimensions. Requires restart.",
+                    this.#autoResizeInput
+                )
+            );
+
             this.#rowsInput = document.createElement("input");
             this.#rowsInput.type = "number";
             this.#rowsInput.className = "number-input";
-            this.#rowsInput.min = "1";
+            this.#rowsInput.min = "10";
             terminalPanel.appendChild(
-                this.#makeSettingGroup("Rows", "Fixed terminal height in rows. Requires restart.", this.#rowsInput)
+                this.#makeSettingGroup(
+                    "Rows",
+                    "Fixed terminal height in rows (minimum 10). Used only when Auto-Resize is disabled. Requires restart.",
+                    this.#rowsInput
+                )
             );
 
             this.#columnsInput = document.createElement("input");
             this.#columnsInput.type = "number";
             this.#columnsInput.className = "number-input";
-            this.#columnsInput.min = "0";
+            this.#columnsInput.min = "10";
             terminalPanel.appendChild(
                 this.#makeSettingGroup(
                     "Columns",
-                    "Fixed terminal width in columns. Set to 0 to auto-fit to window. Requires restart.",
+                    "Fixed terminal width in columns (minimum 10). Used only when Auto-Resize is disabled. Requires restart.",
                     this.#columnsInput
                 )
             );
 
             this.#termRestartNote = document.createElement("div");
             this.#termRestartNote.className = "restart-note";
-            this.#termRestartNote.textContent = "⚠ Rows and Columns require a restart to take effect.";
+            this.#termRestartNote.textContent = "⚠ Changing Auto-Resize requires a restart to take effect.";
             terminalPanel.appendChild(this.#termRestartNote);
 
             tabContent.appendChild(serverPanel);
@@ -2388,6 +2406,10 @@ if (typeof HTMLElement !== "undefined") {
             for (const el of [this.#noAuthInput, this.#noBrowserInput, this.#cursorBlinkInput]) {
                 el.addEventListener("change", () => this.#checkDirty());
             }
+            this.#autoResizeInput.addEventListener("change", () => {
+                this.#updateDimensionDisabled(this.#autoResizeInput.checked);
+                this.#checkDirty();
+            });
         }
 
         #makeSettingGroup(label: string, desc: string, input: HTMLElement): HTMLDivElement {
@@ -2406,6 +2428,11 @@ if (typeof HTMLElement !== "undefined") {
             group.appendChild(row);
             group.appendChild(descEl);
             return group;
+        }
+
+        #updateDimensionDisabled(autoResize: boolean): void {
+            this.#rowsInput.disabled = autoResize;
+            this.#columnsInput.disabled = autoResize;
         }
 
         #switchTab(tab: "server" | "terminal"): void {
@@ -2431,13 +2458,18 @@ if (typeof HTMLElement !== "undefined") {
                 this.#fontSizeInput.value !== this.#origTerminal.fontSize ||
                 this.#cursorBlinkInput.checked !== this.#origTerminal.cursorBlink;
 
-            const rowsColsChanged =
+            const autoResizeChanged = this.#autoResizeInput.checked !== this.#origTerminal.autoResize;
+            const dimChanged =
                 this.#rowsInput.value !== this.#origTerminal.rows ||
                 this.#columnsInput.value !== this.#origTerminal.columns;
 
-            this.#okBtn.disabled = !serverChanged && !termChanged && !rowsColsChanged;
+            // Rows/cols apply live when auto-resize is off at startup; only the
+            // auto-resize toggle itself requires a restart.
+            const dimRestartNeeded = autoResizeChanged;
+
+            this.#okBtn.disabled = !serverChanged && !termChanged && !autoResizeChanged && !dimChanged;
             this.#serverRestartNote.classList.toggle("visible", serverChanged);
-            this.#termRestartNote.classList.toggle("visible", rowsColsChanged);
+            this.#termRestartNote.classList.toggle("visible", dimRestartNeeded);
         }
 
         // -----------------------------------------------------------------------
@@ -2460,6 +2492,7 @@ if (typeof HTMLElement !== "undefined") {
                     fontFamily: this.#fontFamilyInput.value.trim(),
                     fontSize,
                     cursorBlink: this.#cursorBlinkInput.checked,
+                    autoResize: this.#autoResizeInput.checked,
                     rows: parseInt(this.#rowsInput.value, 10) || 0,
                     columns: parseInt(this.#columnsInput.value, 10) || 0,
                 },
@@ -2488,12 +2521,13 @@ if (typeof HTMLElement !== "undefined") {
             this.#noAuthInput.checked = settings.server.noAuth;
             this.#noBrowserInput.checked = settings.server.noBrowser;
 
-            const displayFontFamily = settings.terminal.fontFamily === "na" ? "" : settings.terminal.fontFamily;
-            this.#fontFamilyInput.value = displayFontFamily;
+            this.#fontFamilyInput.value = settings.terminal.fontFamily;
             this.#fontSizeInput.value = String(settings.terminal.fontSize);
             this.#cursorBlinkInput.checked = settings.terminal.cursorBlink;
+            this.#autoResizeInput.checked = settings.terminal.autoResize;
             this.#rowsInput.value = String(settings.terminal.rows);
             this.#columnsInput.value = String(settings.terminal.columns);
+            this.#updateDimensionDisabled(settings.terminal.autoResize);
 
             this.#origServer = {
                 port: this.#portInput.value,
@@ -2501,9 +2535,10 @@ if (typeof HTMLElement !== "undefined") {
                 noBrowser: this.#noBrowserInput.checked,
             };
             this.#origTerminal = {
-                fontFamily: displayFontFamily,
+                fontFamily: this.#fontFamilyInput.value,
                 fontSize: this.#fontSizeInput.value,
                 cursorBlink: this.#cursorBlinkInput.checked,
+                autoResize: this.#autoResizeInput.checked,
                 rows: this.#rowsInput.value,
                 columns: this.#columnsInput.value,
             };

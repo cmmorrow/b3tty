@@ -14,6 +14,13 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// wsClient wraps a WebSocket connection with a write mutex so that the PTY
+// output goroutine and broadcastSettings can both write without data races.
+type wsClient struct {
+	conn *websocket.Conn
+	mu   sync.Mutex
+}
+
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:    BUFFER_SIZE,
 	WriteBufferSize:   BUFFER_SIZE,
@@ -71,6 +78,16 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer ws.Close()
+
+	client := &wsClient{conn: ws}
+	ts.WSClientsMu.Lock()
+	ts.WSClients[ws] = client
+	ts.WSClientsMu.Unlock()
+	defer func() {
+		ts.WSClientsMu.Lock()
+		delete(ts.WSClients, ws)
+		ts.WSClientsMu.Unlock()
+	}()
 
 	profile := ts.Profiles[ts.ProfileName]
 
@@ -167,8 +184,10 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 				ws.Close()
 				return
 			}
+			client.mu.Lock()
 			ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			err = ws.WriteMessage(websocket.BinaryMessage, buf[:n])
+			client.mu.Unlock()
 			if err != nil {
 				Errorf("write from pty: %v", err)
 				ptmx.Close()
