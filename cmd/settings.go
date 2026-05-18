@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	cryptotls "crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -211,9 +212,19 @@ func postToRunningServer(serverPort int, path string, body any) {
 	httpClient := &http.Client{Timeout: 2 * time.Second}
 	if tls {
 		scheme = "https"
-		httpClient.Transport = &http.Transport{
-			TLSClientConfig: &cryptotls.Config{InsecureSkipVerify: true}, //nolint:gosec
+		tlsCfg := &cryptotls.Config{}
+		if certFile != "" {
+			if pem, err := os.ReadFile(certFile); err == nil {
+				pool := x509.NewCertPool()
+				if pool.AppendCertsFromPEM(pem) {
+					tlsCfg.RootCAs = pool
+				}
+			}
 		}
+		if tlsCfg.RootCAs == nil {
+			tlsCfg.InsecureSkipVerify = true //nolint:gosec — cert unreadable, best-effort fallback
+		}
+		httpClient.Transport = &http.Transport{TLSClientConfig: tlsCfg}
 	}
 	data, err := json.Marshal(body)
 	if err != nil {
