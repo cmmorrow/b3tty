@@ -47,6 +47,7 @@ func TestSettingsHandlerGet(t *testing.T) {
 		ts.Client.FontSize = 18
 		ts.Client.FontFamily = "Fira Code"
 		ts.Client.CursorBlink = false
+		ts.Client.AutoResize = false
 		ts.Client.Rows = 30
 		ts.Client.Columns = 100
 		ts.Server.Port = 9090
@@ -66,6 +67,7 @@ func TestSettingsHandlerGet(t *testing.T) {
 		assert.Equal(t, 18, resp.Terminal.FontSize)
 		assert.Equal(t, "Fira Code", resp.Terminal.FontFamily)
 		assert.False(t, resp.Terminal.CursorBlink)
+		assert.False(t, resp.Terminal.AutoResize)
 		assert.Equal(t, 30, resp.Terminal.Rows)
 		assert.Equal(t, 100, resp.Terminal.Columns)
 	})
@@ -76,10 +78,10 @@ func TestSettingsHandlerGet(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSettingsHandlerPost(t *testing.T) {
-	makeBody := func(port, fontSize, rows, cols int, fontFamily string, cursorBlink, noAuth, noBrowser bool) *bytes.Buffer {
+	makeBody := func(port, fontSize, rows, cols int, fontFamily string, cursorBlink, autoResize, noAuth, noBrowser bool) *bytes.Buffer {
 		req := settingsConfigResponse{
-			Server:   settingsServerConfig{Port: port, NoAuth: noAuth, NoBrowser: noBrowser},
-			Terminal: settingsTerminalConfig{FontFamily: fontFamily, FontSize: fontSize, CursorBlink: cursorBlink, Rows: rows, Columns: cols},
+			Server:   SettingsServerConfig{Port: port, NoAuth: noAuth, NoBrowser: noBrowser},
+			Terminal: SettingsTerminalConfig{FontFamily: fontFamily, FontSize: fontSize, CursorBlink: cursorBlink, AutoResize: autoResize, Rows: rows, Columns: cols},
 		}
 		b, _ := json.Marshal(req)
 		return bytes.NewBuffer(b)
@@ -87,7 +89,7 @@ func TestSettingsHandlerPost(t *testing.T) {
 
 	t.Run("cross-origin POST is rejected with 403", func(t *testing.T) {
 		ts := newSettingsTestServer()
-		req := httptest.NewRequest(http.MethodPost, "/settings", makeBody(8080, 14, 24, 80, "mono", true, false, false))
+		req := httptest.NewRequest(http.MethodPost, "/settings", makeBody(8080, 14, 24, 80, "mono", true, true, false, false))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Sec-Fetch-Site", "cross-site")
 		w := httptest.NewRecorder()
@@ -98,7 +100,7 @@ func TestSettingsHandlerPost(t *testing.T) {
 
 	t.Run("POST with invalid port returns 400", func(t *testing.T) {
 		ts := newSettingsTestServer()
-		req := httptest.NewRequest(http.MethodPost, "/settings", makeBody(0, 14, 24, 80, "mono", true, false, false))
+		req := httptest.NewRequest(http.MethodPost, "/settings", makeBody(0, 14, 24, 80, "mono", true, true, false, false))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		w := httptest.NewRecorder()
@@ -109,13 +111,35 @@ func TestSettingsHandlerPost(t *testing.T) {
 
 	t.Run("POST with invalid font-size returns 400", func(t *testing.T) {
 		ts := newSettingsTestServer()
-		req := httptest.NewRequest(http.MethodPost, "/settings", makeBody(8080, 0, 24, 80, "mono", true, false, false))
+		req := httptest.NewRequest(http.MethodPost, "/settings", makeBody(8080, 0, 24, 80, "mono", true, true, false, false))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		w := httptest.NewRecorder()
 		logged := captureLog(func() { ts.settingsHandler(w, req) })
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Contains(t, logged, "invalid font-size")
+	})
+
+	t.Run("POST with rows below minimum returns 400", func(t *testing.T) {
+		ts := newSettingsTestServer()
+		req := httptest.NewRequest(http.MethodPost, "/settings", makeBody(8080, 14, 9, 80, "mono", true, true, false, false))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		w := httptest.NewRecorder()
+		logged := captureLog(func() { ts.settingsHandler(w, req) })
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, logged, "invalid rows")
+	})
+
+	t.Run("POST with columns below minimum returns 400", func(t *testing.T) {
+		ts := newSettingsTestServer()
+		req := httptest.NewRequest(http.MethodPost, "/settings", makeBody(8080, 14, 24, 9, "mono", true, true, false, false))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		w := httptest.NewRecorder()
+		logged := captureLog(func() { ts.settingsHandler(w, req) })
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, logged, "invalid columns")
 	})
 
 	t.Run("POST with malformed JSON returns 400", func(t *testing.T) {
@@ -136,7 +160,7 @@ func TestSettingsHandlerPost(t *testing.T) {
 		require.NoError(t, os.WriteFile(ts.ConfigFile, []byte("theme: b3tty-dark\n"), 0644))
 
 		req := httptest.NewRequest(http.MethodPost, "/settings",
-			makeBody(8080, 20, 30, 120, "JetBrains Mono", false, false, false))
+			makeBody(8080, 20, 30, 120, "JetBrains Mono", false, false, false, false))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		w := httptest.NewRecorder()
@@ -146,6 +170,7 @@ func TestSettingsHandlerPost(t *testing.T) {
 		assert.Equal(t, 20, ts.Client.FontSize)
 		assert.Equal(t, "JetBrains Mono", ts.Client.FontFamily)
 		assert.False(t, ts.Client.CursorBlink)
+		assert.False(t, ts.Client.AutoResize)
 		assert.Equal(t, 30, ts.Client.Rows)
 		assert.Equal(t, 120, ts.Client.Columns)
 	})
@@ -159,7 +184,7 @@ func TestSettingsHandlerPost(t *testing.T) {
 		originalPort := ts.Server.Port
 
 		req := httptest.NewRequest(http.MethodPost, "/settings",
-			makeBody(9999, 14, 24, 80, "mono", true, true, true))
+			makeBody(9999, 14, 24, 80, "mono", true, true, true, true))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		w := httptest.NewRecorder()
@@ -176,7 +201,7 @@ func TestSettingsHandlerPost(t *testing.T) {
 		require.NoError(t, os.WriteFile(ts.ConfigFile, []byte("theme: b3tty-dark\n"), 0644))
 
 		req := httptest.NewRequest(http.MethodPost, "/settings",
-			makeBody(9999, 16, 24, 80, "mono", true, false, false))
+			makeBody(9999, 16, 24, 80, "mono", true, true, false, false))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		w := httptest.NewRecorder()
@@ -197,7 +222,7 @@ func TestSettingsHandlerPost(t *testing.T) {
 		require.NoError(t, os.WriteFile(ts.ConfigFile, []byte("theme: b3tty-dark\n"), 0644))
 
 		req := httptest.NewRequest(http.MethodPost, "/settings",
-			makeBody(8080, 14, 24, 80, "mono", true, false, false))
+			makeBody(8080, 14, 24, 80, "mono", true, true, false, false))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		ts.settingsHandler(w, req)
@@ -211,7 +236,7 @@ func TestSettingsHandlerPost(t *testing.T) {
 		require.NoError(t, os.WriteFile(ts.ConfigFile, []byte("theme: b3tty-dark\n"), 0644))
 
 		req := httptest.NewRequest(http.MethodPost, "/settings",
-			makeBody(8080, 14, 24, 80, "", true, false, false))
+			makeBody(8080, 14, 24, 80, "", true, true, false, false))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		w := httptest.NewRecorder()
@@ -236,7 +261,7 @@ func TestSettingsHandlerPost(t *testing.T) {
 		require.NoError(t, os.WriteFile(ts.ConfigFile, []byte("theme: b3tty-dark\n"), 0644))
 
 		req := httptest.NewRequest(http.MethodPost, "/settings",
-			makeBody(8080, 16, 25, 90, "Fira Code", false, false, true))
+			makeBody(8080, 16, 25, 90, "Fira Code", false, true, false, true))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		w := httptest.NewRecorder()

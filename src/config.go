@@ -35,6 +35,7 @@ type terminalConfig struct {
 	FontFamily  string `yaml:"font-family"`
 	FontSize    int    `yaml:"font-size"`
 	CursorBlink bool   `yaml:"cursor-blink"`
+	AutoResize  bool   `yaml:"auto-resize"`
 	Rows        int    `yaml:"rows"`
 	Columns     int    `yaml:"columns"`
 }
@@ -322,7 +323,7 @@ func DeleteProfileFromConfig(configPath string, name string) error {
 // SaveSettingsToConfig reads the existing config file at configPath (creating it if
 // absent), updates the server and terminal sections with the provided values, and
 // writes the file back. Existing settings not covered by the structs are preserved.
-func SaveSettingsToConfig(configPath string, server settingsServerConfig, terminal settingsTerminalConfig) error {
+func SaveSettingsToConfig(configPath string, server SettingsServerConfig, terminal SettingsTerminalConfig) error {
 	if configPath == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -358,9 +359,14 @@ func SaveSettingsToConfig(configPath string, server settingsServerConfig, termin
 		termSection = map[string]any{}
 		cfg["terminal"] = termSection
 	}
-	termSection["font-family"] = terminal.FontFamily
+	if terminal.FontFamily != "" {
+		termSection["font-family"] = terminal.FontFamily
+	} else {
+		delete(termSection, "font-family")
+	}
 	termSection["font-size"] = terminal.FontSize
 	termSection["cursor-blink"] = terminal.CursorBlink
+	termSection["auto-resize"] = terminal.AutoResize
 	termSection["rows"] = terminal.Rows
 	termSection["columns"] = terminal.Columns
 

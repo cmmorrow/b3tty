@@ -59,6 +59,23 @@ var builtinThemes = map[string]map[string]any{
 	"gruvbox-light":    mustUnmarshalTheme(gruvboxLightThemeJSON),
 }
 
+// GetBuiltinThemeNames returns the sorted names of all built-in themes.
+func GetBuiltinThemeNames() []string {
+	names := make([]string, 0, len(builtinThemes))
+	for name := range builtinThemes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// GetBuiltinTheme returns the color map for the named built-in theme.
+// The second return value is false when no such theme exists.
+func GetBuiltinTheme(name string) (map[string]any, bool) {
+	colors, ok := builtinThemes[name]
+	return colors, ok
+}
+
 // themePaletteHandler serves a GET /theme?name=<name> request for any built-in or
 // user-defined theme and returns a themePaletteResponse JSON payload shaped for the
 // theme selector components.
@@ -173,6 +190,9 @@ func (ts *TerminalServer) themeConfigHandler(w http.ResponseWriter, r *http.Requ
 	resp := themeConfigResponse{
 		Theme:              theme,
 		HasBackgroundImage: theme.BackgroundImage != "",
+	}
+	if r.Method == "POST" {
+		ts.broadcastTheme(name, resp)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {

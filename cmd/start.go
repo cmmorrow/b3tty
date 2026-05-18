@@ -11,6 +11,7 @@ import (
 
 var debug bool
 var cursorBlink bool
+var autoResize bool
 var fontFamily string
 var fontSize int
 var rows int
@@ -49,6 +50,12 @@ configuration. For additional security, b3tty supports TLS over https and wss.`,
 		if !src.ValidatePortNumber(port) {
 			src.Fatalf("port number must be 1 - 65535")
 		}
+		if rows < 10 {
+			src.Fatalf("rows must be 10 or greater")
+		}
+		if columns < 10 {
+			src.Fatalf("columns must be 10 or greater")
+		}
 		if tls {
 			// Remap the default TLS port
 			if port == 8080 {
@@ -63,7 +70,7 @@ configuration. For additional security, b3tty supports TLS over https and wss.`,
 			startupProfile = src.DEFAULT_PROFILE_NAME
 		}
 		ts := src.TerminalServer{
-			Client:         src.NewClient(&rows, &columns, &cursorBlink, &fontFamily, &fontSize, &theme),
+			Client:         src.NewClient(&rows, &columns, &autoResize, &cursorBlink, &fontFamily, &fontSize, &theme),
 			Server:         src.NewServer(&uri, &port, &noAuth, &src.TLS{CertFilePath: certFile, KeyFilePath: keyFile, Enabled: tls}),
 			Profiles:       profiles,
 			Themes:         themes,
@@ -90,10 +97,12 @@ func init() {
 	cursorBlink = src.DEFAULT_CURSOR_BLINK
 	fontFamily = src.DEFAULT_FONT_FAMILY
 	fontSize = src.DEFAULT_FONT_SIZE
-	startCmd.Flags().IntVar(&rows, "rows", src.DEFAULT_ROWS, "The number of lines displayed by the TTY.")
-	startCmd.Flags().IntVar(&columns, "columns", src.DEFAULT_COLS, "The character number width of the TTY. If 0, auto fit to the browser window size. (default 0)")
+	startCmd.Flags().IntVar(&rows, "rows", src.DEFAULT_ROWS, "Fixed terminal height in rows (minimum 10). Used only when auto-resize is disabled.")
+	startCmd.Flags().IntVar(&columns, "columns", src.DEFAULT_COLS, "Fixed terminal width in columns (minimum 10). Used only when auto-resize is disabled.")
+	startCmd.Flags().BoolVar(&autoResize, "auto-resize", src.DEFAULT_AUTO_RESIZE, "Automatically resize the terminal to fit the browser window.")
 	startCmd.Flags().MarkHidden("rows")
 	startCmd.Flags().MarkHidden("columns")
+	startCmd.Flags().MarkHidden("auto-resize")
 
 	startCmd.Flags().IntVar(&port, "port", 8080, "The port b3tty is accessible from. If using TLS, the default port is 8443.")
 	startCmd.Flags().BoolVar(&tls, "tls", false, "Enable HTTPS via TLS. Requires cert-file and key-file to be provided.")

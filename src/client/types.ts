@@ -34,6 +34,7 @@ export interface TermConfig {
     fontSize: number;
     fontFamily: string;
     cursorBlink: boolean;
+    autoResize?: boolean;
     rows: number;
     columns: number;
     theme: ThemeConfig;
@@ -127,6 +128,7 @@ export interface SettingsTerminalConfig {
     fontFamily: string;
     fontSize: number;
     cursorBlink: boolean;
+    autoResize: boolean;
     rows: number;
     columns: number;
 }

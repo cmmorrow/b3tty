@@ -104,10 +104,10 @@ func sum(arr []int) int {
 	return total
 }
 
-// openBrowser attempts to open url in the system default browser using the
+// OpenBrowser attempts to open url in the system default browser using the
 // appropriate OS command. It returns an error if the command fails or the
 // platform is unsupported.
-func openBrowser(url string) error {
+func OpenBrowser(url string) error {
 	var err error
 	switch runtime.GOOS {
 	case "linux":

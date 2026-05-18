@@ -10,6 +10,7 @@ import {
     buildWsUrl,
     handleSocketMessage,
     handleSocketClose,
+    applyTerminalSettings,
     sendResizeMessage,
     initTerm,
     hexToRgba,
@@ -26,6 +27,7 @@ import {
     handleProfileChange,
     handleThemeSelected,
     handleThemeEdited,
+    applyThemeBroadcast,
 } from "./terminal.ts";
 import {
     isValidHttpProtocol,
@@ -285,8 +287,8 @@ describe("buildTermOptions", () => {
         cursorBlink: true,
         fontFamily: "Fira Code",
         fontSize: 14,
-        rows: 0,
-        columns: 0,
+        rows: 24,
+        columns: 80,
     };
 
     it("always includes cursorBlink, fontFamily, and fontSize", () => {
@@ -302,22 +304,12 @@ describe("buildTermOptions", () => {
         expect(result.fontFamily).toContain("monospace");
     });
 
-    it("does not set rows when config.rows is 0/falsy", () => {
-        const result = buildTermOptions({ ...baseConfig, rows: 0 }, {});
-        expect(result).not.toHaveProperty("rows");
-    });
-
-    it("sets rows when config.rows is truthy", () => {
+    it("always sets rows from config", () => {
         const result = buildTermOptions({ ...baseConfig, rows: 24 }, {});
         expect(result.rows).toBe(24);
     });
 
-    it("does not set cols when config.columns is 0/falsy", () => {
-        const result = buildTermOptions({ ...baseConfig, columns: 0 }, {});
-        expect(result).not.toHaveProperty("cols");
-    });
-
-    it("sets cols when config.columns is truthy", () => {
+    it("always sets cols from config", () => {
         const result = buildTermOptions({ ...baseConfig, columns: 80 }, {});
         expect(result.cols).toBe(80);
     });
@@ -611,10 +603,10 @@ describe("handleSocketMessage", () => {
         expect(term.write).toHaveBeenCalledWith(text);
     });
 
-    it("writes string data directly to the terminal without decoding", () => {
+    it("ignores text frames — they are control messages, not PTY output", () => {
         const event = { data: "raw string" };
         handleSocketMessage(event, decoder, term);
-        expect(term.write).toHaveBeenCalledWith("raw string");
+        expect(term.write).not.toHaveBeenCalled();
     });
 
     it("handles multi-byte UTF-8 sequences in ArrayBuffer correctly", () => {
@@ -631,15 +623,187 @@ describe("handleSocketMessage", () => {
         expect(term.write).toHaveBeenCalledWith("");
     });
 
-    it("handles an empty string message", () => {
+    it("silently ignores an empty string text frame", () => {
         handleSocketMessage({ data: "" }, decoder, term);
-        expect(term.write).toHaveBeenCalledWith("");
+        expect(term.write).not.toHaveBeenCalled();
     });
 
-    it("calls write once per message", () => {
-        handleSocketMessage({ data: "a" }, decoder, term);
-        handleSocketMessage({ data: "b" }, decoder, term);
+    it("calls write once per binary message", () => {
+        const a = new TextEncoder().encode("a").buffer;
+        const b = new TextEncoder().encode("b").buffer;
+        handleSocketMessage({ data: a }, decoder, term);
+        handleSocketMessage({ data: b }, decoder, term);
         expect(term.write).toHaveBeenCalledTimes(2);
+    });
+
+    it("calls onSettings when a settings text frame is received", () => {
+        const onSettings = mock((_t: unknown) => {});
+        const payload = JSON.stringify({
+            type: "settings",
+            terminal: {
+                fontFamily: "Fira Code",
+                fontSize: 18,
+                cursorBlink: true,
+                autoResize: true,
+                rows: 24,
+                columns: 80,
+            },
+        });
+        handleSocketMessage({ data: payload }, decoder, term, undefined, onSettings);
+        expect(onSettings).toHaveBeenCalledTimes(1);
+        expect(onSettings).toHaveBeenCalledWith({
+            fontFamily: "Fira Code",
+            fontSize: 18,
+            cursorBlink: true,
+            autoResize: true,
+            rows: 24,
+            columns: 80,
+        });
+        expect(term.write).not.toHaveBeenCalled();
+    });
+
+    it("ignores text frames with unknown type", () => {
+        const onSettings = mock((_t: unknown) => {});
+        const payload = JSON.stringify({ type: "unknown", data: "whatever" });
+        handleSocketMessage({ data: payload }, decoder, term, undefined, onSettings);
+        expect(onSettings).not.toHaveBeenCalled();
+        expect(term.write).not.toHaveBeenCalled();
+    });
+
+    it("silently ignores malformed JSON text frames", () => {
+        const onSettings = mock((_t: unknown) => {});
+        handleSocketMessage({ data: "not json {{{" }, decoder, term, undefined, onSettings);
+        expect(onSettings).not.toHaveBeenCalled();
+        expect(term.write).not.toHaveBeenCalled();
+    });
+
+    it("calls onTheme when a theme text frame is received", () => {
+        const onTheme = mock((_name: string, _theme: unknown) => {});
+        const payload = JSON.stringify({
+            type: "theme",
+            name: "solarized-light",
+            theme: { hasBackgroundImage: false, foreground: "#657b83", background: "#fdf6e3" },
+        });
+        handleSocketMessage({ data: payload }, decoder, term, undefined, undefined, onTheme);
+        expect(onTheme).toHaveBeenCalledTimes(1);
+        expect(onTheme.mock.calls[0]![0]).toBe("solarized-light");
+        expect(onTheme.mock.calls[0]![1]).toMatchObject({ hasBackgroundImage: false, foreground: "#657b83" });
+        expect(term.write).not.toHaveBeenCalled();
+    });
+
+    it("does not call onTheme when name is missing from the theme frame", () => {
+        const onTheme = mock((_name: string, _theme: unknown) => {});
+        const payload = JSON.stringify({
+            type: "theme",
+            theme: { hasBackgroundImage: false },
+        });
+        handleSocketMessage({ data: payload }, decoder, term, undefined, undefined, onTheme);
+        expect(onTheme).not.toHaveBeenCalled();
+    });
+
+    it("does not call onTheme when theme data is missing from the theme frame", () => {
+        const onTheme = mock((_name: string, _theme: unknown) => {});
+        const payload = JSON.stringify({ type: "theme", name: "dracula" });
+        handleSocketMessage({ data: payload }, decoder, term, undefined, undefined, onTheme);
+        expect(onTheme).not.toHaveBeenCalled();
+    });
+
+    it("does not call onTheme for non-theme type frames", () => {
+        const onTheme = mock((_name: string, _theme: unknown) => {});
+        const payload = JSON.stringify({ type: "settings", terminal: {} });
+        handleSocketMessage({ data: payload }, decoder, term, undefined, undefined, onTheme);
+        expect(onTheme).not.toHaveBeenCalled();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// applyThemeBroadcast
+// ---------------------------------------------------------------------------
+
+describe("applyThemeBroadcast", () => {
+    let savedDocument: unknown;
+
+    beforeEach(() => {
+        savedDocument = (globalThis as Record<string, unknown>)["document"];
+    });
+
+    afterEach(() => {
+        (globalThis as Record<string, unknown>)["document"] = savedDocument;
+    });
+
+    const baseConfig = {
+        tls: false,
+        uri: "localhost",
+        port: 8080,
+        fontSize: 14,
+        fontFamily: "monospace",
+        cursorBlink: true,
+        rows: 24,
+        columns: 80,
+        theme: {},
+    };
+
+    function makeMenuBar() {
+        return { setup: mock(() => {}), updateColors: mock((_c: unknown) => {}) };
+    }
+
+    it("applies the theme colors to term.options.theme", () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const term = terminalFactory(baseConfig);
+        const activeTheme = { current: "b3tty-dark" };
+        applyThemeBroadcast(
+            "solarized-light",
+            { hasBackgroundImage: false, foreground: "#657b83", background: "#fdf6e3" },
+            term,
+            null,
+            activeTheme
+        );
+        expect(term.options.theme?.foreground).toBe("#657b83");
+        expect(term.options.theme?.background).toBe("#fdf6e3");
+    });
+
+    it("overrides theme background to transparent when hasBackgroundImage is true", () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const term = terminalFactory(baseConfig);
+        applyThemeBroadcast("my-theme", { hasBackgroundImage: true, background: "#282a36" }, term, null, {
+            current: "",
+        });
+        expect(term.options.theme?.background).toBe("rgba(40, 42, 54, 0)");
+    });
+
+    it("updates activeTheme.current to the broadcast name", () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const term = terminalFactory(baseConfig);
+        const activeTheme = { current: "b3tty-dark" };
+        applyThemeBroadcast("dracula", { hasBackgroundImage: false }, term, null, activeTheme);
+        expect(activeTheme.current).toBe("dracula");
+    });
+
+    it("calls menuBar.updateColors with the theme foreground and background", () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const term = terminalFactory(baseConfig);
+        const menuBar = makeMenuBar();
+        applyThemeBroadcast(
+            "dracula",
+            { hasBackgroundImage: false, foreground: "#f8f8f2", background: "#282a36" },
+            term,
+            menuBar,
+            { current: "" }
+        );
+        expect(menuBar.updateColors).toHaveBeenCalledWith({ bg: "#f8f8f2", fg: "#282a36" });
+    });
+
+    it("skips menuBar.updateColors when menuBar is null", () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const term = terminalFactory(baseConfig);
+        expect(() =>
+            applyThemeBroadcast("dracula", { hasBackgroundImage: false }, term, null, { current: "" })
+        ).not.toThrow();
     });
 });
 
@@ -815,8 +979,8 @@ describe("terminalFactory", () => {
         fontSize: 14,
         fontFamily: "monospace",
         cursorBlink: true,
-        rows: 0,
-        columns: 0,
+        rows: 24,
+        columns: 80,
         theme: {},
     };
 
@@ -1253,8 +1417,8 @@ describe("disableCursor", () => {
             fontSize: 14,
             fontFamily: "monospace",
             cursorBlink: true,
-            rows: 0,
-            columns: 0,
+            rows: 24,
+            columns: 80,
             theme: {},
         });
         disableCursor(term);
@@ -1269,8 +1433,8 @@ describe("disableCursor", () => {
             fontSize: 14,
             fontFamily: "monospace",
             cursorBlink: true,
-            rows: 0,
-            columns: 0,
+            rows: 24,
+            columns: 80,
             theme: {},
         });
         disableCursor(term);
@@ -1285,8 +1449,8 @@ describe("disableCursor", () => {
             fontSize: 14,
             fontFamily: "monospace",
             cursorBlink: true,
-            rows: 0,
-            columns: 0,
+            rows: 24,
+            columns: 80,
             theme: {},
         });
         const blurSpy = spyOn(term, "blur");
@@ -1303,8 +1467,8 @@ describe("disableCursor", () => {
             fontSize: 14,
             fontFamily: "monospace",
             cursorBlink: true,
-            rows: 0,
-            columns: 0,
+            rows: 24,
+            columns: 80,
             theme: {},
         });
         const listeners: Array<() => void> = [];
@@ -1315,6 +1479,96 @@ describe("disableCursor", () => {
         listeners[0]?.();
         expect(blurSpy).toHaveBeenCalledTimes(2);
         blurSpy.mockRestore();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// applyTerminalSettings
+// ---------------------------------------------------------------------------
+
+describe("applyTerminalSettings", () => {
+    let savedDoc: unknown;
+
+    beforeEach(() => {
+        savedDoc = (globalThis as Record<string, unknown>)["document"];
+    });
+
+    afterEach(() => {
+        (globalThis as Record<string, unknown>)["document"] = savedDoc;
+    });
+
+    it("resizes the terminal live when auto-resize is false", () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const term = terminalFactory({
+            tls: false,
+            uri: "localhost",
+            port: 8080,
+            fontSize: 14,
+            fontFamily: "monospace",
+            cursorBlink: true,
+            autoResize: false,
+            rows: 24,
+            columns: 80,
+            theme: {},
+        });
+        const config = {
+            tls: false,
+            uri: "localhost",
+            port: 8080,
+            fontSize: 14,
+            fontFamily: "monospace",
+            cursorBlink: true,
+            autoResize: false,
+            rows: 24,
+            columns: 80,
+            theme: {},
+        };
+        applyTerminalSettings(
+            { cursorBlink: true, fontFamily: "mono", fontSize: 14, autoResize: false, rows: 30, columns: 100 },
+            term,
+            config
+        );
+        expect(term.rows).toBe(30);
+        expect(term.cols).toBe(100);
+        expect(config.rows).toBe(30);
+        expect(config.columns).toBe(100);
+    });
+
+    it("does not resize the terminal when auto-resize is true", () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const term = terminalFactory({
+            tls: false,
+            uri: "localhost",
+            port: 8080,
+            fontSize: 14,
+            fontFamily: "monospace",
+            cursorBlink: true,
+            autoResize: true,
+            rows: 24,
+            columns: 80,
+            theme: {},
+        });
+        const config = {
+            tls: false,
+            uri: "localhost",
+            port: 8080,
+            fontSize: 14,
+            fontFamily: "monospace",
+            cursorBlink: true,
+            autoResize: true,
+            rows: 24,
+            columns: 80,
+            theme: {},
+        };
+        applyTerminalSettings(
+            { cursorBlink: true, fontFamily: "mono", fontSize: 14, autoResize: true, rows: 30, columns: 100 },
+            term,
+            config
+        );
+        expect(term.rows).toBe(24);
+        expect(term.cols).toBe(80);
     });
 });
 
@@ -1419,8 +1673,8 @@ describe("applyPageStyles", () => {
         fontSize: 16,
         fontFamily: "Fira Code",
         cursorBlink: true,
-        rows: 0,
-        columns: 0,
+        rows: 24,
+        columns: 80,
         theme: { background: "#14181d", foreground: "#ffffff" },
     };
 
@@ -1546,8 +1800,8 @@ describe("handleThemeChange", () => {
             fontSize: 14,
             fontFamily: "monospace",
             cursorBlink: true,
-            rows: 0,
-            columns: 0,
+            rows: 24,
+            columns: 80,
             theme: {},
         });
         const menuBar = makeMenuBar();
@@ -1566,8 +1820,8 @@ describe("handleThemeChange", () => {
             fontSize: 14,
             fontFamily: "monospace",
             cursorBlink: true,
-            rows: 0,
-            columns: 0,
+            rows: 24,
+            columns: 80,
             theme: {},
         });
         const menuBar = makeMenuBar();
@@ -1587,8 +1841,8 @@ describe("handleThemeChange", () => {
             fontSize: 14,
             fontFamily: "monospace",
             cursorBlink: true,
-            rows: 0,
-            columns: 0,
+            rows: 24,
+            columns: 80,
             theme: {},
         });
         const activeTheme = { current: "b3tty-dark" };
@@ -1607,8 +1861,8 @@ describe("handleThemeChange", () => {
             fontSize: 14,
             fontFamily: "monospace",
             cursorBlink: true,
-            rows: 0,
-            columns: 0,
+            rows: 24,
+            columns: 80,
             theme: {},
         });
         await handleThemeChange(makeEvent("dracula"), term, makeMenuBar(), { current: "b3tty-dark" });
@@ -1627,8 +1881,8 @@ describe("handleThemeChange", () => {
             fontSize: 14,
             fontFamily: "monospace",
             cursorBlink: true,
-            rows: 0,
-            columns: 0,
+            rows: 24,
+            columns: 80,
             theme: {},
         });
         await handleThemeChange(makeEvent("dracula"), term, makeMenuBar(), { current: "b3tty-dark" });
@@ -1644,8 +1898,8 @@ describe("handleThemeChange", () => {
             fontSize: 14,
             fontFamily: "monospace",
             cursorBlink: true,
-            rows: 0,
-            columns: 0,
+            rows: 24,
+            columns: 80,
             theme: {},
         });
         const activeTheme = { current: "b3tty-dark" };
@@ -1696,8 +1950,8 @@ describe("handleThemeSelected", () => {
             fontSize: 14,
             fontFamily: "monospace",
             cursorBlink: true,
-            rows: 0,
-            columns: 0,
+            rows: 24,
+            columns: 80,
             theme: {},
             themeNames: ["b3tty-dark"],
             profileNames: [],
@@ -1916,8 +2170,8 @@ describe("handleThemeEdited", () => {
             fontSize: 14,
             fontFamily: "monospace",
             cursorBlink: true,
-            rows: 0,
-            columns: 0,
+            rows: 24,
+            columns: 80,
             theme: {},
             themeNames: ["b3tty-dark"],
             profileNames: [],
