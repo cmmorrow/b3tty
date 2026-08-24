@@ -17,6 +17,10 @@ import {
     withAlpha,
     setLight,
     setDark,
+    menuBarColors,
+    FONT_FALLBACK_STACK,
+    buildFontFamily,
+    buildFontFamilyCssVar,
     terminalFactory,
     buildDebugHooks,
     requireElement,
@@ -27,6 +31,7 @@ import {
     handleProfileChange,
     handleThemeSelected,
     handleThemeEdited,
+    applyResolvedTheme,
     applyThemeBroadcast,
 } from "./terminal.ts";
 import {
@@ -164,6 +169,27 @@ describe("setDark", () => {
 });
 
 // ---------------------------------------------------------------------------
+// menuBarColors
+// ---------------------------------------------------------------------------
+
+describe("menuBarColors", () => {
+    it("uses the theme foreground as bg and background as fg", () => {
+        expect(menuBarColors({ foreground: "#f8f8f2", background: "#282a36" })).toEqual({
+            bg: "#f8f8f2",
+            fg: "#282a36",
+        });
+    });
+
+    it("falls back to white/black when foreground/background are undefined", () => {
+        expect(menuBarColors({})).toEqual({ bg: "white", fg: "black" });
+    });
+
+    it("falls back to white/black when foreground/background are empty strings", () => {
+        expect(menuBarColors({ foreground: "", background: "" })).toEqual({ bg: "white", fg: "black" });
+    });
+});
+
+// ---------------------------------------------------------------------------
 // getProtocols
 // ---------------------------------------------------------------------------
 
@@ -275,6 +301,42 @@ describe("buildTheme", () => {
         const result = buildTheme({ red: "rgb(255, 0, 0)", blue: "hsl(240, 100%, 50%)" });
         expect(result.red).toBe("rgb(255, 0, 0)");
         expect(result.blue).toBe("hsl(240, 100%, 50%)");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// buildFontFamily
+// ---------------------------------------------------------------------------
+
+describe("buildFontFamily", () => {
+    it("appends the fallback stack after the configured font", () => {
+        expect(buildFontFamily("Fira Code")).toBe(`Fira Code, ${FONT_FALLBACK_STACK}`);
+    });
+
+    it("returns the fallback stack alone when fontFamily is undefined", () => {
+        expect(buildFontFamily(undefined)).toBe(FONT_FALLBACK_STACK);
+    });
+
+    it("returns the fallback stack alone when fontFamily is an empty string", () => {
+        expect(buildFontFamily("")).toBe(FONT_FALLBACK_STACK);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// buildFontFamilyCssVar
+// ---------------------------------------------------------------------------
+
+describe("buildFontFamilyCssVar", () => {
+    it("quotes the configured font family", () => {
+        expect(buildFontFamilyCssVar("Fira Code")).toBe(`"Fira Code", monospace`);
+    });
+
+    it("returns 'monospace' when fontFamily is undefined", () => {
+        expect(buildFontFamilyCssVar(undefined)).toBe("monospace");
+    });
+
+    it("returns 'monospace' when fontFamily is an empty string", () => {
+        expect(buildFontFamilyCssVar("")).toBe("monospace");
     });
 });
 
@@ -713,6 +775,87 @@ describe("handleSocketMessage", () => {
         const payload = JSON.stringify({ type: "settings", terminal: {} });
         handleSocketMessage({ data: payload }, decoder, term, undefined, undefined, onTheme);
         expect(onTheme).not.toHaveBeenCalled();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// applyResolvedTheme
+// ---------------------------------------------------------------------------
+
+describe("applyResolvedTheme", () => {
+    let savedDocument: unknown;
+
+    beforeEach(() => {
+        savedDocument = (globalThis as Record<string, unknown>)["document"];
+    });
+
+    afterEach(() => {
+        (globalThis as Record<string, unknown>)["document"] = savedDocument;
+    });
+
+    const baseConfig = {
+        tls: false,
+        uri: "localhost",
+        port: 8080,
+        fontSize: 14,
+        fontFamily: "monospace",
+        cursorBlink: true,
+        rows: 24,
+        columns: 80,
+        theme: {},
+    };
+
+    it("applies the theme colors to term.options.theme", () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const term = terminalFactory(baseConfig);
+        const activeTheme = { current: "b3tty-dark" };
+        applyResolvedTheme(
+            "solarized-light",
+            { hasBackgroundImage: false, foreground: "#657b83", background: "#fdf6e3" },
+            term,
+            activeTheme
+        );
+        expect(term.options.theme?.foreground).toBe("#657b83");
+        expect(term.options.theme?.background).toBe("#fdf6e3");
+    });
+
+    it("overrides theme background to transparent when hasBackgroundImage is true", () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const term = terminalFactory(baseConfig);
+        applyResolvedTheme("my-theme", { hasBackgroundImage: true, background: "#282a36" }, term, { current: "" });
+        expect(term.options.theme?.background).toBe("rgba(40, 42, 54, 0)");
+    });
+
+    it("updates activeTheme.current to the given name", () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const term = terminalFactory(baseConfig);
+        const activeTheme = { current: "b3tty-dark" };
+        applyResolvedTheme("dracula", { hasBackgroundImage: false }, term, activeTheme);
+        expect(activeTheme.current).toBe("dracula");
+    });
+
+    it("returns menu bar colors derived from the theme's foreground and background", () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const term = terminalFactory(baseConfig);
+        const colors = applyResolvedTheme(
+            "dracula",
+            { hasBackgroundImage: false, foreground: "#f8f8f2", background: "#282a36" },
+            term,
+            { current: "" }
+        );
+        expect(colors).toEqual({ bg: "#f8f8f2", fg: "#282a36" });
+    });
+
+    it("returns fallback menu bar colors when the theme has no foreground/background", () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const term = terminalFactory(baseConfig);
+        const colors = applyResolvedTheme("dracula", { hasBackgroundImage: false }, term, { current: "" });
+        expect(colors).toEqual({ bg: "white", fg: "black" });
     });
 });
 

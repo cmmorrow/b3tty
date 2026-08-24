@@ -19,14 +19,7 @@ import type {
 import { isValidHttpProtocol, isValidWsProtocol, isValidPort, isValidUri } from "./validators.ts";
 import { postSize, postThemeConfig, postAddTheme, getSettings } from "./api.ts";
 import "./components.ts";
-import type {
-    B3ttyDialog,
-    B3ttyMenuBar,
-    B3ttyThemePicker,
-    B3ttyThemeEditor,
-    B3ttyProfileEditor,
-    B3ttySettingsEditor,
-} from "./components.ts";
+import type { B3ttyDialog, B3ttyMenuBar, B3ttyThemePicker, MenuBarColors } from "./components.ts";
 import {
     isB3ttyDialog,
     isB3ttyMenuBar,
@@ -107,6 +100,14 @@ export function setDark(color: string | undefined): string {
 }
 
 /**
+ * Derives the menu bar's background/foreground colors from a theme's foreground
+ * and background colors, falling back to white/black when unset.
+ */
+export function menuBarColors(theme: { foreground?: string; background?: string }): MenuBarColors {
+    return { bg: setLight(theme.foreground), fg: setDark(theme.background) };
+}
+
+/**
  * Extracts defined theme color values from the config's theme object.
  * Only keys present in THEME_KEYS with truthy values are included.
  */
@@ -117,6 +118,27 @@ export function buildTheme(themeConfig: ThemeConfig | ThemeActivateResponse): IT
         if (val) theme[k] = val;
     }
     return theme as ITheme;
+}
+
+/**
+ * Fallback font stack appended after the user's configured font family.
+ */
+export const FONT_FALLBACK_STACK = "Menlo, DejaVu Sans Mono, Ubuntu Mono, Inconsolata, Fira, monospace";
+
+/**
+ * Builds the font-family value for xterm.js, appending FONT_FALLBACK_STACK after
+ * the configured font family (or using it alone when fontFamily is empty).
+ */
+export function buildFontFamily(fontFamily?: string): string {
+    return fontFamily ? `${fontFamily}, ${FONT_FALLBACK_STACK}` : FONT_FALLBACK_STACK;
+}
+
+/**
+ * Builds the value for the --b3tty-font-family CSS custom property, quoting the
+ * configured font family and falling back to "monospace" when empty.
+ */
+export function buildFontFamilyCssVar(fontFamily?: string): string {
+    return fontFamily ? `"${fontFamily}", monospace` : "monospace";
 }
 
 /**
@@ -131,9 +153,7 @@ export function buildTermOptions(
 ): ITerminalOptions & ITerminalInitOnlyOptions {
     const options: ITerminalOptions & ITerminalInitOnlyOptions = {
         cursorBlink: config.cursorBlink,
-        fontFamily: config.fontFamily
-            ? `${config.fontFamily}, Menlo, DejaVu Sans Mono, Ubuntu Mono, Inconsolata, Fira, monospace`
-            : `Menlo, DejaVu Sans Mono, Ubuntu Mono, Inconsolata, Fira, monospace`,
+        fontFamily: buildFontFamily(config.fontFamily),
         fontSize: config.fontSize,
     };
     if (allowTransparency) options.allowTransparency = true;
@@ -207,6 +227,29 @@ export function handleSocketMessage(
 }
 
 /**
+ * Applies a resolved theme (from a fetch response or WebSocket broadcast) to the
+ * live xterm.js Terminal and page styles, and updates activeTheme.current. Shared
+ * by every runtime theme-apply path so the "zero out background when a background
+ * image is configured" behavior stays in sync across all of them. Returns the
+ * menu bar colors derived from the theme so callers can apply them as needed.
+ */
+export function applyResolvedTheme(
+    name: string,
+    themeResp: ThemeActivateResponse,
+    term: Terminal,
+    activeTheme: { current: string }
+): MenuBarColors {
+    const builtTheme = buildTheme(themeResp);
+    if (themeResp.hasBackgroundImage) {
+        builtTheme.background = withAlpha(themeResp.background || "#000", 0);
+    }
+    term.options.theme = builtTheme;
+    applyThemeStyles(themeResp, themeResp.hasBackgroundImage);
+    activeTheme.current = name;
+    return menuBarColors(themeResp);
+}
+
+/**
  * Applies a theme received via WebSocket broadcast to the live terminal session.
  * Called when the server pushes a "theme" control message — for example when the
  * theme is changed via `b3tty theme set` from the CLI. Updates the xterm.js theme,
@@ -220,17 +263,8 @@ export function applyThemeBroadcast(
     menuBar: B3ttyMenuBar | null,
     activeTheme: { current: string }
 ): void {
-    const builtTheme = buildTheme(themeResp);
-    if (themeResp.hasBackgroundImage) {
-        builtTheme.background = withAlpha(themeResp.background || "#000", 0);
-    }
-    term.options.theme = builtTheme;
-    applyThemeStyles(themeResp, themeResp.hasBackgroundImage);
-    menuBar?.updateColors({
-        bg: setLight(themeResp.foreground),
-        fg: setDark(themeResp.background),
-    });
-    activeTheme.current = name;
+    const colors = applyResolvedTheme(name, themeResp, term, activeTheme);
+    menuBar?.updateColors(colors);
 }
 
 /**
@@ -289,6 +323,16 @@ export function requireElement(id: string): HTMLElement {
     const el = document.getElementById(id);
     if (!el) throw new Error(`Required element #${id} not found`);
     return el;
+}
+
+/**
+ * Returns the element with the given id if it exists and matches the given type
+ * guard, or null otherwise. Used to look up optional overlay components (theme
+ * picker/editor, profile/settings editors) that may be absent from the page.
+ */
+function getOverlay<T>(id: string, guard: (el: Element) => el is HTMLElement & T): (HTMLElement & T) | null {
+    const el = document.getElementById(id);
+    return el && guard(el) ? el : null;
 }
 
 /**
@@ -390,10 +434,7 @@ export function applyThemeStyles(
  */
 export function applyPageStyles(config: TermConfig): void {
     document.documentElement.style.setProperty("--b3tty-font-size", `${config.fontSize}px`);
-    document.documentElement.style.setProperty(
-        "--b3tty-font-family",
-        config.fontFamily ? `"${config.fontFamily}", monospace` : "monospace"
-    );
+    document.documentElement.style.setProperty("--b3tty-font-family", buildFontFamilyCssVar(config.fontFamily));
     applyThemeStyles(config.theme, !!config.backgroundImage);
 }
 
@@ -419,18 +460,7 @@ export async function handleThemeChange(
         return;
     }
 
-    const builtTheme = buildTheme(newTheme);
-    if (newTheme.hasBackgroundImage) {
-        builtTheme.background = withAlpha(newTheme.background || "#000", 0);
-    }
-    term.options.theme = builtTheme;
-
-    applyThemeStyles(newTheme, newTheme.hasBackgroundImage);
-    menuBar.updateColors({
-        bg: setLight(newTheme.foreground),
-        fg: setDark(newTheme.background),
-    });
-    activeTheme.current = name;
+    menuBar.updateColors(applyResolvedTheme(name, newTheme, term, activeTheme));
 }
 
 /**
@@ -442,6 +472,25 @@ export function handleProfileChange(e: Event): void {
     const params = new URLSearchParams(window.location.search);
     params.set("profile", name);
     window.open(`/?${params.toString()}`, "_blank");
+}
+
+/**
+ * Refreshes the menu bar after a theme change that may have added a new theme to
+ * the Themes menu. When the response includes an updated themeNames list, config
+ * and the menu bar are rebuilt with it; otherwise only the menu bar colors are updated.
+ */
+function refreshMenuBarThemeNames(
+    newTheme: ThemeActivateResponse,
+    menuBar: B3ttyMenuBar,
+    config: TermConfig,
+    colors: MenuBarColors
+): void {
+    if (newTheme.themeNames) {
+        config.themeNames = newTheme.themeNames;
+        menuBar.setup(config.themeNames, config.profileNames ?? [], colors);
+    } else {
+        menuBar.updateColors(colors);
+    }
 }
 
 /**
@@ -470,25 +519,8 @@ export async function handleThemeSelected(
     }
     picker.close();
 
-    const builtTheme = buildTheme(newTheme);
-    if (newTheme.hasBackgroundImage) {
-        builtTheme.background = withAlpha(newTheme.background || "#000", 0);
-    }
-    term.options.theme = builtTheme;
-    applyThemeStyles(newTheme, newTheme.hasBackgroundImage);
-    if (newTheme.themeNames) {
-        config.themeNames = newTheme.themeNames;
-        menuBar.setup(config.themeNames, config.profileNames ?? [], {
-            bg: setLight(newTheme.foreground),
-            fg: setDark(newTheme.background),
-        });
-    } else {
-        menuBar.updateColors({
-            bg: setLight(newTheme.foreground),
-            fg: setDark(newTheme.background),
-        });
-    }
-    activeTheme.current = name;
+    const colors = applyResolvedTheme(name, newTheme, term, activeTheme);
+    refreshMenuBarThemeNames(newTheme, menuBar, config, colors);
 }
 
 /**
@@ -498,10 +530,7 @@ export async function handleThemeSelected(
 export async function handleProfileEdited(e: Event, menuBar: B3ttyMenuBar, config: TermConfig): Promise<void> {
     const { response } = (e as CustomEvent<{ name: string | null; response: EditProfileResponse }>).detail;
     config.profileNames = response.profileNames;
-    menuBar.setup(config.themeNames ?? [], config.profileNames, {
-        bg: setLight(config.theme.foreground),
-        fg: setDark(config.theme.background),
-    });
+    menuBar.setup(config.themeNames ?? [], config.profileNames, menuBarColors(config.theme));
 }
 
 /**
@@ -518,29 +547,12 @@ export async function handleThemeEdited(
 ): Promise<void> {
     const { name, response: newTheme } = (e as CustomEvent<{ name: string; response: ThemeActivateResponse }>).detail;
 
-    const builtTheme = buildTheme(newTheme);
-    if (newTheme.hasBackgroundImage) {
-        builtTheme.background = withAlpha(newTheme.background || "#000", 0);
-    }
-    term.options.theme = builtTheme;
-    applyThemeStyles(newTheme, newTheme.hasBackgroundImage);
+    const colors = applyResolvedTheme(name, newTheme, term, activeTheme);
 
-    if (newTheme.themeNames) {
-        config.themeNames = newTheme.themeNames;
-        if (!config.allThemeNames?.includes(name)) {
-            config.allThemeNames = [...(config.allThemeNames ?? []), name].sort();
-        }
-        menuBar.setup(config.themeNames, config.profileNames ?? [], {
-            bg: setLight(newTheme.foreground),
-            fg: setDark(newTheme.background),
-        });
-    } else {
-        menuBar.updateColors({
-            bg: setLight(newTheme.foreground),
-            fg: setDark(newTheme.background),
-        });
+    if (newTheme.themeNames && !config.allThemeNames?.includes(name)) {
+        config.allThemeNames = [...(config.allThemeNames ?? []), name].sort();
     }
-    activeTheme.current = name;
+    refreshMenuBarThemeNames(newTheme, menuBar, config, colors);
 }
 
 /**
@@ -552,8 +564,8 @@ export async function handleThemeEdited(
 export function applyTerminalSettings(t: SettingsTerminalConfig, term: Terminal, config: TermConfig): void {
     term.options.cursorBlink = t.cursorBlink;
     if (t.fontFamily) {
-        term.options.fontFamily = `${t.fontFamily}, Menlo, DejaVu Sans Mono, Ubuntu Mono, Inconsolata, Fira, monospace`;
-        document.documentElement.style.setProperty("--b3tty-font-family", `"${t.fontFamily}", monospace`);
+        term.options.fontFamily = buildFontFamily(t.fontFamily);
+        document.documentElement.style.setProperty("--b3tty-font-family", buildFontFamilyCssVar(t.fontFamily));
     }
     if (t.fontSize > 0) {
         term.options.fontSize = t.fontSize;
@@ -626,6 +638,10 @@ export async function main(config: TermConfig): Promise<void> {
     const decoder = new TextDecoder("utf-8");
     const { onBeforeSend, writeCallback } = buildDebugHooks(!!config.debug);
 
+    // refit re-fits the terminal to its container on the next animation frame —
+    // used after layout-affecting changes such as menu bar open/close or settings edits.
+    const refit = () => requestAnimationFrame(() => fitAddon?.fit());
+
     let menuBar: (HTMLElement & B3ttyMenuBar) | null = null;
     const activeTheme = { current: config.activeTheme ?? "" };
 
@@ -640,7 +656,7 @@ export async function main(config: TermConfig): Promise<void> {
             writeCallback,
             (t) => {
                 applyTerminalSettings(t, term, config);
-                requestAnimationFrame(() => fitAddon?.fit());
+                refit();
             },
             (name, themeResp) => {
                 applyThemeBroadcast(name, themeResp, term, menuBar, activeTheme);
@@ -666,28 +682,17 @@ export async function main(config: TermConfig): Promise<void> {
     if (menuBarEl) {
         if (!isB3ttyMenuBar(menuBarEl)) throw new Error("Element #menubar is not a B3ttyMenuBar");
         menuBar = menuBarEl;
-        menuBar.setup(config.themeNames ?? [], config.profileNames ?? [], {
-            bg: setLight(config.theme.foreground),
-            fg: setDark(config.theme.background),
-        });
+        menuBar.setup(config.themeNames ?? [], config.profileNames ?? [], menuBarColors(config.theme));
 
-        menuBarEl.addEventListener("b3tty-menubar-open", () => requestAnimationFrame(() => fitAddon?.fit()), {
-            signal,
-        });
-        menuBarEl.addEventListener("b3tty-menubar-close", () => requestAnimationFrame(() => fitAddon?.fit()), {
-            signal,
-        });
+        menuBarEl.addEventListener("b3tty-menubar-open", refit, { signal });
+        menuBarEl.addEventListener("b3tty-menubar-close", refit, { signal });
 
-        menuBarEl.addEventListener("b3tty-theme-change", (e) => handleThemeChange(e, term, menuBar, activeTheme), {
+        menuBarEl.addEventListener("b3tty-theme-change", (e) => handleThemeChange(e, term, menuBarEl, activeTheme), {
             signal,
         });
         menuBarEl.addEventListener("b3tty-profile-change", handleProfileChange, { signal });
 
-        const pickerEl = document.getElementById("theme-picker");
-        let picker: (HTMLElement & B3ttyThemePicker) | null = null;
-        if (pickerEl && isB3ttyThemePicker(pickerEl)) {
-            picker = pickerEl;
-        }
+        const picker = getOverlay("theme-picker", isB3ttyThemePicker);
 
         menuBarEl.addEventListener(
             "b3tty-open-theme-selector",
@@ -700,16 +705,12 @@ export async function main(config: TermConfig): Promise<void> {
         if (picker) {
             picker.addEventListener(
                 "b3tty-theme-selected",
-                (e) => handleThemeSelected(e, term, menuBar, picker!, config, activeTheme),
+                (e) => handleThemeSelected(e, term, menuBarEl, picker!, config, activeTheme),
                 { signal }
             );
         }
 
-        const editorEl = document.getElementById("theme-editor");
-        let editor: (HTMLElement & B3ttyThemeEditor) | null = null;
-        if (editorEl && isB3ttyThemeEditor(editorEl)) {
-            editor = editorEl;
-        }
+        const editor = getOverlay("theme-editor", isB3ttyThemeEditor);
 
         menuBarEl.addEventListener(
             "b3tty-open-theme-editor",
@@ -722,16 +723,12 @@ export async function main(config: TermConfig): Promise<void> {
         if (editor) {
             editor.addEventListener(
                 "b3tty-theme-edited",
-                (e) => handleThemeEdited(e, term, menuBar, config, activeTheme),
+                (e) => handleThemeEdited(e, term, menuBarEl, config, activeTheme),
                 { signal }
             );
         }
 
-        const profileEditorEl = document.getElementById("profile-editor");
-        let profileEditor: (HTMLElement & B3ttyProfileEditor) | null = null;
-        if (profileEditorEl && isB3ttyProfileEditor(profileEditorEl)) {
-            profileEditor = profileEditorEl;
-        }
+        const profileEditor = getOverlay("profile-editor", isB3ttyProfileEditor);
 
         menuBarEl.addEventListener(
             "b3tty-open-profile-editor",
@@ -743,16 +740,12 @@ export async function main(config: TermConfig): Promise<void> {
         );
 
         if (profileEditor) {
-            profileEditor.addEventListener("b3tty-profile-edited", (e) => handleProfileEdited(e, menuBar, config), {
+            profileEditor.addEventListener("b3tty-profile-edited", (e) => handleProfileEdited(e, menuBarEl, config), {
                 signal,
             });
         }
 
-        const settingsEditorEl = document.getElementById("settings-editor");
-        let settingsEditor: (HTMLElement & B3ttySettingsEditor) | null = null;
-        if (settingsEditorEl && isB3ttySettingsEditor(settingsEditorEl)) {
-            settingsEditor = settingsEditorEl;
-        }
+        const settingsEditor = getOverlay("settings-editor", isB3ttySettingsEditor);
 
         menuBarEl.addEventListener(
             "b3tty-open-settings-editor",
@@ -769,7 +762,7 @@ export async function main(config: TermConfig): Promise<void> {
                 "b3tty-settings-edited",
                 (e) => {
                     handleSettingsEdited(e, term, config);
-                    requestAnimationFrame(() => fitAddon?.fit());
+                    refit();
                 },
                 {
                     signal,

@@ -76,6 +76,17 @@ func GetBuiltinTheme(name string) (map[string]any, bool) {
 	return colors, ok
 }
 
+// sortedThemeNames returns the names of all user-defined themes in ts.Themes,
+// sorted alphabetically.
+func (ts *TerminalServer) sortedThemeNames() []string {
+	names := make([]string, 0, len(ts.Themes))
+	for name := range ts.Themes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // themePaletteHandler serves a GET /theme?name=<name> request for any built-in or
 // user-defined theme and returns a themePaletteResponse JSON payload shaped for the
 // theme selector components.
@@ -121,14 +132,7 @@ func (ts *TerminalServer) themePaletteHandler(w http.ResponseWriter, r *http.Req
 		Normal: normal,
 		Bright: bright,
 	}
-	buf, err := json.Marshal(resp)
-	if err != nil {
-		Errorf("theme response error: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(buf)
+	writeJSON(w, resp, "theme")
 }
 
 // themeConfigHandler serves GET and POST /theme-config?name=<themename>.
@@ -149,9 +153,7 @@ func (ts *TerminalServer) themeConfigHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if r.Method == "POST" {
-		if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
-			Warnf("%s %s: forbidden: cross-origin request from Sec-Fetch-Site %q", r.Method, r.URL.Path, site)
-			w.WriteHeader(http.StatusForbidden)
+		if requireSameOrigin(w, r) {
 			return
 		}
 	}
@@ -194,10 +196,7 @@ func (ts *TerminalServer) themeConfigHandler(w http.ResponseWriter, r *http.Requ
 	if r.Method == "POST" {
 		ts.broadcastTheme(name, resp)
 	}
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		Errorf("theme-config response error: %v", err)
-	}
+	writeJSON(w, resp, "theme-config")
 }
 
 // addThemeHandler applies a chosen theme and persists it to conf.yaml.
@@ -208,9 +207,7 @@ func (ts *TerminalServer) addThemeHandler(w http.ResponseWriter, r *http.Request
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
-		Warnf("%s %s: forbidden: cross-origin request from Sec-Fetch-Site %q", r.Method, r.URL.Path, site)
-		w.WriteHeader(http.StatusForbidden)
+	if requireSameOrigin(w, r) {
 		return
 	}
 
@@ -228,9 +225,6 @@ func (ts *TerminalServer) addThemeHandler(w http.ResponseWriter, r *http.Request
 	var colors map[string]any
 	if builtinColors, ok := builtinThemes[req.Theme]; ok {
 		colors = builtinColors
-		if ts.Themes == nil {
-			ts.Themes = make(map[string]Theme)
-		}
 		if _, exists := ts.Themes[req.Theme]; !exists {
 			var t Theme
 			t.MapToTheme(colors)
@@ -254,20 +248,12 @@ func (ts *TerminalServer) addThemeHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	Debugf("added theme %q", req.Theme)
-	themeNames := make([]string, 0, len(ts.Themes))
-	for name := range ts.Themes {
-		themeNames = append(themeNames, name)
-	}
-	sort.Strings(themeNames)
 	resp := themeConfigResponse{
 		Theme:              ts.Client.Theme,
 		HasBackgroundImage: ts.Client.Theme.BackgroundImage != "",
-		ThemeNames:         themeNames,
+		ThemeNames:         ts.sortedThemeNames(),
 	}
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		Errorf("add-theme response error: %v", err)
-	}
+	writeJSON(w, resp, "add-theme")
 }
 
 // editThemeHandler creates or overwrites a user-defined theme and activates it.
@@ -278,9 +264,7 @@ func (ts *TerminalServer) editThemeHandler(w http.ResponseWriter, r *http.Reques
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
-		Warnf("%s %s: forbidden: cross-origin request from Sec-Fetch-Site %q", r.Method, r.URL.Path, site)
-		w.WriteHeader(http.StatusForbidden)
+	if requireSameOrigin(w, r) {
 		return
 	}
 
@@ -305,9 +289,6 @@ func (ts *TerminalServer) editThemeHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if ts.Themes == nil {
-		ts.Themes = make(map[string]Theme)
-	}
 	if existing, ok := ts.Themes[req.Name]; ok && existing.BackgroundImage != "" {
 		req.Theme.BackgroundImage = existing.BackgroundImage
 	}
@@ -322,18 +303,10 @@ func (ts *TerminalServer) editThemeHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	Debugf("saved theme %q", req.Name)
-	themeNames := make([]string, 0, len(ts.Themes))
-	for name := range ts.Themes {
-		themeNames = append(themeNames, name)
-	}
-	sort.Strings(themeNames)
 	resp := themeConfigResponse{
-		Theme:             req.Theme,
+		Theme:              req.Theme,
 		HasBackgroundImage: req.Theme.BackgroundImage != "",
-		ThemeNames:        themeNames,
+		ThemeNames:         ts.sortedThemeNames(),
 	}
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		Errorf("edit-theme response error: %v", err)
-	}
+	writeJSON(w, resp, "edit-theme")
 }

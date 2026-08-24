@@ -3,7 +3,6 @@ package src
 import (
 	_ "embed"
 	"encoding/json"
-	"io"
 	"net/http"
 	"text/template"
 )
@@ -72,17 +71,16 @@ func (ts *TerminalServer) saveConfigHandler(w http.ResponseWriter, r *http.Reque
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
-		Warnf("%s %s: forbidden: cross-origin request from Sec-Fetch-Site %q", r.Method, r.URL.Path, site)
-		w.WriteHeader(http.StatusForbidden)
+	if requireSameOrigin(w, r) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, MAX_REQUEST_BODY_SIZE)
 	var req struct {
 		Theme string `json:"theme"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, MAX_REQUEST_BODY_SIZE)).Decode(&req); err != nil {
-		Warn("request body size exceeding limit")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		Warnf("%s %s: bad request: %v", r.Method, r.URL.Path, err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -105,9 +103,6 @@ func (ts *TerminalServer) saveConfigHandler(w http.ResponseWriter, r *http.Reque
 		ts.Client.Theme.MapToTheme(themeColors)
 		// Register the selected theme in ts.Themes so it appears in the Themes
 		// menu after the browser reloads into the normal terminal flow.
-		if ts.Themes == nil {
-			ts.Themes = make(map[string]Theme)
-		}
 		ts.Themes[req.Theme] = ts.Client.Theme
 		ts.ActiveTheme = req.Theme
 		Infof("created default %s theme config", req.Theme)

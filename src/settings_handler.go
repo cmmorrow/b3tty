@@ -90,7 +90,7 @@ func (ts *TerminalServer) settingsHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	if r.Method == "GET" {
-		resp := settingsConfigResponse{
+		writeJSON(w, settingsConfigResponse{
 			Server: SettingsServerConfig{
 				Port:      ts.Server.Port,
 				NoAuth:    ts.Server.NoAuth,
@@ -104,18 +104,12 @@ func (ts *TerminalServer) settingsHandler(w http.ResponseWriter, r *http.Request
 				Rows:        ts.Client.Rows,
 				Columns:     ts.Client.Columns,
 			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			Errorf("settings response error: %v", err)
-		}
+		}, "settings")
 		return
 	}
 
 	// POST
-	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
-		Warnf("%s %s: forbidden: cross-origin request from Sec-Fetch-Site %q", r.Method, r.URL.Path, site)
-		w.WriteHeader(http.StatusForbidden)
+	if requireSameOrigin(w, r) {
 		return
 	}
 
@@ -169,7 +163,7 @@ func (ts *TerminalServer) settingsHandler(w http.ResponseWriter, r *http.Request
 	Debugf("saved settings: server.port=%d noAuth=%v noBrowser=%v terminal.fontSize=%d",
 		req.Server.Port, req.Server.NoAuth, req.Server.NoBrowser, req.Terminal.FontSize)
 
-	resp := settingsConfigResponse{
+	writeJSON(w, settingsConfigResponse{
 		Server: SettingsServerConfig{
 			Port:      ts.Server.Port,
 			NoAuth:    ts.Server.NoAuth,
@@ -183,9 +177,5 @@ func (ts *TerminalServer) settingsHandler(w http.ResponseWriter, r *http.Request
 			Rows:        ts.Client.Rows,
 			Columns:     ts.Client.Columns,
 		},
-	}
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		Errorf("settings response error: %v", err)
-	}
+	}, "settings")
 }

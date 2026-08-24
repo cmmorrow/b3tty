@@ -10,7 +10,7 @@ import (
 // GET /profile-config?name=<name>
 func (ts *TerminalServer) profileConfigHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "GET" {
-		Warnf("%s %s: method not allowed", r.Method, r.URL.Path)
+		Warnf("%s %s: method not allowed: %s", r.Method, r.URL.Path, r.Method)
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
@@ -36,10 +36,7 @@ func (ts *TerminalServer) profileConfigHandler(w http.ResponseWriter, r *http.Re
 	if resp.Commands == nil {
 		resp.Commands = []string{}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		Errorf("profile-config response error: %v", err)
-	}
+	writeJSON(w, resp, "profile-config")
 }
 
 // editProfileHandler creates or overwrites a user-defined profile and persists it.
@@ -47,13 +44,11 @@ func (ts *TerminalServer) profileConfigHandler(w http.ResponseWriter, r *http.Re
 // The profile is saved to config but NOT activated.
 func (ts *TerminalServer) editProfileHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
-		Warnf("%s %s: method not allowed", r.Method, r.URL.Path)
+		Warnf("%s %s: method not allowed: %s", r.Method, r.URL.Path, r.Method)
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
-		Warnf("%s %s: forbidden: cross-origin request from Sec-Fetch-Site %q", r.Method, r.URL.Path, site)
-		w.WriteHeader(http.StatusForbidden)
+	if requireSameOrigin(w, r) {
 		return
 	}
 
@@ -96,23 +91,18 @@ func (ts *TerminalServer) editProfileHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	Debugf("saved profile %q", req.Name)
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(editProfileResponse{ProfileNames: nonDefaultProfileNames(ts.Profiles)}); err != nil {
-		Errorf("edit-profile response error: %v", err)
-	}
+	writeJSON(w, editProfileResponse{ProfileNames: nonDefaultProfileNames(ts.Profiles)}, "edit-profile")
 }
 
 // deleteProfileHandler removes a non-default profile from memory and the config file.
 // POST /delete-profile  body: {"name":"<name>"}
 func (ts *TerminalServer) deleteProfileHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
-		Warnf("%s %s: method not allowed", r.Method, r.URL.Path)
+		Warnf("%s %s: method not allowed: %s", r.Method, r.URL.Path, r.Method)
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
-		Warnf("%s %s: forbidden: cross-origin request from Sec-Fetch-Site %q", r.Method, r.URL.Path, site)
-		w.WriteHeader(http.StatusForbidden)
+	if requireSameOrigin(w, r) {
 		return
 	}
 
@@ -140,10 +130,7 @@ func (ts *TerminalServer) deleteProfileHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	Debugf("deleted profile %q", req.Name)
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(editProfileResponse{ProfileNames: nonDefaultProfileNames(ts.Profiles)}); err != nil {
-		Errorf("delete-profile response error: %v", err)
-	}
+	writeJSON(w, editProfileResponse{ProfileNames: nonDefaultProfileNames(ts.Profiles)}, "delete-profile")
 }
 
 // nonDefaultProfileNames returns a sorted slice of all profile names except "default".

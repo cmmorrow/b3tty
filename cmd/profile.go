@@ -7,7 +7,6 @@ import (
 
 	"github.com/cmmorrow/b3tty/src"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 var (
@@ -125,7 +124,7 @@ Changes are persisted immediately but do not affect any running b3tty session.`,
 			cmdLog.Fatalf("cannot modify the %q profile", src.DEFAULT_PROFILE_NAME)
 		}
 
-		configPath := viper.ConfigFileUsed()
+		configPath := resolveConfigPath()
 
 		shell := src.DEFAULT_SHELL
 		dir := src.DEFAULT_WORKING_DIRECTORY
@@ -175,7 +174,7 @@ var profileDeleteCmd = &cobra.Command{
 			cmdLog.Fatalf("cannot delete the %q profile", src.DEFAULT_PROFILE_NAME)
 		}
 
-		configPath := viper.ConfigFileUsed()
+		configPath := resolveConfigPath()
 		if err := src.DeleteProfileFromConfig(configPath, name); err != nil {
 			cmdLog.Fatalf("failed to delete profile: %v", err)
 		}

@@ -24,11 +24,7 @@ var themeListCmd = &cobra.Command{
 
 		fmt.Println("Built-in themes:")
 		for _, name := range src.GetBuiltinThemeNames() {
-			marker := "  "
-			if name == activeTheme {
-				marker = "* "
-			}
-			fmt.Printf("  %s%s\n", marker, name)
+			printTheme(name, activeTheme)
 		}
 
 		builtinSet := make(map[string]bool)
@@ -37,28 +33,23 @@ var themeListCmd = &cobra.Command{
 		}
 
 		var userNames []string
-		if configPath := viper.ConfigFileUsed(); configPath != "" {
-			names, err := src.ReadThemeNames(configPath)
-			if err != nil {
-				cmdLog.Warnf("could not read user themes: %v", err)
-			} else {
-				for _, name := range names {
-					if !builtinSet[name] {
-						userNames = append(userNames, name)
-					}
+		configPath := resolveConfigPath()
+		names, err := src.ReadThemeNames(configPath)
+		if err != nil {
+			cmdLog.Warnf("could not read user themes: %v", err)
+		} else {
+			for _, name := range names {
+				if !builtinSet[name] {
+					userNames = append(userNames, name)
 				}
-				sort.Strings(userNames)
 			}
+			sort.Strings(userNames)
 		}
 
 		if len(userNames) > 0 {
 			fmt.Println("\nUser-defined themes:")
 			for _, name := range userNames {
-				marker := "  "
-				if name == activeTheme {
-					marker = "* "
-				}
-				fmt.Printf("  %s%s\n", marker, name)
+				printTheme(name, activeTheme)
 			}
 		}
 
@@ -79,7 +70,7 @@ Changes take effect the next time b3tty is started.`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		name := args[0]
-		configPath := viper.ConfigFileUsed()
+		configPath := resolveConfigPath()
 
 		colors, isBuiltin := src.GetBuiltinTheme(name)
 		if !isBuiltin {
@@ -105,6 +96,14 @@ Changes take effect the next time b3tty is started.`,
 		cmdLog.Infof("active theme set to %q", name)
 		postToRunningServer(port, fmt.Sprintf("/theme-config?name=%s", url.QueryEscape(name)), struct{}{})
 	},
+}
+
+func printTheme(name, activeTheme string) {
+	marker := "  "
+	if name == activeTheme {
+		marker = "* "
+	}
+	fmt.Printf("  %s%s\n", marker, name)
 }
 
 func init() {

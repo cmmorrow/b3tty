@@ -71,6 +71,27 @@ func buildConfigJSON(srv *Server, clnt *Client, thm *Theme, themeNames []string,
 	return json.Marshal(cfg)
 }
 
+// requireSameOrigin writes 403 and returns true when the request carries a
+// cross-origin Sec-Fetch-Site header. Callers should return immediately when
+// this returns true.
+func requireSameOrigin(w http.ResponseWriter, r *http.Request) bool {
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
+		Warnf("%s %s: forbidden: cross-origin request from Sec-Fetch-Site %q", r.Method, r.URL.Path, site)
+		w.WriteHeader(http.StatusForbidden)
+		return true
+	}
+	return false
+}
+
+// writeJSON sets Content-Type to application/json and JSON-encodes v into w.
+// Encode errors are logged at ERROR level prefixed with errContext.
+func writeJSON(w http.ResponseWriter, v any, errContext string) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		Errorf("%s response error: %v", errContext, err)
+	}
+}
+
 // setSizeHandler accepts a POST request whose query string carries "cols" and "rows",
 // storing the parsed values for use when the next pty session is started.
 func (ts *TerminalServer) setSizeHandler(w http.ResponseWriter, r *http.Request) {
@@ -81,15 +102,7 @@ func (ts *TerminalServer) setSizeHandler(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	// CSRF protection via Fetch Metadata: browsers attach Sec-Fetch-Site
-	// automatically and scripts cannot forge it. Only same-origin fetches (the
-	// normal case from terminal.mjs) carry "same-origin"; cross-origin CSRF
-	// attempts will carry "cross-site" or "same-site" and are rejected.
-	// An absent header indicates a non-browser client (e.g. curl), which is
-	// allowed because it cannot be issued by a malicious web page.
-	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
-		Warnf("%s %s: forbidden: cross-origin request from Sec-Fetch-Site %q", r.Method, r.URL.Path, site)
-		w.WriteHeader(http.StatusForbidden)
+	if requireSameOrigin(w, r) {
 		return
 	}
 	ts.OrgCols, ts.OrgRows = parseSizeParams(r.URL.Query())
@@ -162,11 +175,7 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	Debugf("resolved profile name: %s", ts.ProfileName)
 	profile := ts.Profiles[ts.ProfileName]
 
-	themeNames := make([]string, 0, len(ts.Themes))
-	for name := range ts.Themes {
-		themeNames = append(themeNames, name)
-	}
-	sort.Strings(themeNames)
+	themeNames := ts.sortedThemeNames()
 	Debugf("Theme names: %s", strings.Join(themeNames, ", "))
 
 	// allThemeNames is the union of built-in and user-defined theme names, used

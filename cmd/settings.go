@@ -40,11 +40,6 @@ var settingsGetCmd = &cobra.Command{
 	Use:   "get",
 	Short: "Show current settings from the config file",
 	Run: func(cmd *cobra.Command, args []string) {
-		currentCursorBlink := src.DEFAULT_CURSOR_BLINK
-		if viper.IsSet("terminal.cursor-blink") {
-			currentCursorBlink = viper.GetBool("terminal.cursor-blink")
-		}
-
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(w, "Server:")
 		fmt.Fprintf(w, "  port:\t%d\n", port)
@@ -53,7 +48,7 @@ var settingsGetCmd = &cobra.Command{
 		fmt.Fprintln(w, "\nTerminal:")
 		fmt.Fprintf(w, "  font-family:\t%s\n", fontFamily)
 		fmt.Fprintf(w, "  font-size:\t%d\n", fontSize)
-		fmt.Fprintf(w, "  cursor-blink:\t%v\n", currentCursorBlink)
+		fmt.Fprintf(w, "  cursor-blink:\t%v\n", viperCursorBlink())
 		fmt.Fprintf(w, "  auto-resize:\t%v\n", autoResize)
 		if viper.IsSet("terminal.rows") {
 			fmt.Fprintf(w, "  rows:\t%d\n", rows)
@@ -79,17 +74,14 @@ and cursor-blink apply to live sessions immediately.`,
 			cmdLog.Fatal("no settings specified; run 'b3tty settings set --help' to see available flags")
 		}
 
-		configPath := viper.ConfigFileUsed()
+		configPath := resolveConfigPath()
 
 		currentPort := port
 		currentNoAuth := noAuth
 		currentNoBrowser := noBrowser
 		currentFontFamily := fontFamily
 		currentFontSize := fontSize
-		currentCursorBlink := src.DEFAULT_CURSOR_BLINK
-		if viper.IsSet("terminal.cursor-blink") {
-			currentCursorBlink = viper.GetBool("terminal.cursor-blink")
-		}
+		currentCursorBlink := viperCursorBlink()
 		currentAutoResize := autoResize
 		currentRows := rows
 		currentColumns := columns
@@ -172,17 +164,7 @@ var settingsEditCmd = &cobra.Command{
 	Use:   "edit",
 	Short: "Open the config file in an editor",
 	Run: func(cmd *cobra.Command, args []string) {
-		configPath := viper.ConfigFileUsed()
-		if cfgFile != "" {
-			configPath = cfgFile
-		}
-		if configPath == "" {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				cmdLog.Fatalf("could not determine home directory: %v", err)
-			}
-			configPath = filepath.Join(home, src.DOT_CONFIG_PATH, src.B3TTY_CONFIG_PATH, src.CONFIG_FILE_NAME)
-		}
+		configPath := resolveConfigPath()
 
 		editor := editEditor
 		if editor == "" {
@@ -247,6 +229,29 @@ func notifyRunningServer(serverPort int, serverCfg src.SettingsServerConfig, ter
 		Terminal src.SettingsTerminalConfig `json:"terminal"`
 	}{Server: serverCfg, Terminal: terminalCfg}
 	postToRunningServer(serverPort, "/settings", payload)
+}
+
+// resolveConfigPath returns the active config file path, falling back to the
+// default location (~/.config/b3tty/conf.yaml) when no config file was loaded.
+func resolveConfigPath() string {
+	if p := viper.ConfigFileUsed(); p != "" {
+		return p
+	}
+	if cfgFile != "" {
+		return cfgFile
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		cmdLog.Fatalf("could not determine home directory: %v", err)
+	}
+	return filepath.Join(home, src.DOT_CONFIG_PATH, src.B3TTY_CONFIG_PATH, src.CONFIG_FILE_NAME)
+}
+
+func viperCursorBlink() bool {
+	if viper.IsSet("terminal.cursor-blink") {
+		return viper.GetBool("terminal.cursor-blink")
+	}
+	return src.DEFAULT_CURSOR_BLINK
 }
 
 func anySettingFlagChanged(cmd *cobra.Command) bool {

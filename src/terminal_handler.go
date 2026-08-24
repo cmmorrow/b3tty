@@ -2,9 +2,11 @@ package src
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -78,6 +80,7 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer ws.Close()
+	connectedAt := time.Now()
 
 	client := &wsClient{conn: ws}
 	ts.WSClientsMu.Lock()
@@ -135,7 +138,14 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 				default:
 					switch err.(type) {
 					case *websocket.CloseError:
-						Warn("cannot read from websocket: unexpectedly closed")
+						// Connections dropped in under 3 seconds are almost always
+						// browser speculative loads (e.g. Safari paste-to-address-bar
+						// prefetch) rather than genuine session failures.
+						if time.Since(connectedAt) < 3*time.Second {
+							Debugf("websocket closed after %s (likely speculative browser load)", time.Since(connectedAt).Round(time.Millisecond))
+						} else {
+							Warn("cannot read from websocket: unexpectedly closed")
+						}
 					default:
 						Errorf("websocket read: %v", err)
 					}
@@ -159,7 +169,11 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 			}
 			_, err = ptmx.Write(message)
 			if err != nil {
-				Errorf("write to pty: %v", err)
+				if errors.Is(err, os.ErrClosed) {
+					Debugf("write to pty: %v", err)
+				} else {
+					Errorf("write to pty: %v", err)
+				}
 				ptmx.Close()
 				break
 			}
@@ -202,7 +216,11 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 		for _, command := range profile.Commands {
 			_, err = ptmx.Write(formatCommand(command))
 			if err != nil {
-				Errorf("write to pty: %v", err)
+				if errors.Is(err, os.ErrClosed) {
+					Debugf("write to pty: %v", err)
+				} else {
+					Errorf("write to pty: %v", err)
+				}
 				ptmx.Close()
 				return
 			}

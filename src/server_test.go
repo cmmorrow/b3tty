@@ -57,6 +57,7 @@ func newTestTerminalServer() *TerminalServer {
 			"default": {Title: "b3tty", Shell: "/bin/bash"},
 			"work":    {Title: "Work Terminal", Shell: "/bin/zsh"},
 		},
+		Themes:         map[string]Theme{},
 		Token:          "test-token-1234",
 		OrgCols:        DEFAULT_COLS,
 		OrgRows:        DEFAULT_ROWS,
@@ -711,6 +712,92 @@ func TestAuthBackoffDelay(t *testing.T) {
 			assert.Equal(t, tt.expected, authBackoffDelay(tt.attempts))
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// requireSameOrigin
+// ---------------------------------------------------------------------------
+
+func TestRequireSameOrigin(t *testing.T) {
+	t.Run("absent Sec-Fetch-Site header allows the request", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/test", nil)
+		w := httptest.NewRecorder()
+		rejected := requireSameOrigin(w, req)
+		assert.False(t, rejected)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("same-origin header allows the request", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/test", nil)
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		w := httptest.NewRecorder()
+		rejected := requireSameOrigin(w, req)
+		assert.False(t, rejected)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("cross-site header rejects with 403", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/test", nil)
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		w := httptest.NewRecorder()
+		var rejected bool
+		logged := captureLog(func() { rejected = requireSameOrigin(w, req) })
+		assert.True(t, rejected)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, logged, "forbidden")
+		assert.Contains(t, logged, "cross-site")
+	})
+
+	t.Run("same-site header rejects with 403", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/test", nil)
+		req.Header.Set("Sec-Fetch-Site", "same-site")
+		w := httptest.NewRecorder()
+		var rejected bool
+		logged := captureLog(func() { rejected = requireSameOrigin(w, req) })
+		assert.True(t, rejected)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, logged, "forbidden")
+		assert.Contains(t, logged, "same-site")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// writeJSON
+// ---------------------------------------------------------------------------
+
+func TestWriteJSON(t *testing.T) {
+	t.Run("sets Content-Type to application/json", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		writeJSON(w, map[string]string{"key": "value"}, "test")
+		assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+	})
+
+	t.Run("encodes the value as JSON in the response body", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		writeJSON(w, map[string]int{"count": 42}, "test")
+		var got map[string]int
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&got))
+		assert.Equal(t, 42, got["count"])
+	})
+
+	t.Run("encodes a struct value correctly", func(t *testing.T) {
+		type payload struct {
+			Name string `json:"name"`
+			Port int    `json:"port"`
+		}
+		w := httptest.NewRecorder()
+		writeJSON(w, payload{Name: "b3tty", Port: 8080}, "test")
+		var got payload
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&got))
+		assert.Equal(t, "b3tty", got.Name)
+		assert.Equal(t, 8080, got.Port)
+	})
+
+	t.Run("status code defaults to 200", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		writeJSON(w, struct{}{}, "test")
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -1578,5 +1665,42 @@ func TestEditThemeHandler(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Empty(t, ts.Themes["my-theme"].BackgroundImage)
 		assert.NotContains(t, w.Body.String(), "/etc/passwd")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// sortedThemeNames
+// ---------------------------------------------------------------------------
+
+func TestSortedThemeNames(t *testing.T) {
+	t.Run("returns empty slice when no themes are configured", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		assert.Empty(t, ts.sortedThemeNames())
+	})
+
+	t.Run("returns names in alphabetical order", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		ts.Themes["zebra"] = Theme{}
+		ts.Themes["alpha"] = Theme{}
+		ts.Themes["mango"] = Theme{}
+		assert.Equal(t, []string{"alpha", "mango", "zebra"}, ts.sortedThemeNames())
+	})
+
+	t.Run("returns a single-element slice for one theme", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		ts.Themes["my-theme"] = Theme{}
+		assert.Equal(t, []string{"my-theme"}, ts.sortedThemeNames())
+	})
+
+	t.Run("does not modify ts.Themes", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		ts.Themes["b"] = Theme{}
+		ts.Themes["a"] = Theme{}
+		_ = ts.sortedThemeNames()
+		assert.Len(t, ts.Themes, 2)
+		_, hasA := ts.Themes["a"]
+		_, hasB := ts.Themes["b"]
+		assert.True(t, hasA)
+		assert.True(t, hasB)
 	})
 }
