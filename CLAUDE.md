@@ -18,6 +18,7 @@ go test -v ./src -run TestFunctionName  # run a single test
 # Lint / format
 make format         # format client JS/TS source files with prettier (writes in place)
 make format-check   # check formatting without writing (non-zero exit if files differ; useful for CI)
+make lint           # type-check client TS source with `tsc --noEmit` (no Go lint step; go vet is not wired into make)
 
 # Other
 make clean          # remove binary and build artifacts
@@ -188,7 +189,7 @@ b3tty is a browser-based terminal emulator. It runs a Go HTTP server that bridge
 - `Theme.BackgroundImage` carries `json:"-"` — the file path is never sent to the browser; the client receives only `HasBackgroundImage bool`
 
 **CI/CD (`.github/workflows/`):**
-- `ci.yml` — on every PR to `main`; parallel jobs: `test` (Go + bun tests via `make test`) and `format` (`make format-check`)
+- `ci.yml` — on every PR to `main`; parallel jobs: `test` (Go + bun tests via `make test`), `format` (`make format-check`), and `lint` (`make lint`, type-checks client TS via `tsc --noEmit`)
 - `tag.yml` — on push to `main`; creates a `v`-prefixed git tag when `VERSION` changed
 
 **Key design notes:**

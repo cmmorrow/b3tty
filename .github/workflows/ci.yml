@@ -40,3 +40,19 @@ jobs:
 
       - name: Check formatting
         run: make format-check
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install client dependencies
+        run: cd src/client && bun install
+
+      - name: Type check
+        run: make lint

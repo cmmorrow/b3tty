@@ -19,7 +19,7 @@ PACKAGE_VERSION=$(shell cat VERSION)
 # Build flags
 BUILD_FLAGS=-v -ldflags="-X 'github.com/cmmorrow/b3tty/cmd.Version=$(PACKAGE_VERSION)'"
 # BUILD_FLAGS=-v -ldflags="-X 'github.com/cmmorrow/b3tty/cmd.Version=test'"
-.PHONY: all setup format format-check client build test clean run deps tidy build-linux build-freebsd build-mac
+.PHONY: all setup format format-check lint client build test clean run deps tidy build-linux build-freebsd build-mac
 
 all: test build
 
@@ -31,6 +31,9 @@ format:
 
 format-check:
 	cd src/client && bun run format:check
+
+lint:
+	cd src/client && bun run lint
 
 client:
 	bun build src/client/terminal.ts --outfile src/assets/terminal.min.js --target browser --minify
