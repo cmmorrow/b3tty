@@ -271,10 +271,16 @@ export function applyThemeBroadcast(
  * Handles a WebSocket close event by writing an exit notice to the terminal.
  * The "Connection closed" dialog is shown only when wasClean is false, indicating
  * an unexpected drop rather than a server- or client-initiated close handshake.
- * alertFn is injectable for testing.
+ * alertFn is injectable for testing. The "Socket closed" console message is
+ * gated behind debug, matching every other connection-lifecycle log.
  */
-export function handleSocketClose(term: TerminalLike, alertFn: (msg: string) => void, wasClean = false): void {
-    console.log("Socket closed");
+export function handleSocketClose(
+    term: TerminalLike,
+    alertFn: (msg: string) => void,
+    wasClean = false,
+    debug = false
+): void {
+    if (debug) console.log("Socket closed");
     term.writeln("[exited]");
     if (!wasClean) {
         alertFn("Connection closed");
@@ -646,7 +652,7 @@ export async function main(config: TermConfig): Promise<void> {
     const activeTheme = { current: config.activeTheme ?? "" };
 
     socket.onmessage = (event) => {
-        if (socket.readyState !== 1) {
+        if (socket.readyState !== 1 && config.debug) {
             console.log("websocket not ready!");
         }
         handleSocketMessage(
@@ -670,10 +676,14 @@ export async function main(config: TermConfig): Promise<void> {
     socket.onclose = (event) => {
         listenerController.abort();
         disableCursor(term);
-        handleSocketClose(term, (msg) => dialog.show(msg), event.wasClean);
+        handleSocketClose(term, (msg) => dialog.show(msg), event.wasClean, !!config.debug);
     };
-    socket.onerror = (event) => console.log("A socket error occurred: ", event);
-    socket.onopen = () => console.log("Socket opened");
+    socket.onerror = (event) => {
+        if (config.debug) console.log("A socket error occurred: ", event);
+    };
+    socket.onopen = () => {
+        if (config.debug) console.log("Socket opened");
+    };
 
     const bellElement = requireElement("bell");
     initTerm(term, socket, bellElement, onBeforeSend);

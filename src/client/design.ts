@@ -163,6 +163,24 @@ export const FORM_INPUT_STYLES = `
 `;
 
 /**
+ * Inline error message shown in an editor's actions bar when a save/delete
+ * request fails, so failures aren't silently swallowed. Hidden by default;
+ * toggle the `visible` class to show it. Left-aligned within `.actions`
+ * (which uses `justify-content: flex-end`) via `margin-right: auto`,
+ * matching how `.delete-btn` claims the same position.
+ */
+export const SAVE_ERROR_STYLES = `
+    .save-error {
+        margin-right: auto;
+        align-self: center;
+        display: none;
+        font-family: sans-serif; font-size: var(--font-sm); color: var(--color-destructive);
+        max-width: 60%;
+    }
+    .save-error.visible { display: block; }
+`;
+
+/**
  * Two-panel layout for editor components (theme editor, profile editor).
  * Provides .left-panel (without width — set per component), .right-panel, and .actions bar.
  */

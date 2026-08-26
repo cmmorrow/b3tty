@@ -3,58 +3,28 @@ package src
 import (
 	_ "embed"
 	"encoding/json"
+	"html/template"
 	"net/http"
-	"text/template"
 )
 
 //go:embed templates/setup.tmpl
 var setupTempl string
 
-//go:embed templates/theme-select.tmpl
-var themeSelectTempl string
+// setupTemplate is parsed once at package init instead of on every request:
+// it is embedded at compile time and never changes at runtime, so
+// re-parsing it per-request (as displayTermHandler used to do too) is pure
+// repeated overhead. template.Must panics at startup if the embedded template
+// is malformed, matching the fail-fast pattern mustUnmarshalTheme uses for
+// the other embedded, compile-time-known assets.
+var setupTemplate = template.Must(template.New("setup").Parse(setupTempl))
 
 // renderSetupPage renders the theme selection setup page.
 func (ts *TerminalServer) renderSetupPage(w http.ResponseWriter) {
 	csp := GetCSPHeaders()
 	w.Header().Set("Content-Security-Policy", csp.String())
 
-	tmpl, err := template.New("setup").Parse(setupTempl)
-	if err != nil {
-		Fatal(err)
-	}
-	if err = tmpl.Execute(w, nil); err != nil {
+	if err := setupTemplate.Execute(w, nil); err != nil {
 		Errorf("setup response error: %v", err)
-	}
-}
-
-// themeSelectHandler renders the full-page theme picker for authenticated users.
-// GET /theme-select?token=<tok>&profile=<name>
-func (ts *TerminalServer) themeSelectHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" {
-		Warnf("%s %s: method not allowed: %s", r.Method, r.URL.Path, r.Method)
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-	query := r.URL.Query()
-	if !validateToken(query.Get("token"), ts.Token) {
-		Warnf("%s %s: forbidden: invalid or missing token", r.Method, r.URL.Path)
-		w.WriteHeader(http.StatusForbidden)
-		return
-	}
-	if ts.FirstRun {
-		http.NotFound(w, r)
-		return
-	}
-
-	w.Header().Set("Content-Security-Policy", GetCSPHeaders().String())
-
-	tmpl, err := template.New("theme-select").Parse(themeSelectTempl)
-	if err != nil {
-		Fatal(err)
-	}
-	Debug("loading theme-select over-panel")
-	if err = tmpl.Execute(w, nil); err != nil {
-		Errorf("theme-select response error: %v", err)
 	}
 }
 
@@ -62,7 +32,10 @@ func (ts *TerminalServer) themeSelectHandler(w http.ResponseWriter, r *http.Requ
 // field ("b3tty-dark", "b3tty-light", or "skip"). For b3tty-dark/b3tty-light, it writes a default config
 // file to $HOME/.config/b3tty/conf.yaml. Sets firstRun to false on success.
 func (ts *TerminalServer) saveConfigHandler(w http.ResponseWriter, r *http.Request) {
-	if !ts.FirstRun {
+	ts.StateMu.RLock()
+	firstRun := ts.FirstRun
+	ts.StateMu.RUnlock()
+	if !firstRun {
 		http.NotFound(w, r)
 		return
 	}
@@ -95,19 +68,23 @@ func (ts *TerminalServer) saveConfigHandler(w http.ResponseWriter, r *http.Reque
 
 	if themeColors != nil {
 		Debug("writing config file....")
-		if err := WriteDefaultConfig(req.Theme, themeColors); err != nil {
+		if err := saveDefaultThemeConfig(ts.ConfigFile, req.Theme, themeColors); err != nil {
 			Errorf("failed to write config: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
+		ts.StateMu.Lock()
 		ts.Client.Theme.MapToTheme(themeColors)
 		// Register the selected theme in ts.Themes so it appears in the Themes
 		// menu after the browser reloads into the normal terminal flow.
 		ts.Themes[req.Theme] = ts.Client.Theme
 		ts.ActiveTheme = req.Theme
+		ts.StateMu.Unlock()
 		Infof("created default %s theme config", req.Theme)
 	}
 
+	ts.StateMu.Lock()
 	ts.FirstRun = false
+	ts.StateMu.Unlock()
 	w.WriteHeader(http.StatusOK)
 }

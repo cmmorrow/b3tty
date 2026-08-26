@@ -77,7 +77,8 @@ func GetBuiltinTheme(name string) (map[string]any, bool) {
 }
 
 // sortedThemeNames returns the names of all user-defined themes in ts.Themes,
-// sorted alphabetically.
+// sorted alphabetically. Callers must hold ts.StateMu (read or write) before
+// calling this method since it reads ts.Themes directly.
 func (ts *TerminalServer) sortedThemeNames() []string {
 	names := make([]string, 0, len(ts.Themes))
 	for name := range ts.Themes {
@@ -97,8 +98,12 @@ func (ts *TerminalServer) themePaletteHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 	name := r.URL.Query().Get("name")
+	ts.StateMu.RLock()
+	t, ok := ts.Themes[name]
+	ts.StateMu.RUnlock()
+
 	var colors map[string]any
-	if t, ok := ts.Themes[name]; ok {
+	if ok {
 		colors = t.toColorMap()
 	} else if builtinColors, ok := builtinThemes[name]; ok {
 		colors = builtinColors
@@ -163,7 +168,9 @@ func (ts *TerminalServer) themeConfigHandler(w http.ResponseWriter, r *http.Requ
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	ts.StateMu.RLock()
 	theme, ok := ts.Themes[name]
+	ts.StateMu.RUnlock()
 	if !ok {
 		if builtinColors, ok := builtinThemes[name]; ok {
 			var t Theme
@@ -175,8 +182,10 @@ func (ts *TerminalServer) themeConfigHandler(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	if r.Method == "POST" {
+		ts.StateMu.Lock()
 		ts.Client.Theme = theme
 		ts.ActiveTheme = name
+		ts.StateMu.Unlock()
 		var colors map[string]any
 		if builtinColors, ok := builtinThemes[name]; ok {
 			colors = builtinColors
@@ -221,7 +230,10 @@ func (ts *TerminalServer) addThemeHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Resolve theme colors and ensure the theme is in ts.Themes.
+	// Resolve theme colors and ensure the theme is in ts.Themes. The whole
+	// read-check-then-write sequence runs under a single write lock so two
+	// concurrent add-theme requests for the same new theme name can't race.
+	ts.StateMu.Lock()
 	var colors map[string]any
 	if builtinColors, ok := builtinThemes[req.Theme]; ok {
 		colors = builtinColors
@@ -233,6 +245,7 @@ func (ts *TerminalServer) addThemeHandler(w http.ResponseWriter, r *http.Request
 	} else if theme, ok := ts.Themes[req.Theme]; ok {
 		colors = theme.toColorMap()
 	} else {
+		ts.StateMu.Unlock()
 		Warnf("%s %s: unknown theme %q", r.Method, r.URL.Path, req.Theme)
 		http.NotFound(w, r)
 		return
@@ -240,6 +253,9 @@ func (ts *TerminalServer) addThemeHandler(w http.ResponseWriter, r *http.Request
 
 	ts.Client.Theme = ts.Themes[req.Theme]
 	ts.ActiveTheme = req.Theme
+	activeTheme := ts.Client.Theme
+	themeNames := ts.sortedThemeNames()
+	ts.StateMu.Unlock()
 
 	if err := UpdateThemeInConfig(ts.ConfigFile, req.Theme, colors); err != nil {
 		Errorf("add-theme: failed to update config: %v", err)
@@ -249,9 +265,9 @@ func (ts *TerminalServer) addThemeHandler(w http.ResponseWriter, r *http.Request
 
 	Debugf("added theme %q", req.Theme)
 	resp := themeConfigResponse{
-		Theme:              ts.Client.Theme,
-		HasBackgroundImage: ts.Client.Theme.BackgroundImage != "",
-		ThemeNames:         ts.sortedThemeNames(),
+		Theme:              activeTheme,
+		HasBackgroundImage: activeTheme.BackgroundImage != "",
+		ThemeNames:         themeNames,
 	}
 	writeJSON(w, resp, "add-theme")
 }
@@ -289,12 +305,15 @@ func (ts *TerminalServer) editThemeHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	ts.StateMu.Lock()
 	if existing, ok := ts.Themes[req.Name]; ok && existing.BackgroundImage != "" {
 		req.Theme.BackgroundImage = existing.BackgroundImage
 	}
 	ts.Themes[req.Name] = req.Theme
 	ts.Client.Theme = req.Theme
 	ts.ActiveTheme = req.Name
+	themeNames := ts.sortedThemeNames()
+	ts.StateMu.Unlock()
 
 	if err := SaveThemeToConfig(ts.ConfigFile, req.Name, req.Theme.toColorMap()); err != nil {
 		Errorf("edit-theme: failed to save config: %v", err)
@@ -306,7 +325,7 @@ func (ts *TerminalServer) editThemeHandler(w http.ResponseWriter, r *http.Reques
 	resp := themeConfigResponse{
 		Theme:              req.Theme,
 		HasBackgroundImage: req.Theme.BackgroundImage != "",
-		ThemeNames:         ts.sortedThemeNames(),
+		ThemeNames:         themeNames,
 	}
 	writeJSON(w, resp, "edit-theme")
 }

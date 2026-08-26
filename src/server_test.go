@@ -9,9 +9,11 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -64,6 +66,11 @@ func newTestTerminalServer() *TerminalServer {
 		ProfileName:    DEFAULT_PROFILE_NAME,
 		StartupProfile: DEFAULT_PROFILE_NAME,
 		AuthSleep:      func(time.Duration) {}, // no-op: avoid real delays in tests
+		// WSClients mirrors what Serve() initializes before registering
+		// routes; without it, any handler that registers a WebSocket
+		// connection (terminalHandler) panics with "assignment to entry in
+		// nil map".
+		WSClients: make(map[*websocket.Conn]*wsClient),
 	}
 }
 
@@ -1124,6 +1131,48 @@ func TestDisplayTermHandler(t *testing.T) {
 		ts.displayTermHandler(w, req)
 		assert.Contains(t, w.Body.String(), `"tls":true`)
 	})
+
+	t.Run("HTML in profile Title is escaped, not injected raw", func(t *testing.T) {
+		// Regression test for best-practice-violations.md 2.1: displayTermHandler
+		// used to render terminal.tmpl with text/template, which does not
+		// autoescape, so an attacker-controlled profile Title (settable via
+		// POST /edit-profile) could break out of <title> and inject arbitrary
+		// HTML. html/template must escape it instead.
+		ts := newTestTerminalServer()
+		ts.Profiles["default"] = Profile{Title: `</title><script>alert(1)</script>`, Shell: "/bin/bash"}
+		req := httptest.NewRequest(http.MethodGet, "/?token=test-token-1234", nil)
+		w := httptest.NewRecorder()
+		ts.displayTermHandler(w, req)
+		body := w.Body.String()
+		assert.NotContains(t, body, "<script>alert(1)</script>")
+		assert.Contains(t, body, "&lt;script&gt;alert(1)&lt;/script&gt;")
+	})
+
+	t.Run("HTML in profile name is escaped, not injected raw", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		malicious := `"><img src=x onerror=alert(1)>`
+		ts.Profiles[malicious] = Profile{Title: "b3tty", Shell: "/bin/bash"}
+		req := httptest.NewRequest(http.MethodGet, "/?token=test-token-1234&profile="+url.QueryEscape(malicious), nil)
+		w := httptest.NewRecorder()
+		ts.displayTermHandler(w, req)
+		body := w.Body.String()
+		assert.NotContains(t, body, `<img src=x onerror=alert(1)>`)
+	})
+
+	t.Run("window.B3TTY is still assigned a raw JS object, not a quoted string", func(t *testing.T) {
+		// The fix wraps ConfigJSON in template.JS so html/template's JS-context
+		// autoescaper leaves the pre-marshaled JSON alone instead of quoting
+		// and escaping it into a JS string literal.
+		ts := newTestTerminalServer()
+		req := httptest.NewRequest(http.MethodGet, "/?token=test-token-1234", nil)
+		w := httptest.NewRecorder()
+		ts.displayTermHandler(w, req)
+		body := w.Body.String()
+		idx := strings.Index(body, "window.B3TTY = ")
+		require.NotEqual(t, -1, idx, "window.B3TTY assignment not found")
+		rest := body[idx+len("window.B3TTY = "):]
+		assert.True(t, strings.HasPrefix(rest, "{"), "expected a raw JS object literal, got: %.40s", rest)
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -1703,4 +1752,96 @@ func TestSortedThemeNames(t *testing.T) {
 		assert.True(t, hasA)
 		assert.True(t, hasB)
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Concurrent state access (regression test for the StateMu data race)
+// ---------------------------------------------------------------------------
+
+// TestConcurrentStateAccess drives the handlers that read and write shared
+// TerminalServer state (Client, Profiles, Themes, ActiveTheme, ProfileName,
+// OrgCols/OrgRows, FirstRun) from many goroutines at once. Before StateMu was
+// added to guard these fields, running this test with `go test -race` (or
+// often even without it) reliably reproduced "fatal error: concurrent map
+// writes" within a handful of iterations. Several of the handlers below also
+// persist to the same conf.yaml concurrently; before configFileMu was added
+// (best-practice-violations.md 1.2), that reliably produced logged
+// "parse existing config" errors from interleaved read-modify-write cycles
+// on the file — this test asserts that no longer happens.
+func TestConcurrentStateAccess(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ts := newTestTerminalServer()
+
+	const iterations = 30
+	var wg sync.WaitGroup
+
+	logged := captureLog(func() {
+		run := func(f func()) {
+			wg.Go(func() {
+				for range iterations {
+					f()
+				}
+			})
+		}
+
+		// Page loads: read Profiles/Themes/Client/ActiveTheme, write ProfileName.
+		run(func() {
+			req := httptest.NewRequest(http.MethodGet, "/?token=test-token-1234&profile=work", nil)
+			ts.displayTermHandler(httptest.NewRecorder(), req)
+		})
+
+		// Size updates: write OrgCols/OrgRows.
+		run(func() {
+			req := httptest.NewRequest(http.MethodPost, "/size?cols=80&rows=24", nil)
+			ts.setSizeHandler(httptest.NewRecorder(), req)
+		})
+
+		// Theme edits: read+write Themes, write Client.Theme/ActiveTheme.
+		run(func() {
+			body := strings.NewReader(`{"name":"concurrent-theme","theme":{"foreground":"#fff","background":"#000"}}`)
+			req := httptest.NewRequest(http.MethodPost, "/edit-theme", body)
+			req.Header.Set("Content-Type", "application/json")
+			ts.editThemeHandler(httptest.NewRecorder(), req)
+		})
+
+		// Adding a built-in theme: read+write Themes, write Client.Theme/ActiveTheme.
+		run(func() {
+			body := strings.NewReader(`{"theme":"b3tty-dark"}`)
+			req := httptest.NewRequest(http.MethodPost, "/add-theme", body)
+			req.Header.Set("Content-Type", "application/json")
+			ts.addThemeHandler(httptest.NewRecorder(), req)
+		})
+
+		// Profile edits: read+write Profiles.
+		run(func() {
+			body := strings.NewReader(`{"name":"concurrent-profile","profile":{"shell":"/bin/bash","commands":[]}}`)
+			req := httptest.NewRequest(http.MethodPost, "/edit-profile", body)
+			req.Header.Set("Content-Type", "application/json")
+			ts.editProfileHandler(httptest.NewRecorder(), req)
+		})
+
+		// Settings updates: write Client font/cursor/dimension fields.
+		run(func() {
+			body := strings.NewReader(`{"server":{"port":8080},"terminal":{"fontSize":14,"rows":24,"columns":80}}`)
+			req := httptest.NewRequest(http.MethodPost, "/settings", body)
+			req.Header.Set("Content-Type", "application/json")
+			ts.settingsHandler(httptest.NewRecorder(), req)
+		})
+
+		// A WebSocket session start reads Profiles/ProfileName and OrgCols/OrgRows.
+		// terminalHandler itself needs a real WebSocket upgrade and a pty, which
+		// isn't practical here; the read it performs is exercised directly under
+		// the same StateMu discipline as the real handler.
+		run(func() {
+			ts.StateMu.RLock()
+			_ = ts.Profiles[ts.ProfileName]
+			_, _ = ts.OrgCols, ts.OrgRows
+			ts.StateMu.RUnlock()
+		})
+
+		wg.Wait()
+	})
+
+	assert.NotContains(t, logged, "parse existing config",
+		"concurrent config-file writes raced; configFileMu should serialize them")
 }

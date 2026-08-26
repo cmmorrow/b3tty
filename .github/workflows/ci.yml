@@ -4,6 +4,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test
@@ -25,6 +28,19 @@ jobs:
       - name: Run tests
         run: make test
 
+  test-race:
+    name: Test (race)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests with race detector
+        run: make test-race
+
   format:
     name: Format
     runs-on: ubuntu-latest
@@ -40,3 +56,19 @@ jobs:
 
       - name: Check formatting
         run: make format-check
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install client dependencies
+        run: cd src/client && bun install
+
+      - name: Type check
+        run: make lint

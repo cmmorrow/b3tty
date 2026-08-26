@@ -38,6 +38,14 @@ type TerminalServer struct {
 	BackoffMu      sync.Mutex
 	WSClients      map[*websocket.Conn]*wsClient
 	WSClientsMu    sync.Mutex
+	// StateMu guards every field above that is read or written by more than one
+	// HTTP handler after startup: Client, Profiles, Themes, ActiveTheme,
+	// ProfileName, OrgCols, and OrgRows. Server, ConfigFile, StartupProfile, and
+	// NoBrowser are set once before Serve() starts accepting requests and never
+	// mutated afterward, so they do not need to be guarded. Callers should hold
+	// StateMu only long enough to read or mutate state into local variables —
+	// never across template execution, JSON encoding, or other response I/O.
+	StateMu sync.RWMutex
 	// AuthSleep is the function used to pause on auth failures. It defaults to
 	// time.Sleep and can be replaced in tests with a no-op to avoid real delays.
 	AuthSleep func(time.Duration)
@@ -209,7 +217,6 @@ func Serve(ts *TerminalServer, shouldOpenBrowser bool, useTLS bool) {
 	mux.HandleFunc("/background", ts.backgroundHandler)
 	mux.HandleFunc("/theme", ts.themePaletteHandler)
 	mux.HandleFunc("/theme-config", ts.themeConfigHandler)
-	mux.HandleFunc("/theme-select", ts.themeSelectHandler)
 	mux.HandleFunc("/add-theme", ts.addThemeHandler)
 	mux.HandleFunc("/edit-theme", ts.editThemeHandler)
 	mux.HandleFunc("/save-config", ts.saveConfigHandler)

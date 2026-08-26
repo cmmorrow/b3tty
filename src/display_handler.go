@@ -3,17 +3,25 @@ package src
 import (
 	_ "embed"
 	"encoding/json"
+	"html/template"
 	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
-	"text/template"
 	"time"
 )
 
 //go:embed templates/terminal.tmpl
 var templ string
+
+// terminalTemplate is parsed once at package init instead of on every
+// request. displayTermHandler is the hottest path in the server (every page
+// load), so re-parsing this compile-time-embedded, never-changing template
+// per-request was pure repeated overhead. template.Must panics at startup
+// if the embedded template is malformed, matching the fail-fast pattern
+// mustUnmarshalTheme uses for the other embedded, compile-time-known assets.
+var terminalTemplate = template.Must(template.New("b3tty").Parse(templ))
 
 const (
 	backoffBase = time.Second
@@ -105,16 +113,27 @@ func (ts *TerminalServer) setSizeHandler(w http.ResponseWriter, r *http.Request)
 	if requireSameOrigin(w, r) {
 		return
 	}
-	ts.OrgCols, ts.OrgRows = parseSizeParams(r.URL.Query())
-	Debugf("extracted cols: %d", ts.OrgCols)
-	Debugf("extracted rows: %d", ts.OrgRows)
+	cols, rows := parseSizeParams(r.URL.Query())
+	ts.StateMu.Lock()
+	ts.OrgCols, ts.OrgRows = cols, rows
+	ts.StateMu.Unlock()
+	Debugf("extracted cols: %d", cols)
+	Debugf("extracted rows: %d", rows)
 }
 
 // displayTermHandler validates the auth token, selects the active profile, serialises
 // the TermConfig to JSON, and renders the terminal HTML template.
 func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Request) {
 	type TemplateProps struct {
-		ConfigJSON  string
+		// ConfigJSON is template.JS, not string: it is a pre-marshaled JSON
+		// object literal meant to appear unquoted as raw JS in the page's
+		// inline <script> block (window.B3TTY = {{ .ConfigJSON }};). A plain
+		// string would be escaped by html/template's JS-context autoescaper
+		// as a quoted JS string literal, corrupting the assignment. Every
+		// other field here is a plain string specifically so it *does* get
+		// autoescaped — Title and ProfileName can contain arbitrary
+		// user-supplied text (profile fields set via POST /edit-profile).
+		ConfigJSON  template.JS
 		Title       string
 		ProfileName string
 		Nonce       string
@@ -159,24 +178,25 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	ts.BackoffMu.Unlock()
 	Debug("mutex unlocked")
 
-	if ts.FirstRun {
+	ts.StateMu.RLock()
+	firstRun := ts.FirstRun
+	ts.StateMu.RUnlock()
+	if firstRun {
 		Debug("serving first run page....")
 		ts.renderSetupPage(w)
 		return
 	}
 
-	Debug("parsing HTML template....")
-	tmpl, err := template.New("b3tty").Parse(templ)
-	if err != nil {
-		Fatal(err)
-	}
-
+	// Gather every piece of shared mutable state this handler needs under a
+	// single lock, copying it into local variables before releasing — the rest
+	// of the handler (template execution, JSON encoding, response I/O) runs
+	// against these local copies only, never against ts fields directly.
+	ts.StateMu.Lock()
 	ts.ProfileName = resolveProfileName(query, ts.Profiles)
-	Debugf("resolved profile name: %s", ts.ProfileName)
-	profile := ts.Profiles[ts.ProfileName]
+	profileName := ts.ProfileName
+	profile := ts.Profiles[profileName]
 
 	themeNames := ts.sortedThemeNames()
-	Debugf("Theme names: %s", strings.Join(themeNames, ", "))
 
 	// allThemeNames is the union of built-in and user-defined theme names, used
 	// to populate the in-page theme picker.
@@ -195,7 +215,6 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	sort.Strings(allThemeNames)
-	Debugf("All theme names: %s", strings.Join(allThemeNames, ", "))
 
 	builtinNames := make([]string, 0, len(builtinThemes))
 	for name := range builtinThemes {
@@ -208,10 +227,18 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 		profileNames = append(profileNames, name)
 	}
 	sort.Strings(profileNames)
-	Debugf("Profile names: %s", strings.Join(profileNames, ", "))
 
 	thm := ts.Client.Theme
-	cfgJSON, err := buildConfigJSON(ts.Server, ts.Client, &thm, themeNames, allThemeNames, builtinNames, profileNames, ts.ActiveTheme)
+	clientCopy := *ts.Client
+	activeTheme := ts.ActiveTheme
+	ts.StateMu.Unlock()
+
+	Debugf("resolved profile name: %s", profileName)
+	Debugf("Theme names: %s", strings.Join(themeNames, ", "))
+	Debugf("All theme names: %s", strings.Join(allThemeNames, ", "))
+	Debugf("Profile names: %s", strings.Join(profileNames, ", "))
+
+	cfgJSON, err := buildConfigJSON(ts.Server, &clientCopy, &thm, themeNames, allThemeNames, builtinNames, profileNames, activeTheme)
 	if err != nil {
 		Errorf("config serialization error: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -233,7 +260,7 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	Debugf("config response body: %s", cfgPayload)
 	Debugf("title: %s", profile.Title)
 	Debugf("nonce: %s", nonce)
-	err = tmpl.Execute(w, TemplateProps{ConfigJSON: cfgPayload, Title: profile.Title, ProfileName: ts.ProfileName, Nonce: nonce})
+	err = terminalTemplate.Execute(w, TemplateProps{ConfigJSON: template.JS(cfgPayload), Title: profile.Title, ProfileName: profileName, Nonce: nonce})
 	if err != nil {
 		Errorf("response error: %v", err)
 		return
@@ -243,7 +270,9 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 // backgroundHandler serves the configured background image file, if any.
 // Returns 404 when no background image is configured or the file cannot be found.
 func (ts *TerminalServer) backgroundHandler(w http.ResponseWriter, r *http.Request) {
+	ts.StateMu.RLock()
 	imagePath := ts.Client.Theme.BackgroundImage
+	ts.StateMu.RUnlock()
 	if imagePath == "" {
 		http.NotFound(w, r)
 		return

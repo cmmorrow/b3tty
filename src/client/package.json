@@ -6,14 +6,15 @@
   "scripts": {
     "test": "bun test",
     "format": "prettier --write \"**/*.{mjs,ts}\"",
-    "format:check": "prettier --check \"**/*.{mjs,ts}\""
+    "format:check": "prettier --check \"**/*.{mjs,ts}\"",
+    "lint": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "prettier": "^3.8.1"
+    "prettier": "^3.9.6"
   },
   "peerDependencies": {
-    "typescript": "^5.9.3"
+    "typescript": "^6.0.3"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",

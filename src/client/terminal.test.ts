@@ -996,6 +996,24 @@ describe("handleSocketClose", () => {
         handleSocketClose(term, alertFn, true);
         expect(term.writeln).toHaveBeenCalledTimes(1);
     });
+
+    it("does not log to the console when debug is false (default)", () => {
+        const term = makeMockTerm();
+        const alertFn = mock((_msg: string) => {});
+        const logSpy = spyOn(console, "log");
+        handleSocketClose(term, alertFn, true);
+        expect(logSpy).not.toHaveBeenCalled();
+        logSpy.mockRestore();
+    });
+
+    it("logs 'Socket closed' when debug is true", () => {
+        const term = makeMockTerm();
+        const alertFn = mock((_msg: string) => {});
+        const logSpy = spyOn(console, "log");
+        handleSocketClose(term, alertFn, true, true);
+        expect(logSpy).toHaveBeenCalledWith("Socket closed");
+        logSpy.mockRestore();
+    });
 });
 
 // ---------------------------------------------------------------------------

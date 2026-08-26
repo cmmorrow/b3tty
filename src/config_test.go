@@ -1,7 +1,9 @@
 package src
 
 import (
+	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -185,131 +187,6 @@ unknown-key: true
 	t.Run("file not found returns error", func(t *testing.T) {
 		err := ValidateConfig("/nonexistent/path/b3tty.yaml")
 		assert.Error(t, err)
-	})
-}
-
-// ---------------------------------------------------------------------------
-// buildConfigYAML
-// ---------------------------------------------------------------------------
-
-// mustBuildConfigYAML calls buildConfigYAML and fails the test on error.
-func mustBuildConfigYAML(t *testing.T, themeName string, colors map[string]any) string {
-	t.Helper()
-	out, err := buildConfigYAML(themeName, colors)
-	require.NoError(t, err)
-	return out
-}
-
-// parseConfigYAML is a test helper that unmarshals the output of buildConfigYAML
-// into a generic map so tests can inspect values without relying on string layout.
-func parseConfigYAML(t *testing.T, s string) map[string]any {
-	t.Helper()
-	var out map[string]any
-	require.NoError(t, yaml.Unmarshal([]byte(s), &out))
-	return out
-}
-
-func TestBuildConfigYAML(t *testing.T) {
-	t.Run("theme name appears at top level and under themes", func(t *testing.T) {
-		out := parseConfigYAML(t, mustBuildConfigYAML(t, "b3tty-dark", map[string]any{
-			"foreground": "#ffffff",
-		}))
-		assert.Equal(t, "b3tty-dark", out["theme"])
-		themes, ok := out["themes"].(map[string]any)
-		require.True(t, ok)
-		assert.Contains(t, themes, "b3tty-dark")
-	})
-
-	t.Run("color values round-trip correctly", func(t *testing.T) {
-		colors := map[string]any{
-			"foreground":           "#ffffff",
-			"background":           "#000000",
-			"bright-red":           "#ff5555",
-			"selection-background": "#44475a",
-		}
-		out := parseConfigYAML(t, mustBuildConfigYAML(t, "my-theme", colors))
-		themes := out["themes"].(map[string]any)
-		palette := themes["my-theme"].(map[string]any)
-		for k, v := range colors {
-			assert.Equal(t, v.(string), palette[k], "key %q", k)
-		}
-	})
-
-	t.Run("hex colors starting with # are valid YAML", func(t *testing.T) {
-		// A bare # in YAML begins an inline comment; yaml.v3 must quote it.
-		yamlOut := mustBuildConfigYAML(t, "b3tty-dark", map[string]any{"foreground": "#aabbcc"})
-		out := parseConfigYAML(t, yamlOut)
-		palette := out["themes"].(map[string]any)["b3tty-dark"].(map[string]any)
-		assert.Equal(t, "#aabbcc", palette["foreground"])
-	})
-
-	t.Run("empty color map produces valid YAML with empty theme block", func(t *testing.T) {
-		out := parseConfigYAML(t, mustBuildConfigYAML(t, "b3tty-light", map[string]any{}))
-		assert.Equal(t, "b3tty-light", out["theme"])
-		themes := out["themes"].(map[string]any)
-		assert.Contains(t, themes, "b3tty-light")
-	})
-
-	t.Run("output passes ValidateConfig", func(t *testing.T) {
-		colors := map[string]any{
-			"foreground": "#dbdbdb",
-			"background": "#15191e",
-			"red":        "#eb5a4b",
-			"bright-red": "#ee837b",
-		}
-		yamlOut := mustBuildConfigYAML(t, "b3tty_dark", colors)
-		path := writeTempConfig(t, yamlOut)
-		assert.NoError(t, ValidateConfig(path))
-	})
-
-	t.Run("different theme names produce distinct sections", func(t *testing.T) {
-		outA := parseConfigYAML(t, mustBuildConfigYAML(t, "alpha", map[string]any{"foreground": "#111111"}))
-		outB := parseConfigYAML(t, mustBuildConfigYAML(t, "beta", map[string]any{"foreground": "#222222"}))
-		assert.Equal(t, "alpha", outA["theme"])
-		assert.Equal(t, "beta", outB["theme"])
-		assert.Contains(t, outA["themes"].(map[string]any), "alpha")
-		assert.Contains(t, outB["themes"].(map[string]any), "beta")
-	})
-
-	t.Run("non-string values are silently dropped", func(t *testing.T) {
-		colors := map[string]any{
-			"foreground": "#ffffff",
-			"count":      float64(3),
-			"flag":       true,
-		}
-		out := parseConfigYAML(t, mustBuildConfigYAML(t, "b3tty-dark", colors))
-		palette := out["themes"].(map[string]any)["b3tty-dark"].(map[string]any)
-		assert.Equal(t, "#ffffff", palette["foreground"])
-		assert.NotContains(t, palette, "count")
-		assert.NotContains(t, palette, "flag")
-	})
-
-	t.Run("invalid color strings are silently dropped", func(t *testing.T) {
-		colors := map[string]any{
-			"foreground": "#ffffff",
-			"background": "rgb(0,0,0)",
-			"red":        "not#valid",
-		}
-		out := parseConfigYAML(t, mustBuildConfigYAML(t, "b3tty-dark", colors))
-		palette := out["themes"].(map[string]any)["b3tty-dark"].(map[string]any)
-		assert.Equal(t, "#ffffff", palette["foreground"])
-		assert.NotContains(t, palette, "background")
-		assert.NotContains(t, palette, "red")
-	})
-
-	t.Run("mix of valid, invalid, and non-string values keeps only valid colors", func(t *testing.T) {
-		colors := map[string]any{
-			"foreground": "#aabbcc", // valid hex — kept
-			"background": "white",   // valid named color — kept
-			"red":        "#gggggg", // invalid hex chars — dropped
-			"green":      42,        // non-string — dropped
-		}
-		out := parseConfigYAML(t, mustBuildConfigYAML(t, "mixed", colors))
-		palette := out["themes"].(map[string]any)["mixed"].(map[string]any)
-		assert.Equal(t, "#aabbcc", palette["foreground"])
-		assert.Equal(t, "white", palette["background"])
-		assert.NotContains(t, palette, "red")
-		assert.NotContains(t, palette, "green")
 	})
 }
 
@@ -718,5 +595,342 @@ profiles:
 		out := readConfig(path)
 		profiles := out["profiles"].(map[string]any)
 		assert.Contains(t, profiles, "work")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// resolveConfigPath
+// ---------------------------------------------------------------------------
+
+func TestResolveConfigPath(t *testing.T) {
+	t.Run("returns the given path unchanged when non-empty", func(t *testing.T) {
+		got, err := resolveConfigPath("/some/explicit/path.yaml")
+		require.NoError(t, err)
+		assert.Equal(t, "/some/explicit/path.yaml", got)
+	})
+
+	t.Run("falls back to the default config path under $HOME when empty", func(t *testing.T) {
+		tmpHome := t.TempDir()
+		t.Setenv("HOME", tmpHome)
+		got, err := resolveConfigPath("")
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(tmpHome, DOT_CONFIG_PATH, B3TTY_CONFIG_PATH, CONFIG_FILE_NAME), got)
+	})
+
+	t.Run("returns an error when the home directory cannot be determined", func(t *testing.T) {
+		t.Setenv("HOME", "")
+		_, err := resolveConfigPath("")
+		assert.Error(t, err)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// loadConfigMap
+// ---------------------------------------------------------------------------
+
+func TestLoadConfigMap(t *testing.T) {
+	t.Run("returns an empty map when the file does not exist", func(t *testing.T) {
+		cfg, err := loadConfigMap(filepath.Join(t.TempDir(), "does-not-exist.yaml"), "ctx")
+		require.NoError(t, err)
+		assert.Empty(t, cfg)
+	})
+
+	t.Run("returns an empty map when the file is empty", func(t *testing.T) {
+		path := writeTempConfig(t, "")
+		cfg, err := loadConfigMap(path, "ctx")
+		require.NoError(t, err)
+		assert.Empty(t, cfg)
+	})
+
+	t.Run("parses existing YAML content into a map", func(t *testing.T) {
+		path := writeTempConfig(t, `
+theme: dracula
+server:
+  port: 9000
+`)
+		cfg, err := loadConfigMap(path, "ctx")
+		require.NoError(t, err)
+		assert.Equal(t, "dracula", cfg["theme"])
+		server, ok := cfg["server"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, 9000, server["port"])
+	})
+
+	t.Run("returns a parse error prefixed with errContext for invalid YAML", func(t *testing.T) {
+		path := writeTempConfig(t, "theme: [unclosed")
+		_, err := loadConfigMap(path, "MyCaller")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "MyCaller")
+		assert.Contains(t, err.Error(), "parse existing config")
+	})
+
+	t.Run("treats a read error other than not-exist as an empty config", func(t *testing.T) {
+		// Reading a directory as a file fails, but is not os.ErrNotExist —
+		// loadConfigMap's contract is to swallow any read error, not just
+		// the file-absent case, since every caller relied on that before
+		// this helper was extracted.
+		cfg, err := loadConfigMap(t.TempDir(), "ctx")
+		require.NoError(t, err)
+		assert.Empty(t, cfg)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// writeConfigMap
+// ---------------------------------------------------------------------------
+
+// erroringYAMLValue implements yaml.Marshaler and always fails to marshal.
+// yaml.v3 panics rather than returning an error for genuinely unsupported Go
+// types (e.g. chan), so this is the reliable way to exercise writeConfigMap's
+// yaml.Marshal error path.
+type erroringYAMLValue struct{}
+
+func (erroringYAMLValue) MarshalYAML() (any, error) {
+	return nil, errors.New("boom")
+}
+
+func TestWriteConfigMap(t *testing.T) {
+	t.Run("writes valid YAML to the given path", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "conf.yaml")
+		require.NoError(t, writeConfigMap(path, map[string]any{"theme": "dracula"}, "ctx"))
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		var out map[string]any
+		require.NoError(t, yaml.Unmarshal(data, &out))
+		assert.Equal(t, "dracula", out["theme"])
+	})
+
+	t.Run("creates parent directories that do not exist", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "nested", "dirs", "conf.yaml")
+		require.NoError(t, writeConfigMap(path, map[string]any{"theme": "dracula"}, "ctx"))
+		_, err := os.Stat(path)
+		assert.NoError(t, err)
+	})
+
+	t.Run("returns a marshal error prefixed with errContext when a value fails to marshal", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "conf.yaml")
+		err := writeConfigMap(path, map[string]any{"bad": erroringYAMLValue{}}, "MyCaller")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "MyCaller")
+		assert.Contains(t, err.Error(), "boom")
+		_, statErr := os.Stat(path)
+		assert.True(t, os.IsNotExist(statErr), "file must not be written when marshaling fails")
+	})
+
+	t.Run("returns an error when the parent directory cannot be created", func(t *testing.T) {
+		// blocker is a regular file; MkdirAll must fail when asked to create
+		// a directory at or beneath a path component that is already a file.
+		blocker := filepath.Join(t.TempDir(), "blocker")
+		require.NoError(t, os.WriteFile(blocker, []byte("not a directory"), 0644))
+		path := filepath.Join(blocker, "sub", "conf.yaml")
+		err := writeConfigMap(path, map[string]any{"theme": "dracula"}, "ctx")
+		assert.Error(t, err)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// getOrCreateSection
+// ---------------------------------------------------------------------------
+
+func TestGetOrCreateSection(t *testing.T) {
+	t.Run("returns the existing section when present and of the right type", func(t *testing.T) {
+		cfg := map[string]any{"themes": map[string]any{"dracula": map[string]any{"foreground": "#f8f8f2"}}}
+		section := getOrCreateSection(cfg, "themes")
+		assert.Equal(t, map[string]any{"dracula": map[string]any{"foreground": "#f8f8f2"}}, section)
+	})
+
+	t.Run("creates and stores an empty section when the key is absent", func(t *testing.T) {
+		cfg := map[string]any{}
+		section := getOrCreateSection(cfg, "profiles")
+		assert.Equal(t, map[string]any{}, section)
+		assert.Contains(t, cfg, "profiles")
+		assert.Equal(t, section, cfg["profiles"])
+	})
+
+	t.Run("replaces a value of the wrong type with a new empty section", func(t *testing.T) {
+		cfg := map[string]any{"server": "not a map"}
+		section := getOrCreateSection(cfg, "server")
+		assert.Equal(t, map[string]any{}, section)
+		assert.Equal(t, section, cfg["server"])
+	})
+
+	t.Run("mutations to the returned section are reflected in cfg", func(t *testing.T) {
+		cfg := map[string]any{}
+		section := getOrCreateSection(cfg, "terminal")
+		section["rows"] = 24
+		assert.Equal(t, 24, cfg["terminal"].(map[string]any)["rows"])
+	})
+}
+
+// ---------------------------------------------------------------------------
+// filterValidThemeColors
+// ---------------------------------------------------------------------------
+
+func TestFilterValidThemeColors(t *testing.T) {
+	t.Run("keeps valid hex and named color strings", func(t *testing.T) {
+		out := filterValidThemeColors(map[string]any{
+			"foreground": "#ffffff",
+			"background": "#000",
+			"cursor":     "white",
+		})
+		assert.Equal(t, map[string]any{
+			"foreground": "#ffffff",
+			"background": "#000",
+			"cursor":     "white",
+		}, out)
+	})
+
+	t.Run("drops invalid color strings", func(t *testing.T) {
+		out := filterValidThemeColors(map[string]any{
+			"foreground": "#ffffff",
+			"background": "rgb(0,0,0)",
+			"red":        "not#valid",
+			"green":      "#gggggg",
+		})
+		assert.Equal(t, map[string]any{"foreground": "#ffffff"}, out)
+	})
+
+	t.Run("drops non-string values", func(t *testing.T) {
+		out := filterValidThemeColors(map[string]any{
+			"foreground": "#ffffff",
+			"count":      float64(3),
+			"flag":       true,
+			"nothing":    nil,
+		})
+		assert.Equal(t, map[string]any{"foreground": "#ffffff"}, out)
+	})
+
+	t.Run("returns an empty, non-nil map for empty input", func(t *testing.T) {
+		out := filterValidThemeColors(map[string]any{})
+		assert.NotNil(t, out)
+		assert.Empty(t, out)
+	})
+
+	t.Run("returns an empty, non-nil map for nil input", func(t *testing.T) {
+		out := filterValidThemeColors(nil)
+		assert.NotNil(t, out)
+		assert.Empty(t, out)
+	})
+
+	t.Run("returns a new map rather than aliasing the input", func(t *testing.T) {
+		in := map[string]any{"foreground": "#ffffff"}
+		out := filterValidThemeColors(in)
+		out["foreground"] = "#000000"
+		assert.Equal(t, "#ffffff", in["foreground"], "mutating the result must not affect the input map")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// saveDefaultThemeConfig
+// ---------------------------------------------------------------------------
+
+func TestSaveDefaultThemeConfig(t *testing.T) {
+	readConfig := func(t *testing.T, home string) map[string]any {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(home, DOT_CONFIG_PATH, B3TTY_CONFIG_PATH, CONFIG_FILE_NAME))
+		require.NoError(t, err)
+		var out map[string]any
+		require.NoError(t, yaml.Unmarshal(data, &out))
+		return out
+	}
+
+	t.Run("creates the config directory and file under $HOME when neither exists", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+
+		require.NoError(t, saveDefaultThemeConfig("", "dracula", map[string]any{"foreground": "#f8f8f2"}))
+
+		info, err := os.Stat(filepath.Join(home, DOT_CONFIG_PATH, B3TTY_CONFIG_PATH))
+		require.NoError(t, err)
+		assert.True(t, info.IsDir())
+
+		out := readConfig(t, home)
+		assert.Equal(t, "dracula", out["theme"])
+	})
+
+	t.Run("writes the theme's color entries under the themes section", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+
+		require.NoError(t, saveDefaultThemeConfig("", "dracula", map[string]any{
+			"foreground": "#f8f8f2",
+			"background": "#282a36",
+		}))
+
+		out := readConfig(t, home)
+		themes := out["themes"].(map[string]any)
+		palette := themes["dracula"].(map[string]any)
+		assert.Equal(t, "#f8f8f2", palette["foreground"])
+		assert.Equal(t, "#282a36", palette["background"])
+	})
+
+	t.Run("silently drops invalid color strings", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+
+		require.NoError(t, saveDefaultThemeConfig("", "dracula", map[string]any{
+			"foreground": "#f8f8f2",
+			"background": "rgb(40,42,54)",
+		}))
+
+		palette := readConfig(t, home)["themes"].(map[string]any)["dracula"].(map[string]any)
+		assert.Equal(t, "#f8f8f2", palette["foreground"])
+		assert.NotContains(t, palette, "background")
+	})
+
+	t.Run("output passes ValidateConfig", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+
+		require.NoError(t, saveDefaultThemeConfig("", "dracula", map[string]any{
+			"foreground": "#f8f8f2",
+			"background": "#282a36",
+			"red":        "#ff5555",
+		}))
+
+		assert.NoError(t, ValidateConfig(filepath.Join(home, DOT_CONFIG_PATH, B3TTY_CONFIG_PATH, CONFIG_FILE_NAME)))
+	})
+
+	t.Run("overwrites an existing config file at the same path", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		require.NoError(t, saveDefaultThemeConfig("", "b3tty-dark", map[string]any{"foreground": "#dbdbdb"}))
+
+		require.NoError(t, saveDefaultThemeConfig("", "b3tty-light", map[string]any{"foreground": "#111111"}))
+
+		out := readConfig(t, home)
+		assert.Equal(t, "b3tty-light", out["theme"])
+	})
+
+	t.Run("returns an error when the home directory cannot be determined", func(t *testing.T) {
+		t.Setenv("HOME", "")
+		err := saveDefaultThemeConfig("", "dracula", map[string]any{"foreground": "#f8f8f2"})
+		assert.Error(t, err)
+	})
+
+	t.Run("returns an error when the config directory cannot be created", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		// blocker occupies the path where the .config directory needs to be
+		// created, so MkdirAll must fail.
+		require.NoError(t, os.WriteFile(filepath.Join(home, DOT_CONFIG_PATH), []byte("not a directory"), 0644))
+
+		err := saveDefaultThemeConfig("", "dracula", map[string]any{"foreground": "#f8f8f2"})
+		assert.Error(t, err)
+	})
+
+	t.Run("returns an error when the config file cannot be written", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("running as root bypasses permission checks")
+		}
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		configDir := filepath.Join(home, DOT_CONFIG_PATH, B3TTY_CONFIG_PATH)
+		require.NoError(t, os.MkdirAll(configDir, 0755))
+		require.NoError(t, os.Chmod(configDir, 0555)) // read+execute, no write
+		t.Cleanup(func() { _ = os.Chmod(configDir, 0755) })
+
+		err := saveDefaultThemeConfig("", "dracula", map[string]any{"foreground": "#f8f8f2"})
+		assert.Error(t, err)
 	})
 }
