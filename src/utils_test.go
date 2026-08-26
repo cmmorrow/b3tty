@@ -104,13 +104,6 @@ func TestConvertToFieldName(t *testing.T) {
 	assert.Equal(t, "", convertToFieldName(""))
 }
 
-func TestSum(t *testing.T) {
-	assert.Equal(t, 15, sum([]int{1, 2, 3, 4, 5}))
-	assert.Equal(t, 0, sum([]int{}))
-	assert.Equal(t, -5, sum([]int{-1, -2, -3, 1}))
-	assert.Equal(t, 0, sum([]int{-1, 1}))
-}
-
 func TestGenerateToken(t *testing.T) {
 	token, err := generateToken(10)
 	assert.NoError(t, err)

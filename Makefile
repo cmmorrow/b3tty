@@ -19,7 +19,7 @@ PACKAGE_VERSION=$(shell cat VERSION)
 # Build flags
 BUILD_FLAGS=-v -ldflags="-X 'github.com/cmmorrow/b3tty/cmd.Version=$(PACKAGE_VERSION)'"
 # BUILD_FLAGS=-v -ldflags="-X 'github.com/cmmorrow/b3tty/cmd.Version=test'"
-.PHONY: all setup format format-check lint client build test clean run deps tidy build-linux build-freebsd build-mac
+.PHONY: all setup format format-check lint client build test test-race clean run deps tidy build-linux build-freebsd build-mac
 
 all: test build
 
@@ -46,6 +46,12 @@ build: client
 test:
 	$(GOTEST) -v ./...
 	cd src/client && bun test
+
+# Runs the Go test suite with the data race detector enabled. Not part of the
+# default `test` target since -race adds noticeable overhead; run this
+# separately (and in CI) to catch races like the one guarded by StateMu.
+test-race:
+	$(GOTEST) -race -v ./...
 
 clean:
 	$(GOCLEAN)

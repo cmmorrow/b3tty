@@ -20,7 +20,9 @@ func (ts *TerminalServer) profileConfigHandler(w http.ResponseWriter, r *http.Re
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	ts.StateMu.RLock()
 	p, ok := ts.Profiles[name]
+	ts.StateMu.RUnlock()
 	if !ok {
 		Warnf("%s %s: profile %q not found", r.Method, r.URL.Path, name)
 		w.WriteHeader(http.StatusNotFound)
@@ -82,7 +84,11 @@ func (ts *TerminalServer) editProfileHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	p := NewProfile(shell, req.Profile.WorkingDirectory, req.Profile.Root, req.Profile.Title, filtered)
+
+	ts.StateMu.Lock()
 	ts.Profiles[req.Name] = p
+	profileNames := nonDefaultProfileNames(ts.Profiles)
+	ts.StateMu.Unlock()
 
 	if err := SaveProfileToConfig(ts.ConfigFile, req.Name, p); err != nil {
 		Errorf("edit-profile: failed to save config: %v", err)
@@ -91,7 +97,7 @@ func (ts *TerminalServer) editProfileHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	Debugf("saved profile %q", req.Name)
-	writeJSON(w, editProfileResponse{ProfileNames: nonDefaultProfileNames(ts.Profiles)}, "edit-profile")
+	writeJSON(w, editProfileResponse{ProfileNames: profileNames}, "edit-profile")
 }
 
 // deleteProfileHandler removes a non-default profile from memory and the config file.
@@ -121,7 +127,10 @@ func (ts *TerminalServer) deleteProfileHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	ts.StateMu.Lock()
 	delete(ts.Profiles, req.Name)
+	profileNames := nonDefaultProfileNames(ts.Profiles)
+	ts.StateMu.Unlock()
 
 	if err := DeleteProfileFromConfig(ts.ConfigFile, req.Name); err != nil {
 		Errorf("delete-profile: failed to save config: %v", err)
@@ -130,7 +139,7 @@ func (ts *TerminalServer) deleteProfileHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	Debugf("deleted profile %q", req.Name)
-	writeJSON(w, editProfileResponse{ProfileNames: nonDefaultProfileNames(ts.Profiles)}, "delete-profile")
+	writeJSON(w, editProfileResponse{ProfileNames: profileNames}, "delete-profile")
 }
 
 // nonDefaultProfileNames returns a sorted slice of all profile names except "default".

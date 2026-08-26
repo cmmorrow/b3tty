@@ -90,20 +90,23 @@ func (ts *TerminalServer) settingsHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	if r.Method == "GET" {
+		ts.StateMu.RLock()
+		terminal := SettingsTerminalConfig{
+			FontFamily:  ts.Client.FontFamily,
+			FontSize:    ts.Client.FontSize,
+			CursorBlink: ts.Client.CursorBlink,
+			AutoResize:  ts.Client.AutoResize,
+			Rows:        ts.Client.Rows,
+			Columns:     ts.Client.Columns,
+		}
+		ts.StateMu.RUnlock()
 		writeJSON(w, settingsConfigResponse{
 			Server: SettingsServerConfig{
 				Port:      ts.Server.Port,
 				NoAuth:    ts.Server.NoAuth,
 				NoBrowser: ts.NoBrowser,
 			},
-			Terminal: SettingsTerminalConfig{
-				FontFamily:  ts.Client.FontFamily,
-				FontSize:    ts.Client.FontSize,
-				CursorBlink: ts.Client.CursorBlink,
-				AutoResize:  ts.Client.AutoResize,
-				Rows:        ts.Client.Rows,
-				Columns:     ts.Client.Columns,
-			},
+			Terminal: terminal,
 		}, "settings")
 		return
 	}
@@ -145,12 +148,14 @@ func (ts *TerminalServer) settingsHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	ts.StateMu.Lock()
 	ts.Client.FontFamily = req.Terminal.FontFamily
 	ts.Client.FontSize = req.Terminal.FontSize
 	ts.Client.CursorBlink = req.Terminal.CursorBlink
 	ts.Client.AutoResize = req.Terminal.AutoResize
 	ts.Client.Rows = req.Terminal.Rows
 	ts.Client.Columns = req.Terminal.Columns
+	ts.StateMu.Unlock()
 
 	ts.broadcastSettings(req.Terminal)
 
@@ -169,13 +174,9 @@ func (ts *TerminalServer) settingsHandler(w http.ResponseWriter, r *http.Request
 			NoAuth:    ts.Server.NoAuth,
 			NoBrowser: ts.NoBrowser,
 		},
-		Terminal: SettingsTerminalConfig{
-			FontFamily:  ts.Client.FontFamily,
-			FontSize:    ts.Client.FontSize,
-			CursorBlink: ts.Client.CursorBlink,
-			AutoResize:  ts.Client.AutoResize,
-			Rows:        ts.Client.Rows,
-			Columns:     ts.Client.Columns,
-		},
+		// Echo back req.Terminal directly rather than re-reading ts.Client: we
+		// just wrote these exact values under StateMu above, and re-reading
+		// would need another lock acquisition for values we already have.
+		Terminal: req.Terminal,
 	}, "settings")
 }

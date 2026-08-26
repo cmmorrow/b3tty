@@ -17,6 +17,7 @@ import {
     OVERLAY_STYLES,
     EDITOR_CARD_STYLES,
     FORM_INPUT_STYLES,
+    SAVE_ERROR_STYLES,
     SPLIT_PANEL_STYLES,
 } from "./design.ts";
 
@@ -1018,6 +1019,7 @@ if (typeof HTMLElement !== "undefined") {
         #leftPanel: HTMLDivElement;
         #nameInput: HTMLInputElement;
         #nameError: HTMLSpanElement;
+        #saveError: HTMLSpanElement;
         #colorInputs: Map<string, HTMLInputElement> = new Map();
         #swatches: Map<string, HTMLSpanElement> = new Map();
         #okBtn: HTMLButtonElement;
@@ -1107,6 +1109,7 @@ if (typeof HTMLElement !== "undefined") {
                 }
                 .swatch.visible { visibility: visible; }
                 ${BUTTON_STYLES}
+                ${SAVE_ERROR_STYLES}
             `;
 
             const overlay = document.createElement("div");
@@ -1231,6 +1234,8 @@ if (typeof HTMLElement !== "undefined") {
 
             const actions = document.createElement("div");
             actions.className = "actions";
+            this.#saveError = document.createElement("span");
+            this.#saveError.className = "save-error";
             const cancelBtn = document.createElement("button");
             cancelBtn.className = "cancel-btn";
             cancelBtn.textContent = "Cancel";
@@ -1238,6 +1243,7 @@ if (typeof HTMLElement !== "undefined") {
             this.#okBtn.className = "ok-btn";
             this.#okBtn.textContent = "OK";
             this.#okBtn.disabled = true;
+            actions.appendChild(this.#saveError);
             actions.appendChild(cancelBtn);
             actions.appendChild(this.#okBtn);
 
@@ -1435,6 +1441,7 @@ if (typeof HTMLElement !== "undefined") {
             for (const [key, input] of this.#colorInputs) {
                 if (input.value) themeData[key] = input.value;
             }
+            this.#saveError.classList.remove("visible");
             try {
                 const response = await postEditTheme(name, themeData);
                 this.dispatchEvent(
@@ -1445,8 +1452,12 @@ if (typeof HTMLElement !== "undefined") {
                     })
                 );
                 this.close();
-            } catch {
-                // keep editor open so the user can retry
+            } catch (err) {
+                // Keep editor open so the user can retry, but tell them why —
+                // a save that silently does nothing looks indistinguishable
+                // from a UI bug.
+                this.#saveError.textContent = err instanceof Error ? err.message : "Failed to save theme.";
+                this.#saveError.classList.add("visible");
             }
         }
 
@@ -1459,6 +1470,7 @@ if (typeof HTMLElement !== "undefined") {
             this.#isLoading = false;
             this.#nameInput.value = "";
             this.#nameError.classList.remove("visible");
+            this.#saveError.classList.remove("visible");
             this.#clearInputs();
             this.#okBtn.disabled = true;
 
@@ -1484,6 +1496,7 @@ if (typeof HTMLElement !== "undefined") {
             this.#restoreSelectedCard();
             this.#selectedName = null;
             this.#nameError.classList.remove("visible");
+            this.#saveError.classList.remove("visible");
         }
     }
 
@@ -1504,6 +1517,7 @@ if (typeof HTMLElement !== "undefined") {
         #lineNumbers: HTMLDivElement;
         #okBtn: HTMLButtonElement;
         #deleteBtn: HTMLButtonElement;
+        #saveError: HTMLSpanElement;
         #selectedName: string | null = null;
         #selectedCard: HTMLDivElement | null = null;
         #isLoading = false;
@@ -1598,6 +1612,11 @@ if (typeof HTMLElement !== "undefined") {
                 }
                 ${FORM_INPUT_STYLES}
                 ${BUTTON_STYLES}
+                ${SAVE_ERROR_STYLES}
+                /* .delete-btn already claims margin-right: auto in this
+                   actions bar; save-error sits immediately to its right
+                   instead of also trying to auto-push. */
+                .save-error { margin-right: 0; }
             `;
 
             const overlay = document.createElement("div");
@@ -1712,6 +1731,9 @@ if (typeof HTMLElement !== "undefined") {
             this.#deleteBtn.textContent = "Delete Profile";
             this.#deleteBtn.style.display = "none";
 
+            this.#saveError = document.createElement("span");
+            this.#saveError.className = "save-error";
+
             const cancelBtn = document.createElement("button");
             cancelBtn.className = "cancel-btn";
             cancelBtn.textContent = "Cancel";
@@ -1722,6 +1744,7 @@ if (typeof HTMLElement !== "undefined") {
             this.#okBtn.disabled = true;
 
             actions.appendChild(this.#deleteBtn);
+            actions.appendChild(this.#saveError);
             actions.appendChild(cancelBtn);
             actions.appendChild(this.#okBtn);
 
@@ -1767,6 +1790,7 @@ if (typeof HTMLElement !== "undefined") {
             this.#clearForm();
             this.#okBtn.disabled = true;
             this.#deleteBtn.style.display = "none";
+            this.#saveError.classList.remove("visible");
             this.#nameInput.readOnly = false;
 
             for (const card of Array.from(this.#leftPanel.querySelectorAll(".profile-card"))) {
@@ -1785,6 +1809,7 @@ if (typeof HTMLElement !== "undefined") {
             this.removeAttribute("open");
             this.#selectedName = null;
             this.#nameError.classList.remove("visible");
+            this.#saveError.classList.remove("visible");
         }
 
         #makeProfileCard(name: string): HTMLDivElement {
@@ -1895,6 +1920,7 @@ if (typeof HTMLElement !== "undefined") {
                 root: this.#rootInput.value.trim(),
                 commands,
             };
+            this.#saveError.classList.remove("visible");
             try {
                 const response = await postEditProfile(name, profile);
                 this.dispatchEvent(
@@ -1905,14 +1931,18 @@ if (typeof HTMLElement !== "undefined") {
                     })
                 );
                 this.close();
-            } catch {
-                // Keep editor open so user can retry.
+            } catch (err) {
+                // Keep editor open so user can retry, but say why the save
+                // didn't visibly do anything.
+                this.#saveError.textContent = err instanceof Error ? err.message : "Failed to save profile.";
+                this.#saveError.classList.add("visible");
             }
         }
 
         async #handleDelete(): Promise<void> {
             const name = this.#selectedName;
             if (!name) return;
+            this.#saveError.classList.remove("visible");
             try {
                 const response = await postDeleteProfile(name);
                 this.dispatchEvent(
@@ -1923,8 +1953,11 @@ if (typeof HTMLElement !== "undefined") {
                     })
                 );
                 this.close();
-            } catch {
-                // Keep editor open so user can retry.
+            } catch (err) {
+                // Keep editor open so user can retry, but say why the delete
+                // didn't visibly do anything.
+                this.#saveError.textContent = err instanceof Error ? err.message : "Failed to delete profile.";
+                this.#saveError.classList.add("visible");
             }
         }
     }
@@ -1951,6 +1984,7 @@ if (typeof HTMLElement !== "undefined") {
         // Footer buttons
         #cancelBtn: HTMLButtonElement;
         #okBtn: HTMLButtonElement;
+        #saveError: HTMLSpanElement;
 
         // Tab buttons
         #tabBtns: Map<string, HTMLButtonElement> = new Map();
@@ -2061,6 +2095,7 @@ if (typeof HTMLElement !== "undefined") {
                     flex-shrink: 0; background: var(--color-surface-1);
                 }
                 ${BUTTON_STYLES}
+                ${SAVE_ERROR_STYLES}
             `;
 
             const overlay = document.createElement("div");
@@ -2219,12 +2254,15 @@ if (typeof HTMLElement !== "undefined") {
             // --- Footer ---
             const footer = document.createElement("div");
             footer.className = "footer";
+            this.#saveError = document.createElement("span");
+            this.#saveError.className = "save-error";
             this.#cancelBtn = document.createElement("button");
             this.#cancelBtn.className = "cancel-btn";
             this.#cancelBtn.textContent = "Cancel";
             this.#okBtn = document.createElement("button");
             this.#okBtn.className = "ok-btn";
             this.#okBtn.textContent = "OK";
+            footer.appendChild(this.#saveError);
             footer.appendChild(this.#cancelBtn);
             footer.appendChild(this.#okBtn);
 
@@ -2341,6 +2379,7 @@ if (typeof HTMLElement !== "undefined") {
                     columns: parseInt(this.#columnsInput.value, 10) || 0,
                 },
             };
+            this.#saveError.classList.remove("visible");
             try {
                 const response = await postSettings(settings);
                 this.dispatchEvent(
@@ -2351,8 +2390,11 @@ if (typeof HTMLElement !== "undefined") {
                     })
                 );
                 this.close();
-            } catch {
-                // Keep modal open for retry.
+            } catch (err) {
+                // Keep modal open for retry, but say why the save didn't
+                // visibly do anything.
+                this.#saveError.textContent = err instanceof Error ? err.message : "Failed to save settings.";
+                this.#saveError.classList.add("visible");
             }
         }
 
@@ -2390,6 +2432,7 @@ if (typeof HTMLElement !== "undefined") {
             this.#okBtn.disabled = true;
             this.#serverRestartNote.classList.remove("visible");
             this.#termRestartNote.classList.remove("visible");
+            this.#saveError.classList.remove("visible");
 
             this.#switchTab("server");
             this.setAttribute("open", "");
@@ -2398,6 +2441,7 @@ if (typeof HTMLElement !== "undefined") {
         close(): void {
             this.#origServer = null;
             this.#origTerminal = null;
+            this.#saveError.classList.remove("visible");
             this.removeAttribute("open");
         }
     }

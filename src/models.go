@@ -176,7 +176,8 @@ func (tm *Theme) MapToTheme(m map[string]any) {
 }
 
 // toColorMap converts the Theme to a map[string]any using the hyphenated key
-// names expected by MapToTheme and buildConfigYAML. Empty fields are omitted.
+// names expected by MapToTheme and the config.go read-modify-write helpers.
+// Empty fields are omitted.
 // BackgroundImage is intentionally excluded since it holds a file path, not a color.
 func (tm Theme) toColorMap() map[string]any {
 	m := make(map[string]any)

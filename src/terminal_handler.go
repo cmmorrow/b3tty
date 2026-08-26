@@ -92,7 +92,10 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 		ts.WSClientsMu.Unlock()
 	}()
 
+	ts.StateMu.RLock()
 	profile := ts.Profiles[ts.ProfileName]
+	orgCols, orgRows := ts.OrgCols, ts.OrgRows
+	ts.StateMu.RUnlock()
 
 	// Start the active profile's shell via /bin/sh -c so that shell flags and
 	// paths are handled uniformly regardless of the configured shell binary.
@@ -104,8 +107,8 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	windowSize := &pty.Winsize{
-		Cols: ts.OrgCols,
-		Rows: ts.OrgRows,
+		Cols: orgCols,
+		Rows: orgRows,
 	}
 
 	Debugf("cols: %d", windowSize.Cols)
@@ -118,6 +121,21 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	defer func() { _ = ptmx.Close() }() // Best effort.
+
+	// terminateSession kills the child process and closes the pty master.
+	// Killing the process is essential, not just cosmetic: on some platforms
+	// (observed on macOS) closing ptmx from one goroutine does not interrupt
+	// a concurrent blocking Read() on it from another goroutine, and
+	// SetReadDeadline is not supported on pty file descriptors either
+	// ("file type does not support deadline"), so a still-running child
+	// process can leave the output goroutine blocked on Read() forever —
+	// leaking the goroutine and never releasing this session's entry in
+	// ts.WSClients. Killing the child process closes its pty slave, which
+	// reliably unblocks any pending master-side Read() with EOF.
+	terminateSession := func() {
+		_ = c.Process.Kill()
+		_ = ptmx.Close()
+	}
 
 	// done is closed by the PTY output goroutine just before it calls
 	// ws.Close(). This lets the WebSocket input goroutine distinguish a
@@ -150,7 +168,7 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 						Errorf("websocket read: %v", err)
 					}
 				}
-				ptmx.Close()
+				terminateSession()
 				break
 			}
 			if msgType == websocket.TextMessage {
@@ -174,7 +192,7 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 				} else {
 					Errorf("write to pty: %v", err)
 				}
-				ptmx.Close()
+				terminateSession()
 				break
 			}
 		}
@@ -193,7 +211,7 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 				default:
 					Errorf("pty read: %v", err)
 				}
-				ptmx.Close()
+				terminateSession()
 				signalDone()
 				ws.Close()
 				return
@@ -204,7 +222,7 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 			client.mu.Unlock()
 			if err != nil {
 				Errorf("write from pty: %v", err)
-				ptmx.Close()
+				terminateSession()
 				signalDone()
 				break
 			}
@@ -221,7 +239,7 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 				} else {
 					Errorf("write to pty: %v", err)
 				}
-				ptmx.Close()
+				terminateSession()
 				return
 			}
 			time.Sleep(time.Millisecond * 200)

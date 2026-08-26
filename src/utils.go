@@ -95,15 +95,6 @@ func convertToFieldName(key string) string {
 	return strings.Join(parts, "")
 }
 
-// sum returns the sum of all integers in arr.
-func sum(arr []int) int {
-	total := 0
-	for _, i := range arr {
-		total += i
-	}
-	return total
-}
-
 // OpenBrowser attempts to open url in the system default browser using the
 // appropriate OS command. It returns an error if the command fails or the
 // platform is unsupported.
