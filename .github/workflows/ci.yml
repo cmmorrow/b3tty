@@ -38,6 +38,17 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # src/dist is gitignored (generated build output) and go:embed requires
+      # it to exist at compile time, so `make test-race` (via its `client`
+      # prerequisite) needs the client toolchain even though this job doesn't
+      # otherwise touch the client bundle.
+      - name: Install client dependencies
+        run: cd src/client && bun install
+
       - name: Run tests with race detector
         run: make test-race
 

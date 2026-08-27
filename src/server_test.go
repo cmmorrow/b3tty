@@ -18,10 +18,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// syncBuffer wraps bytes.Buffer with a mutex guarding both Write and String.
+// captureLog's caller reads String() only after f() returns, but a
+// background goroutine from an earlier test's real WebSocket+pty session
+// (see terminal_handler_test.go — those goroutines have no guaranteed
+// happens-before relationship with the test that spawned them, and can
+// outlive it) may still be concurrently calling into the logger and writing
+// to whatever buffer captureLog swapped in. A plain bytes.Buffer isn't safe
+// for that; this is.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 // captureLog redirects the standard logger to a buffer for the duration of f
 // and returns everything that was logged.
 func captureLog(f func()) string {
-	var buf bytes.Buffer
+	var buf syncBuffer
 	log.SetOutput(&buf)
 	log.SetFlags(0)
 	defer func() {
@@ -61,11 +86,10 @@ func newTestTerminalServer() *TerminalServer {
 		},
 		Themes:         map[string]Theme{},
 		Token:          "test-token-1234",
-		OrgCols:        DEFAULT_COLS,
-		OrgRows:        DEFAULT_ROWS,
 		ProfileName:    DEFAULT_PROFILE_NAME,
 		StartupProfile: DEFAULT_PROFILE_NAME,
 		AuthSleep:      func(time.Duration) {}, // no-op: avoid real delays in tests
+		StartTime:      time.Now(),
 		// WSClients mirrors what Serve() initializes before registering
 		// routes; without it, any handler that registers a WebSocket
 		// connection (terminalHandler) panics with "assignment to entry in
@@ -804,153 +828,6 @@ func TestWriteJSON(t *testing.T) {
 		w := httptest.NewRecorder()
 		writeJSON(w, struct{}{}, "test")
 		assert.Equal(t, http.StatusOK, w.Code)
-	})
-}
-
-// ---------------------------------------------------------------------------
-// setSizeHandler
-// ---------------------------------------------------------------------------
-
-func TestSetSizeHandler(t *testing.T) {
-	t.Run("GET is rejected with 405", func(t *testing.T) {
-		ts := newTestTerminalServer()
-		req := httptest.NewRequest(http.MethodGet, "/size?cols=80&rows=24", nil)
-		w := httptest.NewRecorder()
-		logged := captureLog(func() { ts.setSizeHandler(w, req) })
-		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-		assert.Contains(t, logged, "method not allowed")
-		// State must not be mutated on error
-		assert.Equal(t, uint16(DEFAULT_COLS), ts.OrgCols)
-		assert.Equal(t, uint16(DEFAULT_ROWS), ts.OrgRows)
-	})
-
-	t.Run("DELETE is rejected with 405", func(t *testing.T) {
-		ts := newTestTerminalServer()
-		req := httptest.NewRequest(http.MethodDelete, "/size", nil)
-		w := httptest.NewRecorder()
-		logged := captureLog(func() { ts.setSizeHandler(w, req) })
-		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-		assert.Contains(t, logged, "method not allowed")
-	})
-
-	t.Run("PUT is rejected with 405", func(t *testing.T) {
-		ts := newTestTerminalServer()
-		req := httptest.NewRequest(http.MethodPut, "/size?cols=80&rows=24", nil)
-		w := httptest.NewRecorder()
-		logged := captureLog(func() { ts.setSizeHandler(w, req) })
-		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-		assert.Contains(t, logged, "method not allowed")
-	})
-
-	t.Run("POST with valid params updates orgCols and orgRows", func(t *testing.T) {
-		ts := newTestTerminalServer()
-		req := httptest.NewRequest(http.MethodPost, "/size?cols=132&rows=50", nil)
-		w := httptest.NewRecorder()
-		ts.setSizeHandler(w, req)
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, uint16(132), ts.OrgCols)
-		assert.Equal(t, uint16(50), ts.OrgRows)
-	})
-
-	t.Run("POST with missing cols falls back to default", func(t *testing.T) {
-		ts := newTestTerminalServer()
-		req := httptest.NewRequest(http.MethodPost, "/size?rows=40", nil)
-		w := httptest.NewRecorder()
-		ts.setSizeHandler(w, req)
-		assert.Equal(t, uint16(DEFAULT_COLS), ts.OrgCols)
-		assert.Equal(t, uint16(40), ts.OrgRows)
-	})
-
-	t.Run("POST with missing rows falls back to default", func(t *testing.T) {
-		ts := newTestTerminalServer()
-		req := httptest.NewRequest(http.MethodPost, "/size?cols=100", nil)
-		w := httptest.NewRecorder()
-		ts.setSizeHandler(w, req)
-		assert.Equal(t, uint16(100), ts.OrgCols)
-		assert.Equal(t, uint16(DEFAULT_ROWS), ts.OrgRows)
-	})
-
-	t.Run("POST with no params falls back to both defaults", func(t *testing.T) {
-		ts := newTestTerminalServer()
-		req := httptest.NewRequest(http.MethodPost, "/size", nil)
-		w := httptest.NewRecorder()
-		ts.setSizeHandler(w, req)
-		assert.Equal(t, uint16(DEFAULT_COLS), ts.OrgCols)
-		assert.Equal(t, uint16(DEFAULT_ROWS), ts.OrgRows)
-	})
-
-	t.Run("POST with non-numeric cols falls back to default", func(t *testing.T) {
-		ts := newTestTerminalServer()
-		req := httptest.NewRequest(http.MethodPost, "/size?cols=wide&rows=24", nil)
-		w := httptest.NewRecorder()
-		ts.setSizeHandler(w, req)
-		assert.Equal(t, uint16(DEFAULT_COLS), ts.OrgCols)
-		assert.Equal(t, uint16(24), ts.OrgRows)
-	})
-
-	t.Run("POST with zero dimensions stores zero", func(t *testing.T) {
-		ts := newTestTerminalServer()
-		req := httptest.NewRequest(http.MethodPost, "/size?cols=0&rows=0", nil)
-		w := httptest.NewRecorder()
-		ts.setSizeHandler(w, req)
-		assert.Equal(t, uint16(0), ts.OrgCols)
-		assert.Equal(t, uint16(0), ts.OrgRows)
-	})
-
-	t.Run("POST returns no body", func(t *testing.T) {
-		ts := newTestTerminalServer()
-		req := httptest.NewRequest(http.MethodPost, "/size?cols=80&rows=24", nil)
-		w := httptest.NewRecorder()
-		ts.setSizeHandler(w, req)
-		assert.Empty(t, w.Body.String())
-	})
-
-	t.Run("POST with Sec-Fetch-Site same-origin is allowed", func(t *testing.T) {
-		ts := newTestTerminalServer()
-		req := httptest.NewRequest(http.MethodPost, "/size?cols=132&rows=50", nil)
-		req.Header.Set("Sec-Fetch-Site", "same-origin")
-		w := httptest.NewRecorder()
-		ts.setSizeHandler(w, req)
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, uint16(132), ts.OrgCols)
-		assert.Equal(t, uint16(50), ts.OrgRows)
-	})
-
-	t.Run("POST with Sec-Fetch-Site cross-site is rejected with 403", func(t *testing.T) {
-		ts := newTestTerminalServer()
-		req := httptest.NewRequest(http.MethodPost, "/size?cols=132&rows=50", nil)
-		req.Header.Set("Sec-Fetch-Site", "cross-site")
-		w := httptest.NewRecorder()
-		logged := captureLog(func() { ts.setSizeHandler(w, req) })
-		assert.Equal(t, http.StatusForbidden, w.Code)
-		assert.Contains(t, logged, "forbidden")
-		assert.Contains(t, logged, "cross-site")
-		// State must not be mutated on error
-		assert.Equal(t, uint16(DEFAULT_COLS), ts.OrgCols)
-		assert.Equal(t, uint16(DEFAULT_ROWS), ts.OrgRows)
-	})
-
-	t.Run("POST with Sec-Fetch-Site same-site is rejected with 403", func(t *testing.T) {
-		ts := newTestTerminalServer()
-		req := httptest.NewRequest(http.MethodPost, "/size?cols=132&rows=50", nil)
-		req.Header.Set("Sec-Fetch-Site", "same-site")
-		w := httptest.NewRecorder()
-		logged := captureLog(func() { ts.setSizeHandler(w, req) })
-		assert.Equal(t, http.StatusForbidden, w.Code)
-		assert.Contains(t, logged, "forbidden")
-		assert.Contains(t, logged, "same-site")
-		assert.Equal(t, uint16(DEFAULT_COLS), ts.OrgCols)
-		assert.Equal(t, uint16(DEFAULT_ROWS), ts.OrgRows)
-	})
-
-	t.Run("POST without Sec-Fetch-Site (non-browser client) is allowed", func(t *testing.T) {
-		ts := newTestTerminalServer()
-		req := httptest.NewRequest(http.MethodPost, "/size?cols=100&rows=30", nil)
-		w := httptest.NewRecorder()
-		ts.setSizeHandler(w, req)
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, uint16(100), ts.OrgCols)
-		assert.Equal(t, uint16(30), ts.OrgRows)
 	})
 }
 
@@ -1760,7 +1637,7 @@ func TestSortedThemeNames(t *testing.T) {
 
 // TestConcurrentStateAccess drives the handlers that read and write shared
 // TerminalServer state (Client, Profiles, Themes, ActiveTheme, ProfileName,
-// OrgCols/OrgRows, FirstRun) from many goroutines at once. Before StateMu was
+// FirstRun) from many goroutines at once. Before StateMu was
 // added to guard these fields, running this test with `go test -race` (or
 // often even without it) reliably reproduced "fatal error: concurrent map
 // writes" within a handful of iterations. Several of the handlers below also
@@ -1788,12 +1665,6 @@ func TestConcurrentStateAccess(t *testing.T) {
 		run(func() {
 			req := httptest.NewRequest(http.MethodGet, "/?token=test-token-1234&profile=work", nil)
 			ts.displayTermHandler(httptest.NewRecorder(), req)
-		})
-
-		// Size updates: write OrgCols/OrgRows.
-		run(func() {
-			req := httptest.NewRequest(http.MethodPost, "/size?cols=80&rows=24", nil)
-			ts.setSizeHandler(httptest.NewRecorder(), req)
 		})
 
 		// Theme edits: read+write Themes, write Client.Theme/ActiveTheme.
@@ -1828,14 +1699,15 @@ func TestConcurrentStateAccess(t *testing.T) {
 			ts.settingsHandler(httptest.NewRecorder(), req)
 		})
 
-		// A WebSocket session start reads Profiles/ProfileName and OrgCols/OrgRows.
-		// terminalHandler itself needs a real WebSocket upgrade and a pty, which
-		// isn't practical here; the read it performs is exercised directly under
-		// the same StateMu discipline as the real handler.
+		// A WebSocket session start reads Profiles/ProfileName under StateMu
+		// (cols/rows now come from the /ws request's own query string, not
+		// shared state). terminalHandler itself needs a real WebSocket
+		// upgrade and a pty, which isn't practical here; the read it performs
+		// is exercised directly under the same StateMu discipline as the real
+		// handler.
 		run(func() {
 			ts.StateMu.RLock()
 			_ = ts.Profiles[ts.ProfileName]
-			_, _ = ts.OrgCols, ts.OrgRows
 			ts.StateMu.RUnlock()
 		})
 

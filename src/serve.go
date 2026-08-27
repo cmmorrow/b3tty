@@ -18,6 +18,17 @@ import (
 //go:embed assets
 var assets embed.FS
 
+// dist holds bun's bundled/code-split client build output (terminal.min.js,
+// xterm.min.css, and the dynamically-imported *.chunk.js files), generated
+// by `make client` into src/dist — kept separate from assets (hand-authored
+// static files like favicon.ico and terminal.css) so that directory can be
+// committed cleanly without build-artifact churn. src/dist is gitignored;
+// `make client` is a prerequisite of test/test-race/build precisely because
+// this directive requires the directory to exist at compile time.
+//
+//go:embed dist
+var dist embed.FS
+
 // TerminalServer bundles all mutable per-session state used by the HTTP handlers,
 // making them independent of package-level globals and straightforward to test.
 type TerminalServer struct {
@@ -26,8 +37,6 @@ type TerminalServer struct {
 	Profiles       map[string]Profile
 	Themes         map[string]Theme
 	Token          string
-	OrgCols        uint16
-	OrgRows        uint16
 	ProfileName    string
 	StartupProfile string
 	ActiveTheme    string
@@ -39,16 +48,24 @@ type TerminalServer struct {
 	WSClients      map[*websocket.Conn]*wsClient
 	WSClientsMu    sync.Mutex
 	// StateMu guards every field above that is read or written by more than one
-	// HTTP handler after startup: Client, Profiles, Themes, ActiveTheme,
-	// ProfileName, OrgCols, and OrgRows. Server, ConfigFile, StartupProfile, and
-	// NoBrowser are set once before Serve() starts accepting requests and never
-	// mutated afterward, so they do not need to be guarded. Callers should hold
+	// HTTP handler after startup: Client, Profiles, Themes, ActiveTheme, and
+	// ProfileName. Server, ConfigFile, StartupProfile, and NoBrowser are set
+	// once before Serve() starts accepting requests and never mutated
+	// afterward, so they do not need to be guarded. Callers should hold
 	// StateMu only long enough to read or mutate state into local variables —
 	// never across template execution, JSON encoding, or other response I/O.
 	StateMu sync.RWMutex
 	// AuthSleep is the function used to pause on auth failures. It defaults to
 	// time.Sleep and can be replaced in tests with a no-op to avoid real delays.
 	AuthSleep func(time.Duration)
+	// StartTime is captured as close to process start as achievable (see the
+	// package-level startTime var in cmd/root.go) and set once before Serve()
+	// starts accepting requests; never mutated afterward.
+	StartTime time.Time
+	// WSEstablishedOnce guards the one-time debug log of how long the server
+	// took, from StartTime, to reach its first established WebSocket+pty
+	// session — see terminalHandler.
+	WSEstablishedOnce sync.Once
 }
 
 // GetCSPHeaders returns the baseline Content-Security-Policy directives used by
@@ -211,9 +228,9 @@ func Serve(ts *TerminalServer, shouldOpenBrowser bool, useTLS bool) {
 	}
 
 	mux.HandleFunc("/", ts.displayTermHandler)
-	mux.Handle("/assets/", http.StripPrefix("/", http.FileServer(http.FS(assets))))
+	mux.HandleFunc("/assets/", assetsHandler)
+	mux.HandleFunc("/dist/", distHandler)
 	mux.HandleFunc("/ws", ts.terminalHandler)
-	mux.HandleFunc("/size", ts.setSizeHandler)
 	mux.HandleFunc("/background", ts.backgroundHandler)
 	mux.HandleFunc("/theme", ts.themePaletteHandler)
 	mux.HandleFunc("/theme-config", ts.themeConfigHandler)

@@ -6,7 +6,6 @@ import {
     getProtocols,
     buildTheme,
     buildTermOptions,
-    buildSizeUrl,
     buildWsUrl,
     handleSocketMessage,
     handleSocketClose,
@@ -410,60 +409,39 @@ describe("buildTermOptions", () => {
 });
 
 // ---------------------------------------------------------------------------
-// buildSizeUrl
-// ---------------------------------------------------------------------------
-
-describe("buildSizeUrl", () => {
-    it("builds a correct HTTP size URL", () => {
-        const url = buildSizeUrl("http", "localhost", 8080, 80, 24);
-        expect(url).toBe("http://localhost:8080/size?cols=80&rows=24");
-    });
-
-    it("builds a correct HTTPS size URL", () => {
-        const url = buildSizeUrl("https", "example.com", 8443, 132, 48);
-        expect(url).toBe("https://example.com:8443/size?cols=132&rows=48");
-    });
-
-    it("handles non-standard ports", () => {
-        const url = buildSizeUrl("http", "localhost", 3000, 80, 24);
-        expect(url).toContain(":3000/");
-    });
-
-    it("reflects cols and rows exactly in the query string", () => {
-        const url = buildSizeUrl("http", "localhost", 8080, 1, 1);
-        expect(url).toContain("cols=1");
-        expect(url).toContain("rows=1");
-    });
-
-    it("handles zero cols and rows", () => {
-        const url = buildSizeUrl("http", "localhost", 8080, 0, 0);
-        expect(url).toBe("http://localhost:8080/size?cols=0&rows=0");
-    });
-});
-
-// ---------------------------------------------------------------------------
 // buildWsUrl
 // ---------------------------------------------------------------------------
 
 describe("buildWsUrl", () => {
     it("builds a correct ws URL", () => {
-        const url = buildWsUrl("ws", "localhost", 8080);
-        expect(url.toString()).toBe("ws://localhost:8080/ws");
+        const url = buildWsUrl("ws", "localhost", 8080, 80, 24);
+        expect(url.toString()).toBe("ws://localhost:8080/ws?cols=80&rows=24");
     });
 
     it("builds a correct wss URL", () => {
-        const url = buildWsUrl("wss", "example.com", 8443);
-        expect(url.toString()).toBe("wss://example.com:8443/ws");
+        const url = buildWsUrl("wss", "example.com", 8443, 132, 48);
+        expect(url.toString()).toBe("wss://example.com:8443/ws?cols=132&rows=48");
     });
 
     it("handles non-standard ports", () => {
-        const url = buildWsUrl("ws", "localhost", 3000);
+        const url = buildWsUrl("ws", "localhost", 3000, 80, 24);
         expect(url.toString()).toContain(":3000/");
     });
 
     it("returns a URL instance", () => {
-        const url = buildWsUrl("ws", "localhost", 8080);
+        const url = buildWsUrl("ws", "localhost", 8080, 80, 24);
         expect(url).toBeInstanceOf(URL);
+    });
+
+    it("reflects cols and rows exactly in the query string", () => {
+        const url = buildWsUrl("ws", "localhost", 8080, 1, 1);
+        expect(url.searchParams.get("cols")).toBe("1");
+        expect(url.searchParams.get("rows")).toBe("1");
+    });
+
+    it("handles zero cols and rows", () => {
+        const url = buildWsUrl("ws", "localhost", 8080, 0, 0);
+        expect(url.toString()).toBe("ws://localhost:8080/ws?cols=0&rows=0");
     });
 });
 
@@ -608,38 +586,20 @@ describe("isValidUri", () => {
 });
 
 // ---------------------------------------------------------------------------
-// buildSizeUrl — validation errors
-// ---------------------------------------------------------------------------
-
-describe("buildSizeUrl validation", () => {
-    it("throws on invalid HTTP protocol", () => {
-        expect(() => buildSizeUrl("ws", "localhost", 8080, 80, 24)).toThrow("Invalid HTTP protocol");
-    });
-
-    it("throws on invalid URI", () => {
-        expect(() => buildSizeUrl("http", "bad uri", 8080, 80, 24)).toThrow("Invalid URI");
-    });
-
-    it("throws on invalid port", () => {
-        expect(() => buildSizeUrl("http", "localhost", 0, 80, 24)).toThrow("Invalid port");
-    });
-});
-
-// ---------------------------------------------------------------------------
 // buildWsUrl — validation errors
 // ---------------------------------------------------------------------------
 
 describe("buildWsUrl validation", () => {
     it("throws on invalid WebSocket protocol", () => {
-        expect(() => buildWsUrl("http", "localhost", 8080)).toThrow("Invalid WebSocket protocol");
+        expect(() => buildWsUrl("http", "localhost", 8080, 80, 24)).toThrow("Invalid WebSocket protocol");
     });
 
     it("throws on invalid URI", () => {
-        expect(() => buildWsUrl("ws", "bad uri", 8080)).toThrow("Invalid URI");
+        expect(() => buildWsUrl("ws", "bad uri", 8080, 80, 24)).toThrow("Invalid URI");
     });
 
     it("throws on invalid port", () => {
-        expect(() => buildWsUrl("ws", "localhost", 0)).toThrow("Invalid port");
+        expect(() => buildWsUrl("ws", "localhost", 0, 80, 24)).toThrow("Invalid port");
     });
 });
 

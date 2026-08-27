@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"os"
+	"time"
 
 	"github.com/cmmorrow/b3tty/src"
 	"github.com/spf13/cobra"
@@ -9,6 +10,13 @@ import (
 )
 
 var Version = "latest"
+
+// startTime is captured as early as achievable in the process's lifetime —
+// as a package-level var it's initialized during Go's package-init phase,
+// which runs before main() executes. Used by `start` to log, in debug mode,
+// how long the server took to become interactive (see cmd/start.go and
+// TerminalServer.StartTime).
+var startTime = time.Now()
 
 var cfgFile string
 var cmdLog = src.NewCommandLogger()

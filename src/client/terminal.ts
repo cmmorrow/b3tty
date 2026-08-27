@@ -1,8 +1,8 @@
 import { Terminal } from "@xterm/xterm";
 import type { ITerminalInitOnlyOptions, ITerminalOptions, ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { WebLinksAddon } from "@xterm/addon-web-links";
-import { ImageAddon } from "@xterm/addon-image";
+import type { WebLinksAddon } from "@xterm/addon-web-links";
+import type { ImageAddon } from "@xterm/addon-image";
 import type {
     TermConfig,
     ThemeActivateResponse,
@@ -16,18 +16,9 @@ import type {
     SettingsConfig,
     SettingsTerminalConfig,
 } from "./types.ts";
-import { isValidHttpProtocol, isValidWsProtocol, isValidPort, isValidUri } from "./validators.ts";
-import { postSize, postThemeConfig, postAddTheme, getSettings } from "./api.ts";
-import "./components.ts";
+import { isValidWsProtocol, isValidPort, isValidUri } from "./validators.ts";
+import { postThemeConfig, postAddTheme, getSettings } from "./api.ts";
 import type { B3ttyDialog, B3ttyMenuBar, B3ttyThemePicker, MenuBarColors } from "./components.ts";
-import {
-    isB3ttyDialog,
-    isB3ttyMenuBar,
-    isB3ttyThemePicker,
-    isB3ttyThemeEditor,
-    isB3ttyProfileEditor,
-    isB3ttySettingsEditor,
-} from "./components.ts";
 
 export const THEME_KEYS = [
     "foreground",
@@ -164,26 +155,18 @@ export function buildTermOptions(
 }
 
 /**
- * Builds the URL used to POST the initial terminal size to the server.
+ * Builds the URL used to open the terminal WebSocket connection. cols/rows are
+ * carried as query parameters so the server can size the pty at upgrade time
+ * without a separate /size round trip before the socket opens.
  */
-export function buildSizeUrl(httpProto: string, uri: string, port: number, cols: number, rows: number): string {
-    if (!isValidHttpProtocol(httpProto)) throw new Error(`Invalid HTTP protocol: "${httpProto}"`);
-    if (!isValidUri(uri)) throw new Error(`Invalid URI: "${uri}"`);
-    if (!isValidPort(port)) throw new Error(`Invalid port: ${port}`);
-    const url = new URL(`${httpProto}://${uri}:${port}/size`);
-    url.searchParams.set("cols", String(cols));
-    url.searchParams.set("rows", String(rows));
-    return url.toString();
-}
-
-/**
- * Builds the URL used to open the terminal WebSocket connection.
- */
-export function buildWsUrl(wsProtocol: string, uri: string, port: number): URL {
+export function buildWsUrl(wsProtocol: string, uri: string, port: number, cols: number, rows: number): URL {
     if (!isValidWsProtocol(wsProtocol)) throw new Error(`Invalid WebSocket protocol: "${wsProtocol}"`);
     if (!isValidUri(uri)) throw new Error(`Invalid URI: "${uri}"`);
     if (!isValidPort(port)) throw new Error(`Invalid port: ${port}`);
-    return new URL(`${wsProtocol}://${uri}:${port}/ws`);
+    const url = new URL(`${wsProtocol}://${uri}:${port}/ws`);
+    url.searchParams.set("cols", String(cols));
+    url.searchParams.set("rows", String(rows));
+    return url;
 }
 
 /**
@@ -609,7 +592,15 @@ export function disableCursor(term: Terminal): void {
  * Main entry point. Wires together all terminal, WebSocket, and DOM interactions.
  */
 export async function main(config: TermConfig): Promise<void> {
-    const { wsProtocol, httpProto } = getProtocols(config.tls);
+    // Kicked off immediately so these chunks download in parallel with terminal
+    // setup below, instead of being parsed/evaluated as part of the same script
+    // that has to run before the WebSocket can open. Neither the web components
+    // (menu bar, dialogs, editors) nor the link/image addons are needed to
+    // compute cols/rows or open the WebSocket.
+    const componentsPromise = import("./components.ts");
+    const extraAddonsPromise = Promise.all([import("@xterm/addon-web-links"), import("@xterm/addon-image")]);
+
+    const { wsProtocol } = getProtocols(config.tls);
 
     applyPageStyles(config);
 
@@ -623,17 +614,16 @@ export async function main(config: TermConfig): Promise<void> {
         fitAddon.fit();
     }
 
-    term.loadAddon(new WebLinksAddon());
-    term.loadAddon(new ImageAddon());
+    extraAddonsPromise
+        .then(([{ WebLinksAddon }, { ImageAddon }]) => {
+            term.loadAddon(new WebLinksAddon());
+            term.loadAddon(new ImageAddon());
+        })
+        .catch((err) => console.warn("failed to load terminal addons:", err));
 
-    const sizeUrl = buildSizeUrl(httpProto, config.uri, config.port, term.cols, term.rows);
-    try {
-        await postSize(sizeUrl);
-    } catch (err) {
-        console.warn(err instanceof Error ? err.message : String(err));
-    }
-
-    const wsUrl = buildWsUrl(wsProtocol, config.uri, config.port);
+    // cols/rows travel on the /ws URL itself so the server can size the pty at
+    // upgrade time with no separate /size round trip before the socket opens.
+    const wsUrl = buildWsUrl(wsProtocol, config.uri, config.port, term.cols, term.rows);
     const socket = new WebSocket(wsUrl);
     socket.binaryType = "arraybuffer";
 
@@ -670,8 +660,10 @@ export async function main(config: TermConfig): Promise<void> {
         );
     };
 
+    const components = await componentsPromise;
+
     const dialogEl = requireElement("dialog");
-    if (!isB3ttyDialog(dialogEl)) throw new Error("Element #dialog is not a B3ttyDialog");
+    if (!components.isB3ttyDialog(dialogEl)) throw new Error("Element #dialog is not a B3ttyDialog");
     const dialog: B3ttyDialog = dialogEl;
     socket.onclose = (event) => {
         listenerController.abort();
@@ -690,7 +682,7 @@ export async function main(config: TermConfig): Promise<void> {
 
     const menuBarEl = document.getElementById("menubar");
     if (menuBarEl) {
-        if (!isB3ttyMenuBar(menuBarEl)) throw new Error("Element #menubar is not a B3ttyMenuBar");
+        if (!components.isB3ttyMenuBar(menuBarEl)) throw new Error("Element #menubar is not a B3ttyMenuBar");
         menuBar = menuBarEl;
         menuBar.setup(config.themeNames ?? [], config.profileNames ?? [], menuBarColors(config.theme));
 
@@ -702,7 +694,7 @@ export async function main(config: TermConfig): Promise<void> {
         });
         menuBarEl.addEventListener("b3tty-profile-change", handleProfileChange, { signal });
 
-        const picker = getOverlay("theme-picker", isB3ttyThemePicker);
+        const picker = getOverlay("theme-picker", components.isB3ttyThemePicker);
 
         menuBarEl.addEventListener(
             "b3tty-open-theme-selector",
@@ -720,7 +712,7 @@ export async function main(config: TermConfig): Promise<void> {
             );
         }
 
-        const editor = getOverlay("theme-editor", isB3ttyThemeEditor);
+        const editor = getOverlay("theme-editor", components.isB3ttyThemeEditor);
 
         menuBarEl.addEventListener(
             "b3tty-open-theme-editor",
@@ -738,7 +730,7 @@ export async function main(config: TermConfig): Promise<void> {
             );
         }
 
-        const profileEditor = getOverlay("profile-editor", isB3ttyProfileEditor);
+        const profileEditor = getOverlay("profile-editor", components.isB3ttyProfileEditor);
 
         menuBarEl.addEventListener(
             "b3tty-open-profile-editor",
@@ -755,7 +747,7 @@ export async function main(config: TermConfig): Promise<void> {
             });
         }
 
-        const settingsEditor = getOverlay("settings-editor", isB3ttySettingsEditor);
+        const settingsEditor = getOverlay("settings-editor", components.isB3ttySettingsEditor);
 
         menuBarEl.addEventListener(
             "b3tty-open-settings-editor",

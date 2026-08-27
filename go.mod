@@ -3,6 +3,7 @@ module github.com/cmmorrow/b3tty
 go 1.25.8
 
 require (
+	github.com/andybalholm/brotli v1.2.2
 	github.com/creack/pty v1.1.24
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/gorilla/websocket v1.5.3

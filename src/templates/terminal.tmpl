@@ -2,7 +2,7 @@
 <html>
     <head>
         <title>{{ if .Title }}{{ .Title }}{{ else }}b3tty{{ end }}</title>
-        <link rel="stylesheet" href="/assets/xterm.min.css" />
+        <link rel="stylesheet" href="/dist/xterm.min.css" />
         <link rel="stylesheet" href="/assets/terminal.css" />
         <link rel="shortcut icon" href="/assets/favicon.ico" />
     </head>
@@ -20,5 +20,5 @@
         </div>
     </body>
     <script nonce="{{ .Nonce }}">window.B3TTY = {{ .ConfigJSON }};</script>
-    <script type="module" src="/assets/terminal.min.js"></script>
+    <script type="module" src="/dist/terminal.min.js"></script>
 </html>
