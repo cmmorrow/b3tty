@@ -232,3 +232,55 @@ func TestTerminalHandler(t *testing.T) {
 		assert.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
 	})
 }
+
+// ---------------------------------------------------------------------------
+// logFirstSessionTiming
+// ---------------------------------------------------------------------------
+
+// Tested directly against the method rather than through a real WebSocket +
+// pty session: terminalHandler's two goroutines don't have a clean
+// happens-before relationship with each other on every shutdown path (see
+// the "resize to a zero dimension" test above), so asserting on captured log
+// content from a real session could still race a lingering goroutine from a
+// prior test calling Debugf. Calling the method directly is synchronous and
+// deterministic, and it's the only piece of logic this feature adds;
+// terminalHandler's one-line call site is straightforward to verify by
+// inspection.
+func TestLogFirstSessionTiming(t *testing.T) {
+	t.Run("logs elapsed time since StartTime when debug mode is on", func(t *testing.T) {
+		SetDebug(true)
+		defer SetDebug(false)
+
+		ts := newTestTerminalServer()
+		ts.StartTime = time.Now().Add(-250 * time.Millisecond)
+
+		logged := captureLog(func() { ts.logFirstSessionTiming() })
+
+		assert.Regexp(t, `time from server start to websocket\+pty established: 2[0-9][0-9]ms`, logged)
+	})
+
+	t.Run("logs nothing when debug mode is off", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		ts.StartTime = time.Now().Add(-250 * time.Millisecond)
+
+		logged := captureLog(func() { ts.logFirstSessionTiming() })
+
+		assert.Empty(t, logged)
+	})
+
+	t.Run("logs only once even when called multiple times", func(t *testing.T) {
+		SetDebug(true)
+		defer SetDebug(false)
+
+		ts := newTestTerminalServer()
+		ts.StartTime = time.Now()
+
+		logged := captureLog(func() {
+			ts.logFirstSessionTiming()
+			ts.logFirstSessionTiming()
+			ts.logFirstSessionTiming()
+		})
+
+		assert.Equal(t, 1, strings.Count(logged, "websocket+pty established"))
+	})
+}

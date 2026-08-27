@@ -65,12 +65,25 @@ func formatCommand(command string) []byte {
 	return []byte(strings.TrimSpace(command) + "\n")
 }
 
+// logFirstSessionTiming logs, in debug mode only and at most once per server
+// lifetime, the time elapsed between process start (ts.StartTime) and the
+// first WebSocket session's pty becoming ready — a one-time "time to first
+// interactive session" startup metric, not a per-connection one, so later
+// sessions (reconnects, additional tabs) are deliberately not logged again.
+func (ts *TerminalServer) logFirstSessionTiming() {
+	ts.WSEstablishedOnce.Do(func() {
+		Debugf("time from server start to websocket+pty established: %dms", time.Since(ts.StartTime).Milliseconds())
+	})
+}
+
 // terminalHandler upgrades the HTTP connection to a WebSocket, starts the
-// active profile's shell under a pty sized to the dimensions stored by
-// setSizeHandler, then runs two goroutines bridging pty output → WebSocket
-// and WebSocket input → pty. A done channel coordinated with sync.Once lets
-// the input goroutine distinguish a clean PTY-initiated shutdown from an
-// unexpected WebSocket error.
+// active profile's shell under a pty sized to the "cols"/"rows" query
+// parameters carried on the /ws upgrade request itself (falling back to
+// DEFAULT_COLS/DEFAULT_ROWS via parseSizeParams when absent), then runs two
+// goroutines bridging pty output → WebSocket and WebSocket input → pty. A
+// done channel coordinated with sync.Once lets the input goroutine
+// distinguish a clean PTY-initiated shutdown from an unexpected WebSocket
+// error.
 func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request) {
 	Debugf(" %s -> %s %s %s", r.RemoteAddr, r.Host, r.Method, r.URL)
 	Debugf("content length: %d", r.ContentLength)
@@ -92,9 +105,10 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 		ts.WSClientsMu.Unlock()
 	}()
 
+	orgCols, orgRows := parseSizeParams(r.URL.Query())
+
 	ts.StateMu.RLock()
 	profile := ts.Profiles[ts.ProfileName]
-	orgCols, orgRows := ts.OrgCols, ts.OrgRows
 	ts.StateMu.RUnlock()
 
 	// Start the active profile's shell via /bin/sh -c so that shell flags and
@@ -119,6 +133,7 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 		Errorf("start pty: %v", err)
 		return
 	}
+	ts.logFirstSessionTiming()
 
 	defer func() { _ = ptmx.Close() }() // Best effort.
 

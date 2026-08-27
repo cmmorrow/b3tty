@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync/atomic"
 )
 
 // warnWriter is an io.Writer that routes each line through the standard logger
@@ -43,12 +44,16 @@ const (
 // Colors are suppressed when output is piped or redirected.
 var useColor bool
 
-// debugEnabled gates the Debug/Debugf helpers. Set via SetDebug.
-var debugEnabled bool
+// debugEnabled gates the Debug/Debugf helpers. Set via SetDebug. It's an
+// atomic.Bool rather than a plain bool because production only ever writes
+// it once at startup (before any request-handling goroutines exist), but
+// tests toggle it around handler calls that may still have goroutines from a
+// prior test winding down concurrently — a plain bool would race there.
+var debugEnabled atomic.Bool
 
 // SetDebug enables or disables debug-level logging.
 func SetDebug(enabled bool) {
-	debugEnabled = enabled
+	debugEnabled.Store(enabled)
 }
 
 func init() {
@@ -129,7 +134,7 @@ func Fatal(args ...any) {
 // Debugf logs a debug message. Output is suppressed unless SetDebug(true) has
 // been called.
 func Debugf(format string, args ...any) {
-	if debugEnabled {
+	if debugEnabled.Load() {
 		log.Printf(debugLabel()+" "+format, args...)
 	}
 }
@@ -137,7 +142,7 @@ func Debugf(format string, args ...any) {
 // Debug logs a debug message. Output is suppressed unless SetDebug(true) has
 // been called.
 func Debug(msg string) {
-	if debugEnabled {
+	if debugEnabled.Load() {
 		log.Println(debugLabel(), msg)
 	}
 }
@@ -197,13 +202,13 @@ func (c *CommandLogger) Fatalf(format string, args ...any) {
 }
 
 func (c *CommandLogger) Debug(msg string) {
-	if debugEnabled {
+	if debugEnabled.Load() {
 		c.l.Println(c.colorize(ansiMagenta, msg))
 	}
 }
 
 func (c *CommandLogger) Debugf(format string, args ...any) {
-	if debugEnabled {
+	if debugEnabled.Load() {
 		c.l.Println(c.colorize(ansiMagenta, fmt.Sprintf(format, args...)))
 	}
 }

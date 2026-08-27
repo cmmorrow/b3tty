@@ -19,15 +19,6 @@ export async function postAddTheme(name: string): Promise<ThemeActivateResponse>
 }
 
 /**
- * POSTs terminal dimensions to /size (URL pre-built by buildSizeUrl).
- * Throws if the server returns a non-ok status.
- */
-export async function postSize(url: string): Promise<void> {
-    const res = await fetch(url, { method: "POST" });
-    if (!res.ok) throw new Error(`Failed to set terminal size: ${res.status}`);
-}
-
-/**
  * POSTs to /theme-config to activate the named theme.
  * Throws if the request fails or the response fails the type guard.
  */

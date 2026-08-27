@@ -100,27 +100,6 @@ func writeJSON(w http.ResponseWriter, v any, errContext string) {
 	}
 }
 
-// setSizeHandler accepts a POST request whose query string carries "cols" and "rows",
-// storing the parsed values for use when the next pty session is started.
-func (ts *TerminalServer) setSizeHandler(w http.ResponseWriter, r *http.Request) {
-	Debugf(" %s -> %s %s %s", r.RemoteAddr, r.Host, r.Method, r.URL)
-	Debugf("content length: %d", r.ContentLength)
-	if r.Method != "POST" {
-		Warnf("%s %s: method not allowed: %s", r.Method, r.URL.Path, r.Method)
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-	if requireSameOrigin(w, r) {
-		return
-	}
-	cols, rows := parseSizeParams(r.URL.Query())
-	ts.StateMu.Lock()
-	ts.OrgCols, ts.OrgRows = cols, rows
-	ts.StateMu.Unlock()
-	Debugf("extracted cols: %d", cols)
-	Debugf("extracted rows: %d", rows)
-}
-
 // displayTermHandler validates the auth token, selects the active profile, serialises
 // the TermConfig to JSON, and renders the terminal HTML template.
 func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Request) {

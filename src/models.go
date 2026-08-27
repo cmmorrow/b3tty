@@ -243,7 +243,7 @@ func NewTermConfig(srv *Server, clnt *Client, thm *Theme, themeNames []string, a
 		Theme:              *thm,
 		Uri:                srv.Uri,
 		Port:               srv.Port,
-		Debug:              debugEnabled,
+		Debug:              debugEnabled.Load(),
 		HasBackgroundImage: thm.BackgroundImage != "",
 		ThemeNames:         themeNames,
 		AllThemeNames:      allThemeNames,
