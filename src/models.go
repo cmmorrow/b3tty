@@ -13,24 +13,22 @@ import (
 )
 
 type Client struct {
-	Rows        int
-	Columns     int
-	AutoResize  bool
-	CursorBlink bool
-	FontFamily  string
-	FontSize    int
-	Theme       Theme
+	Rows       int
+	Columns    int
+	AutoResize bool
+	FontFamily string
+	FontSize   int
+	Theme      Theme
 }
 
-func NewClient(rows *int, columns *int, autoResize *bool, blink *bool, fontFamily *string, fontSize *int, theme *Theme) *Client {
+func NewClient(rows *int, columns *int, autoResize *bool, fontFamily *string, fontSize *int, theme *Theme) *Client {
 	return &Client{
-		Rows:        *rows,
-		Columns:     *columns,
-		AutoResize:  *autoResize,
-		CursorBlink: *blink,
-		FontFamily:  *fontFamily,
-		FontSize:    *fontSize,
-		Theme:       *theme,
+		Rows:       *rows,
+		Columns:    *columns,
+		AutoResize: *autoResize,
+		FontFamily: *fontFamily,
+		FontSize:   *fontSize,
+		Theme:      *theme,
 	}
 }
 
@@ -213,7 +211,6 @@ func (tm Theme) toColorMap() map[string]any {
 
 type TermConfig struct {
 	TLS                bool     `json:"tls"`
-	CursorBlink        bool     `json:"cursorBlink"`
 	FontFamily         string   `json:"fontFamily"`
 	FontSize           int      `json:"fontSize"`
 	Rows               int      `json:"rows"`
@@ -229,12 +226,12 @@ type TermConfig struct {
 	BuiltinThemeNames  []string `json:"builtinThemeNames"`
 	ProfileNames       []string `json:"profileNames"`
 	ActiveTheme        string   `json:"activeTheme"`
+	ShowMenubar        string   `json:"showMenubar"`
 }
 
-func NewTermConfig(srv *Server, clnt *Client, thm *Theme, themeNames []string, allThemeNames []string, builtinThemeNames []string, profileNames []string, activeTheme string) *TermConfig {
+func NewTermConfig(srv *Server, clnt *Client, thm *Theme, themeNames []string, allThemeNames []string, builtinThemeNames []string, profileNames []string, activeTheme string, showMenubar string) *TermConfig {
 	return &TermConfig{
 		TLS:                srv.TLS.Enabled,
-		CursorBlink:        clnt.CursorBlink,
 		FontFamily:         clnt.FontFamily,
 		FontSize:           clnt.FontSize,
 		Rows:               clnt.Rows,
@@ -250,6 +247,7 @@ func NewTermConfig(srv *Server, clnt *Client, thm *Theme, themeNames []string, a
 		BuiltinThemeNames:  builtinThemeNames,
 		ProfileNames:       profileNames,
 		ActiveTheme:        activeTheme,
+		ShowMenubar:        showMenubar,
 	}
 }
 
@@ -292,21 +290,21 @@ type editProfileResponse struct {
 // SettingsServerConfig holds the subset of server settings exposed via the
 // Settings overlay. These fields require a server restart to take effect.
 type SettingsServerConfig struct {
-	Port      int  `json:"port"`
-	NoAuth    bool `json:"noAuth"`
-	NoBrowser bool `json:"noBrowser"`
+	Port        int    `json:"port"`
+	NoAuth      bool   `json:"noAuth"`
+	NoBrowser   bool   `json:"noBrowser"`
+	ShowMenubar string `json:"showMenubar"`
 }
 
 // SettingsTerminalConfig holds the terminal settings exposed via the
-// Settings overlay. Font and cursor fields apply to the live session;
-// auto-resize, rows, and columns only persist to the config file.
+// Settings overlay. Font fields apply to the live session; auto-resize,
+// rows, and columns only persist to the config file.
 type SettingsTerminalConfig struct {
-	FontFamily  string `json:"fontFamily"`
-	FontSize    int    `json:"fontSize"`
-	CursorBlink bool   `json:"cursorBlink"`
-	AutoResize  bool   `json:"autoResize"`
-	Rows        int    `json:"rows"`
-	Columns     int    `json:"columns"`
+	FontFamily string `json:"fontFamily"`
+	FontSize   int    `json:"fontSize"`
+	AutoResize bool   `json:"autoResize"`
+	Rows       int    `json:"rows"`
+	Columns    int    `json:"columns"`
 }
 
 // settingsConfigResponse is the JSON shape for GET and POST /settings.

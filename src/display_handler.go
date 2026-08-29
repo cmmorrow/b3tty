@@ -74,8 +74,8 @@ func resolveProfileName(q url.Values, profiles map[string]Profile) string {
 // buildConfigJSON serialises a TermConfig derived from the given server, client, theme,
 // and available theme/profile name lists into JSON. The returned bytes are ready to
 // embed in the HTML template.
-func buildConfigJSON(srv *Server, clnt *Client, thm *Theme, themeNames []string, allThemeNames []string, builtinThemeNames []string, profileNames []string, activeTheme string) ([]byte, error) {
-	cfg := NewTermConfig(srv, clnt, thm, themeNames, allThemeNames, builtinThemeNames, profileNames, activeTheme)
+func buildConfigJSON(srv *Server, clnt *Client, thm *Theme, themeNames []string, allThemeNames []string, builtinThemeNames []string, profileNames []string, activeTheme string, showMenubar string) ([]byte, error) {
+	cfg := NewTermConfig(srv, clnt, thm, themeNames, allThemeNames, builtinThemeNames, profileNames, activeTheme, showMenubar)
 	return json.Marshal(cfg)
 }
 
@@ -116,6 +116,7 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 		Title       string
 		ProfileName string
 		Nonce       string
+		ShowMenubar string
 	}
 	Debugf(" %s -> %s %s %s", r.RemoteAddr, r.Host, r.Method, r.URL)
 	Debugf("content length: %d", r.ContentLength)
@@ -217,7 +218,7 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	Debugf("All theme names: %s", strings.Join(allThemeNames, ", "))
 	Debugf("Profile names: %s", strings.Join(profileNames, ", "))
 
-	cfgJSON, err := buildConfigJSON(ts.Server, &clientCopy, &thm, themeNames, allThemeNames, builtinNames, profileNames, activeTheme)
+	cfgJSON, err := buildConfigJSON(ts.Server, &clientCopy, &thm, themeNames, allThemeNames, builtinNames, profileNames, activeTheme, ts.ShowMenubar)
 	if err != nil {
 		Errorf("config serialization error: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -239,7 +240,7 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	Debugf("config response body: %s", cfgPayload)
 	Debugf("title: %s", profile.Title)
 	Debugf("nonce: %s", nonce)
-	err = terminalTemplate.Execute(w, TemplateProps{ConfigJSON: template.JS(cfgPayload), Title: profile.Title, ProfileName: profileName, Nonce: nonce})
+	err = terminalTemplate.Execute(w, TemplateProps{ConfigJSON: template.JS(cfgPayload), Title: profile.Title, ProfileName: profileName, Nonce: nonce, ShowMenubar: ts.ShowMenubar})
 	if err != nil {
 		Errorf("response error: %v", err)
 		return

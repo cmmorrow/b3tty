@@ -37,7 +37,6 @@ server:
 terminal:
   font-family: "monospace"
   font-size: 14
-  cursor-blink: true
   rows: 24
   columns: 80
 theme: "my-theme"

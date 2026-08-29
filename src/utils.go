@@ -83,6 +83,16 @@ func ValidatePortNumber(port int) bool {
 	return true
 }
 
+// ValidateShowMenubar reports whether v is one of the allowed show-menubar
+// values: "hover", "visible", or "disable".
+func ValidateShowMenubar(v string) bool {
+	switch v {
+	case SHOW_MENUBAR_HOVER, SHOW_MENUBAR_VISIBLE, SHOW_MENUBAR_DISABLE:
+		return true
+	}
+	return false
+}
+
 // convertToFieldName converts a hyphenated string to a PascalCase (UpperCamelCase)
 // Go field name by splitting on hyphens and capitalising the first letter of each
 // part (e.g. "user-first-name" → "UserFirstName").

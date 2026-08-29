@@ -79,7 +79,7 @@ Once a config file exists, the setup page is never shown again. To return to the
 
 ## Configuration
 
-b3tty can be configured via a yaml file specified on startup with the command `b3tty start --config <file path>`. Themes, profiles, font, font size, cursor blink, and terminal dimensions can only be specified in the config file. The config file is a yaml file and b3tty isn't picky about the file name or path, however, it's recommended to name the file b3tty.yaml and place it in ~/.config/b3tty.
+b3tty can be configured via a yaml file specified on startup with the command `b3tty start --config <file path>`. Themes, profiles, font, font size, and terminal dimensions can only be specified in the config file. The config file is a yaml file and b3tty isn't picky about the file name or path, however, it's recommended to name the file b3tty.yaml and place it in ~/.config/b3tty.
 
 When a config file is provided, b3tty validates it on startup before the server starts. Any unknown keys or fields with the wrong data type are reported with the line number where the problem occurs, and the server will not start until the config file is corrected. An example config yaml file can be seen below:
 
@@ -93,7 +93,6 @@ server:
 terminal:
   font-family: "MesloLGS Nerd Font Mono"
   font-size: 16
-  cursor-blink: false
   rows: 30
 profiles:
   projects:
@@ -152,7 +151,6 @@ Controls the appearance and dimensions of the terminal.
 |-----|------|---------|-------------|
 | `font-family` | string | `"monospace"` | The font used in the terminal. Multi-word names (e.g. `"Fira Code"`) are supported. Note: the font must be available in the browser. |
 | `font-size` | int | `14` | Terminal font size in pixels. |
-| `cursor-blink` | bool | `true` | Whether the terminal cursor blinks. May not work in all browsers. |
 | `rows` | int | `24` | Number of terminal rows. |
 | `columns` | int | `0` | Number of terminal columns. `0` means auto-fit to the browser window width. |
 

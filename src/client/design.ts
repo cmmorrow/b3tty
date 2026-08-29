@@ -160,6 +160,11 @@ export const FORM_INPUT_STYLES = `
         background: var(--color-surface-3); box-sizing: border-box;
     }
     .number-input:disabled { opacity: 0.4; cursor: not-allowed; }
+    .select-input {
+        font-family: sans-serif; font-size: var(--font-md);
+        padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+        background: var(--color-surface-3); box-sizing: border-box;
+    }
 `;
 
 /**

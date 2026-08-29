@@ -44,7 +44,7 @@ export interface MenuBarColors {
  * Interface for the b3tty-menu-bar web component.
  */
 export interface B3ttyMenuBar {
-    setup(themeNames: string[], profileNames: string[], colors: MenuBarColors): void;
+    setup(themeNames: string[], profileNames: string[], colors: MenuBarColors, mode?: "hover" | "visible"): void;
     updateColors(colors: MenuBarColors): void;
 }
 
@@ -579,6 +579,7 @@ if (typeof HTMLElement !== "undefined") {
     class B3ttyMenuBarImpl extends HTMLElement implements B3ttyMenuBar {
         #hideTimer: ReturnType<typeof setTimeout> | null = null;
         #activeSection: string | null = null;
+        #mode: "hover" | "visible" = "hover";
         #shadow: ShadowRoot;
         #menubar: HTMLDivElement;
         #trigger: HTMLDivElement;
@@ -624,6 +625,9 @@ if (typeof HTMLElement !== "undefined") {
                     opacity: 1;
                 }
                 :host([open]) .trigger {
+                    display: none;
+                }
+                :host([mode="visible"]) .trigger {
                     display: none;
                 }
                 .menubar {
@@ -715,7 +719,14 @@ if (typeof HTMLElement !== "undefined") {
             document.removeEventListener("pointerdown", this.#onDocumentPointerDown);
         }
 
-        setup(themeNames: string[], profileNames: string[], colors: MenuBarColors): void {
+        setup(
+            themeNames: string[],
+            profileNames: string[],
+            colors: MenuBarColors,
+            mode: "hover" | "visible" = "hover"
+        ): void {
+            this.#mode = mode;
+            this.setAttribute("mode", mode);
             this.updateColors(colors);
             this.#menubar.innerHTML = "";
             this.#activeSection = null;
@@ -724,6 +735,10 @@ if (typeof HTMLElement !== "undefined") {
             this.#menubar.appendChild(this.#buildSection("b3tty", "b3tty", []));
             this.#menubar.appendChild(this.#buildSection("themes", "Themes", themeNames));
             this.#menubar.appendChild(this.#buildSection("profiles", "Profiles", profileNames));
+
+            if (this.#mode === "visible") {
+                this.#open();
+            }
         }
 
         updateColors(colors: MenuBarColors): void {
@@ -867,12 +882,17 @@ if (typeof HTMLElement !== "undefined") {
             for (const s of Array.from(this.#menubar.querySelectorAll(".section.active"))) {
                 s.classList.remove("active");
             }
+            // In "visible" mode the bar itself never hides — only the active
+            // dropdown section (cleared above) closes.
+            if (this.#mode === "visible") return;
             this.style.height = "0px";
             this.removeAttribute("open");
             this.dispatchEvent(new CustomEvent("b3tty-menubar-close", { bubbles: true, composed: true }));
         }
 
         #resetTimer(): void {
+            // "visible" mode never auto-hides, so no idle timer is armed.
+            if (this.#mode === "visible") return;
             if (this.#hideTimer !== null) clearTimeout(this.#hideTimer);
             this.#hideTimer = setTimeout(() => this.#close(), 5000);
         }
@@ -1972,11 +1992,11 @@ if (typeof HTMLElement !== "undefined") {
         #portInput: HTMLInputElement;
         #noAuthInput: HTMLInputElement;
         #noBrowserInput: HTMLInputElement;
+        #showMenubarInput: HTMLSelectElement;
 
         // Terminal tab inputs
         #fontFamilyInput: HTMLInputElement;
         #fontSizeInput: HTMLInputElement;
-        #cursorBlinkInput: HTMLInputElement;
         #autoResizeInput: HTMLInputElement;
         #rowsInput: HTMLInputElement;
         #columnsInput: HTMLInputElement;
@@ -1997,11 +2017,10 @@ if (typeof HTMLElement !== "undefined") {
         #termRestartNote: HTMLDivElement;
 
         // Original values for dirty tracking
-        #origServer: { port: string; noAuth: boolean; noBrowser: boolean } | null = null;
+        #origServer: { port: string; noAuth: boolean; noBrowser: boolean; showMenubar: string } | null = null;
         #origTerminal: {
             fontFamily: string;
             fontSize: string;
-            cursorBlink: boolean;
             autoResize: boolean;
             rows: string;
             columns: string;
@@ -2158,6 +2177,26 @@ if (typeof HTMLElement !== "undefined") {
                 )
             );
 
+            this.#showMenubarInput = document.createElement("select");
+            this.#showMenubarInput.className = "select-input";
+            for (const [value, label] of [
+                ["hover", "Hover to show"],
+                ["visible", "Always visible"],
+                ["disable", "Disabled"],
+            ] as [string, string][]) {
+                const option = document.createElement("option");
+                option.value = value;
+                option.textContent = label;
+                this.#showMenubarInput.appendChild(option);
+            }
+            serverPanel.appendChild(
+                this.#makeSettingGroup(
+                    "Menu Bar Visibility",
+                    "Controls whether the menu bar shows on hover, stays always visible, or is disabled entirely. Requires restart.",
+                    this.#showMenubarInput
+                )
+            );
+
             this.#serverRestartNote = document.createElement("div");
             this.#serverRestartNote.className = "restart-note";
             this.#serverRestartNote.textContent = "⚠ Server settings will not take effect until b3tty is restarted.";
@@ -2190,17 +2229,6 @@ if (typeof HTMLElement !== "undefined") {
                     "Font Size (px)",
                     "Terminal font size in pixels. Applied immediately.",
                     this.#fontSizeInput
-                )
-            );
-
-            this.#cursorBlinkInput = document.createElement("input");
-            this.#cursorBlinkInput.type = "checkbox";
-            this.#cursorBlinkInput.className = "toggle";
-            terminalPanel.appendChild(
-                this.#makeSettingGroup(
-                    "Cursor Blink",
-                    "When enabled, the cursor blinks. Applied immediately.",
-                    this.#cursorBlinkInput
                 )
             );
 
@@ -2285,7 +2313,7 @@ if (typeof HTMLElement !== "undefined") {
             ]) {
                 el.addEventListener("input", () => this.#checkDirty());
             }
-            for (const el of [this.#noAuthInput, this.#noBrowserInput, this.#cursorBlinkInput]) {
+            for (const el of [this.#noAuthInput, this.#noBrowserInput, this.#showMenubarInput]) {
                 el.addEventListener("change", () => this.#checkDirty());
             }
             this.#autoResizeInput.addEventListener("change", () => {
@@ -2333,12 +2361,12 @@ if (typeof HTMLElement !== "undefined") {
             const serverChanged =
                 this.#portInput.value !== this.#origServer.port ||
                 this.#noAuthInput.checked !== this.#origServer.noAuth ||
-                this.#noBrowserInput.checked !== this.#origServer.noBrowser;
+                this.#noBrowserInput.checked !== this.#origServer.noBrowser ||
+                this.#showMenubarInput.value !== this.#origServer.showMenubar;
 
             const termChanged =
                 this.#fontFamilyInput.value !== this.#origTerminal.fontFamily ||
-                this.#fontSizeInput.value !== this.#origTerminal.fontSize ||
-                this.#cursorBlinkInput.checked !== this.#origTerminal.cursorBlink;
+                this.#fontSizeInput.value !== this.#origTerminal.fontSize;
 
             const autoResizeChanged = this.#autoResizeInput.checked !== this.#origTerminal.autoResize;
             const dimChanged =
@@ -2369,11 +2397,11 @@ if (typeof HTMLElement !== "undefined") {
                     port,
                     noAuth: this.#noAuthInput.checked,
                     noBrowser: this.#noBrowserInput.checked,
+                    showMenubar: this.#showMenubarInput.value as "hover" | "visible" | "disable",
                 },
                 terminal: {
                     fontFamily: this.#fontFamilyInput.value.trim(),
                     fontSize,
-                    cursorBlink: this.#cursorBlinkInput.checked,
                     autoResize: this.#autoResizeInput.checked,
                     rows: parseInt(this.#rowsInput.value, 10) || 0,
                     columns: parseInt(this.#columnsInput.value, 10) || 0,
@@ -2406,10 +2434,10 @@ if (typeof HTMLElement !== "undefined") {
             this.#portInput.value = String(settings.server.port);
             this.#noAuthInput.checked = settings.server.noAuth;
             this.#noBrowserInput.checked = settings.server.noBrowser;
+            this.#showMenubarInput.value = settings.server.showMenubar;
 
             this.#fontFamilyInput.value = settings.terminal.fontFamily;
             this.#fontSizeInput.value = String(settings.terminal.fontSize);
-            this.#cursorBlinkInput.checked = settings.terminal.cursorBlink;
             this.#autoResizeInput.checked = settings.terminal.autoResize;
             this.#rowsInput.value = String(settings.terminal.rows);
             this.#columnsInput.value = String(settings.terminal.columns);
@@ -2419,11 +2447,11 @@ if (typeof HTMLElement !== "undefined") {
                 port: this.#portInput.value,
                 noAuth: this.#noAuthInput.checked,
                 noBrowser: this.#noBrowserInput.checked,
+                showMenubar: this.#showMenubarInput.value,
             };
             this.#origTerminal = {
                 fontFamily: this.#fontFamilyInput.value,
                 fontSize: this.#fontSizeInput.value,
-                cursorBlink: this.#cursorBlinkInput.checked,
                 autoResize: this.#autoResizeInput.checked,
                 rows: this.#rowsInput.value,
                 columns: this.#columnsInput.value,

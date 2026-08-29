@@ -39,21 +39,21 @@ type configFile struct {
 }
 
 type serverConfig struct {
-	TLS       bool   `yaml:"tls"`
-	CertFile  string `yaml:"cert-file"`
-	KeyFile   string `yaml:"key-file"`
-	NoAuth    bool   `yaml:"no-auth"`
-	NoBrowser bool   `yaml:"no-browser"`
-	Port      int    `yaml:"port"`
+	TLS         bool   `yaml:"tls"`
+	CertFile    string `yaml:"cert-file"`
+	KeyFile     string `yaml:"key-file"`
+	NoAuth      bool   `yaml:"no-auth"`
+	NoBrowser   bool   `yaml:"no-browser"`
+	Port        int    `yaml:"port"`
+	ShowMenubar string `yaml:"show-menubar"`
 }
 
 type terminalConfig struct {
-	FontFamily  string `yaml:"font-family"`
-	FontSize    int    `yaml:"font-size"`
-	CursorBlink bool   `yaml:"cursor-blink"`
-	AutoResize  bool   `yaml:"auto-resize"`
-	Rows        int    `yaml:"rows"`
-	Columns     int    `yaml:"columns"`
+	FontFamily string `yaml:"font-family"`
+	FontSize   int    `yaml:"font-size"`
+	AutoResize bool   `yaml:"auto-resize"`
+	Rows       int    `yaml:"rows"`
+	Columns    int    `yaml:"columns"`
 }
 
 type themeConfig struct {
@@ -333,6 +333,7 @@ func SaveSettingsToConfig(configPath string, server SettingsServerConfig, termin
 	serverSection["port"] = server.Port
 	serverSection["no-auth"] = server.NoAuth
 	serverSection["no-browser"] = server.NoBrowser
+	serverSection["show-menubar"] = server.ShowMenubar
 
 	termSection := getOrCreateSection(cfg, "terminal")
 	if terminal.FontFamily != "" {
@@ -341,7 +342,6 @@ func SaveSettingsToConfig(configPath string, server SettingsServerConfig, termin
 		delete(termSection, "font-family")
 	}
 	termSection["font-size"] = terminal.FontSize
-	termSection["cursor-blink"] = terminal.CursorBlink
 	termSection["auto-resize"] = terminal.AutoResize
 	termSection["rows"] = terminal.Rows
 	termSection["columns"] = terminal.Columns

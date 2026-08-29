@@ -99,6 +99,14 @@ export function menuBarColors(theme: { foreground?: string; background?: string 
 }
 
 /**
+ * Derives the menu bar's hover-vs-visible rendering mode from config.showMenubar.
+ * Anything other than "visible" (including undefined/"hover") falls back to "hover".
+ */
+export function menuBarMode(config: Pick<TermConfig, "showMenubar">): "hover" | "visible" {
+    return config.showMenubar === "visible" ? "visible" : "hover";
+}
+
+/**
  * Extracts defined theme color values from the config's theme object.
  * Only keys present in THEME_KEYS with truthy values are included.
  */
@@ -143,7 +151,7 @@ export function buildTermOptions(
     allowTransparency = false
 ): ITerminalOptions & ITerminalInitOnlyOptions {
     const options: ITerminalOptions & ITerminalInitOnlyOptions = {
-        cursorBlink: config.cursorBlink,
+        cursorBlink: false,
         fontFamily: buildFontFamily(config.fontFamily),
         fontSize: config.fontSize,
     };
@@ -400,7 +408,30 @@ export function applyThemeStyles(
             bgStyle.id = "b3tty-bg-style";
             document.head.appendChild(bgStyle);
         }
-        bgStyle.textContent = `#terminal .xterm-viewport { background-color: transparent !important; }`;
+        // xterm.js keeps .xterm-viewport opaque by default specifically so the
+        // browser's native scrollbar renders correctly (see its own CSS comment);
+        // forcing it transparent here so the background image shows through removes
+        // that cue, which leaves some browsers painting an opaque scrollbar track
+        // with an invisible thumb. The scrollbar is styled explicitly below instead
+        // of relying on the browser's default track/thumb color inference.
+        const thumbColor = withAlpha("#808080", 0.6);
+        const thumbColorHover = withAlpha("#808080", 0.8);
+        bgStyle.textContent = `
+            #terminal .xterm-viewport {
+                background-color: transparent !important;
+                scrollbar-color: ${thumbColor} transparent;
+            }
+            #terminal .xterm-viewport::-webkit-scrollbar-track {
+                background: transparent;
+            }
+            #terminal .xterm-viewport::-webkit-scrollbar-thumb {
+                background-color: ${thumbColor};
+                border-radius: 5px;
+            }
+            #terminal .xterm-viewport::-webkit-scrollbar-thumb:hover {
+                background-color: ${thumbColorHover};
+            }
+        `;
         containerEl.style.background = "";
     } else {
         document.body.style.background = "";
@@ -476,7 +507,7 @@ function refreshMenuBarThemeNames(
 ): void {
     if (newTheme.themeNames) {
         config.themeNames = newTheme.themeNames;
-        menuBar.setup(config.themeNames, config.profileNames ?? [], colors);
+        menuBar.setup(config.themeNames, config.profileNames ?? [], colors, menuBarMode(config));
     } else {
         menuBar.updateColors(colors);
     }
@@ -519,7 +550,7 @@ export async function handleThemeSelected(
 export async function handleProfileEdited(e: Event, menuBar: B3ttyMenuBar, config: TermConfig): Promise<void> {
     const { response } = (e as CustomEvent<{ name: string | null; response: EditProfileResponse }>).detail;
     config.profileNames = response.profileNames;
-    menuBar.setup(config.themeNames ?? [], config.profileNames, menuBarColors(config.theme));
+    menuBar.setup(config.themeNames ?? [], config.profileNames, menuBarColors(config.theme), menuBarMode(config));
 }
 
 /**
@@ -545,13 +576,12 @@ export async function handleThemeEdited(
 }
 
 /**
- * Applies saved terminal settings (font, cursor) to the live xterm.js Terminal.
+ * Applies saved terminal settings (font) to the live xterm.js Terminal.
  * When the session started in fixed-size mode (auto-resize false), rows and columns
  * are also applied live via term.resize(); the registered term.onResize listener
  * propagates the new dimensions to the server PTY over WebSocket.
  */
 export function applyTerminalSettings(t: SettingsTerminalConfig, term: Terminal, config: TermConfig): void {
-    term.options.cursorBlink = t.cursorBlink;
     if (t.fontFamily) {
         term.options.fontFamily = buildFontFamily(t.fontFamily);
         document.documentElement.style.setProperty("--b3tty-font-family", buildFontFamilyCssVar(t.fontFamily));
@@ -562,7 +592,6 @@ export function applyTerminalSettings(t: SettingsTerminalConfig, term: Terminal,
     }
     config.fontFamily = t.fontFamily;
     config.fontSize = t.fontSize;
-    config.cursorBlink = t.cursorBlink;
     if (!config.autoResize) {
         config.rows = t.rows;
         config.columns = t.columns;
@@ -684,7 +713,12 @@ export async function main(config: TermConfig): Promise<void> {
     if (menuBarEl) {
         if (!components.isB3ttyMenuBar(menuBarEl)) throw new Error("Element #menubar is not a B3ttyMenuBar");
         menuBar = menuBarEl;
-        menuBar.setup(config.themeNames ?? [], config.profileNames ?? [], menuBarColors(config.theme));
+        menuBar.setup(
+            config.themeNames ?? [],
+            config.profileNames ?? [],
+            menuBarColors(config.theme),
+            menuBarMode(config)
+        );
 
         menuBarEl.addEventListener("b3tty-menubar-open", refit, { signal });
         menuBarEl.addEventListener("b3tty-menubar-close", refit, { signal });
