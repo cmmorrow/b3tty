@@ -44,16 +44,18 @@ type TerminalServer struct {
 	FailedAttempts int
 	FirstRun       bool
 	NoBrowser      bool
+	ShowMenubar    string
 	BackoffMu      sync.Mutex
 	WSClients      map[*websocket.Conn]*wsClient
 	WSClientsMu    sync.Mutex
 	// StateMu guards every field above that is read or written by more than one
 	// HTTP handler after startup: Client, Profiles, Themes, ActiveTheme, and
-	// ProfileName. Server, ConfigFile, StartupProfile, and NoBrowser are set
-	// once before Serve() starts accepting requests and never mutated
-	// afterward, so they do not need to be guarded. Callers should hold
-	// StateMu only long enough to read or mutate state into local variables —
-	// never across template execution, JSON encoding, or other response I/O.
+	// ProfileName. Server, ConfigFile, StartupProfile, NoBrowser, and
+	// ShowMenubar are set once before Serve() starts accepting requests and
+	// never mutated afterward, so they do not need to be guarded. Callers
+	// should hold StateMu only long enough to read or mutate state into local
+	// variables — never across template execution, JSON encoding, or other
+	// response I/O.
 	StateMu sync.RWMutex
 	// AuthSleep is the function used to pause on auth failures. It defaults to
 	// time.Sleep and can be replaced in tests with a no-op to avoid real delays.

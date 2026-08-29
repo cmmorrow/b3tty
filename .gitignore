@@ -9,3 +9,5 @@ src/index.html
 # directory to exist at compile time, so `make client` is a prerequisite of
 # `test`/`test-race`/`build` rather than something CI restores from git.
 src/dist/
+commandline-settings-research.md
+best-practice-violations.md

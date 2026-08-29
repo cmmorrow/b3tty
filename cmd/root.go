@@ -98,33 +98,42 @@ func initConfig() {
 	if configFileFound {
 		src.Debugf("using config file: %s", viper.ConfigFileUsed())
 
-		if viper.IsSet("server.port") {
+		// Config-file values are only applied when the corresponding flag was
+		// not explicitly passed on the command line, so CLI flag > config
+		// file > flag default holds for every flag-backed setting below.
+		if viper.IsSet("server.port") && !startCmd.Flags().Changed("port") {
 			port = viper.GetInt("server.port")
 		}
-		if viper.IsSet("server.tls") {
+		if viper.IsSet("server.tls") && !startCmd.Flags().Changed("tls") {
 			tls = viper.GetBool("server.tls")
 		}
-		if viper.IsSet("server.cert-file") {
+		if viper.IsSet("server.cert-file") && !startCmd.Flags().Changed("cert-file") {
 			certFile = viper.GetString("server.cert-file")
 		}
-		if viper.IsSet("server.key-file") {
+		if viper.IsSet("server.key-file") && !startCmd.Flags().Changed("key-file") {
 			keyFile = viper.GetString("server.key-file")
 		}
-		if viper.IsSet("server.no-auth") {
+		if viper.IsSet("server.no-auth") && !startCmd.Flags().Changed("no-auth") {
 			noAuth = viper.GetBool("server.no-auth")
 		}
-		if viper.IsSet("server.no-browser") {
+		if viper.IsSet("server.no-browser") && !startCmd.Flags().Changed("no-browser") {
 			noBrowser = viper.GetBool("server.no-browser")
 		}
-		if viper.IsSet("terminal.rows") {
+		if viper.IsSet("server.show-menubar") && !startCmd.Flags().Changed("show-menubar") {
+			showMenubar = viper.GetString("server.show-menubar")
+		}
+		if viper.IsSet("terminal.rows") && !startCmd.Flags().Changed("rows") {
 			rows = viper.GetInt("terminal.rows")
 		}
-		if viper.IsSet("terminal.columns") {
+		if viper.IsSet("terminal.columns") && !startCmd.Flags().Changed("columns") {
 			columns = viper.GetInt("terminal.columns")
 		}
-		if viper.IsSet("terminal.auto-resize") {
+		if viper.IsSet("terminal.auto-resize") && !startCmd.Flags().Changed("auto-resize") {
 			autoResize = viper.GetBool("terminal.auto-resize")
 		}
+		// font-family and font-size have no corresponding start flag (CLI
+		// setting was deprecated for these — see startCmd's init()), so
+		// there's no precedence to guard here.
 		if viper.IsSet("terminal.font-family") {
 			fontFamily = viper.GetString("terminal.font-family")
 		}

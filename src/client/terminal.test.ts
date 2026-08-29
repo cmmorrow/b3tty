@@ -17,6 +17,7 @@ import {
     setLight,
     setDark,
     menuBarColors,
+    menuBarMode,
     FONT_FALLBACK_STACK,
     buildFontFamily,
     buildFontFamilyCssVar,
@@ -189,6 +190,28 @@ describe("menuBarColors", () => {
 });
 
 // ---------------------------------------------------------------------------
+// menuBarMode
+// ---------------------------------------------------------------------------
+
+describe("menuBarMode", () => {
+    it("returns visible when config.showMenubar is 'visible'", () => {
+        expect(menuBarMode({ showMenubar: "visible" })).toBe("visible");
+    });
+
+    it("returns hover when config.showMenubar is 'hover'", () => {
+        expect(menuBarMode({ showMenubar: "hover" })).toBe("hover");
+    });
+
+    it("falls back to hover when config.showMenubar is undefined", () => {
+        expect(menuBarMode({})).toBe("hover");
+    });
+
+    it("falls back to hover for any other value", () => {
+        expect(menuBarMode({ showMenubar: "disable" })).toBe("hover");
+    });
+});
+
+// ---------------------------------------------------------------------------
 // getProtocols
 // ---------------------------------------------------------------------------
 
@@ -345,16 +368,15 @@ describe("buildFontFamilyCssVar", () => {
 
 describe("buildTermOptions", () => {
     const baseConfig = {
-        cursorBlink: true,
         fontFamily: "Fira Code",
         fontSize: 14,
         rows: 24,
         columns: 80,
     };
 
-    it("always includes cursorBlink, fontFamily, and fontSize", () => {
+    it("always includes fontFamily and fontSize, and hardcodes cursorBlink to false", () => {
         const result = buildTermOptions(baseConfig, {});
-        expect(result.cursorBlink).toBe(true);
+        expect(result.cursorBlink).toBe(false);
         expect(result.fontSize).toBe(14);
         expect(result.fontFamily).toContain("Fira Code");
     });
@@ -665,7 +687,6 @@ describe("handleSocketMessage", () => {
             terminal: {
                 fontFamily: "Fira Code",
                 fontSize: 18,
-                cursorBlink: true,
                 autoResize: true,
                 rows: 24,
                 columns: 80,
@@ -676,7 +697,6 @@ describe("handleSocketMessage", () => {
         expect(onSettings).toHaveBeenCalledWith({
             fontFamily: "Fira Code",
             fontSize: 18,
-            cursorBlink: true,
             autoResize: true,
             rows: 24,
             columns: 80,
@@ -759,7 +779,6 @@ describe("applyResolvedTheme", () => {
         port: 8080,
         fontSize: 14,
         fontFamily: "monospace",
-        cursorBlink: true,
         rows: 24,
         columns: 80,
         theme: {},
@@ -840,7 +859,6 @@ describe("applyThemeBroadcast", () => {
         port: 8080,
         fontSize: 14,
         fontFamily: "monospace",
-        cursorBlink: true,
         rows: 24,
         columns: 80,
         theme: {},
@@ -1099,7 +1117,6 @@ describe("terminalFactory", () => {
         port: 8080,
         fontSize: 14,
         fontFamily: "monospace",
-        cursorBlink: true,
         rows: 24,
         columns: 80,
         theme: {},
@@ -1108,11 +1125,6 @@ describe("terminalFactory", () => {
     it("returns a Terminal instance", () => {
         const term = terminalFactory(baseConfig);
         expect(term).toBeInstanceOf(Terminal);
-    });
-
-    it("applies cursorBlink from config", () => {
-        const term = terminalFactory({ ...baseConfig, cursorBlink: false });
-        expect(term.options.cursorBlink).toBe(false);
     });
 
     it("applies fontSize from config", () => {
@@ -1537,7 +1549,6 @@ describe("disableCursor", () => {
             port: 8080,
             fontSize: 14,
             fontFamily: "monospace",
-            cursorBlink: true,
             rows: 24,
             columns: 80,
             theme: {},
@@ -1553,7 +1564,6 @@ describe("disableCursor", () => {
             port: 8080,
             fontSize: 14,
             fontFamily: "monospace",
-            cursorBlink: true,
             rows: 24,
             columns: 80,
             theme: {},
@@ -1569,7 +1579,6 @@ describe("disableCursor", () => {
             port: 8080,
             fontSize: 14,
             fontFamily: "monospace",
-            cursorBlink: true,
             rows: 24,
             columns: 80,
             theme: {},
@@ -1587,7 +1596,6 @@ describe("disableCursor", () => {
             port: 8080,
             fontSize: 14,
             fontFamily: "monospace",
-            cursorBlink: true,
             rows: 24,
             columns: 80,
             theme: {},
@@ -1627,7 +1635,6 @@ describe("applyTerminalSettings", () => {
             port: 8080,
             fontSize: 14,
             fontFamily: "monospace",
-            cursorBlink: true,
             autoResize: false,
             rows: 24,
             columns: 80,
@@ -1639,14 +1646,13 @@ describe("applyTerminalSettings", () => {
             port: 8080,
             fontSize: 14,
             fontFamily: "monospace",
-            cursorBlink: true,
             autoResize: false,
             rows: 24,
             columns: 80,
             theme: {},
         };
         applyTerminalSettings(
-            { cursorBlink: true, fontFamily: "mono", fontSize: 14, autoResize: false, rows: 30, columns: 100 },
+            { fontFamily: "mono", fontSize: 14, autoResize: false, rows: 30, columns: 100 },
             term,
             config
         );
@@ -1665,7 +1671,6 @@ describe("applyTerminalSettings", () => {
             port: 8080,
             fontSize: 14,
             fontFamily: "monospace",
-            cursorBlink: true,
             autoResize: true,
             rows: 24,
             columns: 80,
@@ -1677,14 +1682,13 @@ describe("applyTerminalSettings", () => {
             port: 8080,
             fontSize: 14,
             fontFamily: "monospace",
-            cursorBlink: true,
             autoResize: true,
             rows: 24,
             columns: 80,
             theme: {},
         };
         applyTerminalSettings(
-            { cursorBlink: true, fontFamily: "mono", fontSize: 14, autoResize: true, rows: 30, columns: 100 },
+            { fontFamily: "mono", fontSize: 14, autoResize: true, rows: 30, columns: 100 },
             term,
             config
         );
@@ -1729,6 +1733,16 @@ describe("applyThemeStyles", () => {
         applyThemeStyles({ background: "#14181d" }, true);
         expect(head.appendChild).toHaveBeenCalledTimes(1);
         expect(head._children[0]?.textContent).toContain("xterm-viewport");
+    });
+
+    it("styles the scrollbar track and thumb explicitly so both stay visible over the background image", () => {
+        const { doc, head } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        applyThemeStyles({ background: "#14181d" }, true);
+        const injected = head._children[0]?.textContent ?? "";
+        expect(injected).toContain("scrollbar-color:");
+        expect(injected).toContain("::-webkit-scrollbar-track");
+        expect(injected).toContain("::-webkit-scrollbar-thumb");
     });
 
     it("clears the container background when hasBackgroundImage is true", () => {
@@ -1793,7 +1807,6 @@ describe("applyPageStyles", () => {
         port: 8080,
         fontSize: 16,
         fontFamily: "Fira Code",
-        cursorBlink: true,
         rows: 24,
         columns: 80,
         theme: { background: "#14181d", foreground: "#ffffff" },
@@ -1920,7 +1933,6 @@ describe("handleThemeChange", () => {
             port: 8080,
             fontSize: 14,
             fontFamily: "monospace",
-            cursorBlink: true,
             rows: 24,
             columns: 80,
             theme: {},
@@ -1940,7 +1952,6 @@ describe("handleThemeChange", () => {
             port: 8080,
             fontSize: 14,
             fontFamily: "monospace",
-            cursorBlink: true,
             rows: 24,
             columns: 80,
             theme: {},
@@ -1961,7 +1972,6 @@ describe("handleThemeChange", () => {
             port: 8080,
             fontSize: 14,
             fontFamily: "monospace",
-            cursorBlink: true,
             rows: 24,
             columns: 80,
             theme: {},
@@ -1981,7 +1991,6 @@ describe("handleThemeChange", () => {
             port: 8080,
             fontSize: 14,
             fontFamily: "monospace",
-            cursorBlink: true,
             rows: 24,
             columns: 80,
             theme: {},
@@ -2001,7 +2010,6 @@ describe("handleThemeChange", () => {
             port: 8080,
             fontSize: 14,
             fontFamily: "monospace",
-            cursorBlink: true,
             rows: 24,
             columns: 80,
             theme: {},
@@ -2018,7 +2026,6 @@ describe("handleThemeChange", () => {
             port: 8080,
             fontSize: 14,
             fontFamily: "monospace",
-            cursorBlink: true,
             rows: 24,
             columns: 80,
             theme: {},
@@ -2070,7 +2077,6 @@ describe("handleThemeSelected", () => {
             port: 8080,
             fontSize: 14,
             fontFamily: "monospace",
-            cursorBlink: true,
             rows: 24,
             columns: 80,
             theme: {},
@@ -2290,7 +2296,6 @@ describe("handleThemeEdited", () => {
             port: 8080,
             fontSize: 14,
             fontFamily: "monospace",
-            cursorBlink: true,
             rows: 24,
             columns: 80,
             theme: {},

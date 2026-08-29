@@ -42,8 +42,8 @@ func (ts *TerminalServer) broadcastTheme(name string, resp themeConfigResponse) 
 }
 
 // broadcastSettings sends a settings control message over every open WebSocket
-// session so the browser can apply live-applicable fields (fontFamily, fontSize,
-// cursorBlink) without a page reload. Failed writes are silently discarded.
+// session so the browser can apply live-applicable fields (fontFamily, fontSize)
+// without a page reload. Failed writes are silently discarded.
 func (ts *TerminalServer) broadcastSettings(terminal SettingsTerminalConfig) {
 	msg := struct {
 		Type     string                `json:"type"`
@@ -78,7 +78,7 @@ func (ts *TerminalServer) broadcastSettings(terminal SettingsTerminalConfig) {
 // No CSRF check is required since this is a read-only request.
 //
 // POST /settings accepts a settingsConfigResponse body, applies terminal fields
-// (fontFamily, fontSize, cursorBlink, rows, columns) to ts.Client in memory, and
+// (fontFamily, fontSize, rows, columns) to ts.Client in memory, and
 // persists all settings to the config file via SaveSettingsToConfig. Server fields
 // (port, noAuth, noBrowser) are persisted but NOT applied to the running server —
 // they take effect only after a restart. Requires Sec-Fetch-Site: same-origin.
@@ -92,19 +92,19 @@ func (ts *TerminalServer) settingsHandler(w http.ResponseWriter, r *http.Request
 	if r.Method == "GET" {
 		ts.StateMu.RLock()
 		terminal := SettingsTerminalConfig{
-			FontFamily:  ts.Client.FontFamily,
-			FontSize:    ts.Client.FontSize,
-			CursorBlink: ts.Client.CursorBlink,
-			AutoResize:  ts.Client.AutoResize,
-			Rows:        ts.Client.Rows,
-			Columns:     ts.Client.Columns,
+			FontFamily: ts.Client.FontFamily,
+			FontSize:   ts.Client.FontSize,
+			AutoResize: ts.Client.AutoResize,
+			Rows:       ts.Client.Rows,
+			Columns:    ts.Client.Columns,
 		}
 		ts.StateMu.RUnlock()
 		writeJSON(w, settingsConfigResponse{
 			Server: SettingsServerConfig{
-				Port:      ts.Server.Port,
-				NoAuth:    ts.Server.NoAuth,
-				NoBrowser: ts.NoBrowser,
+				Port:        ts.Server.Port,
+				NoAuth:      ts.Server.NoAuth,
+				NoBrowser:   ts.NoBrowser,
+				ShowMenubar: ts.ShowMenubar,
 			},
 			Terminal: terminal,
 		}, "settings")
@@ -130,6 +130,12 @@ func (ts *TerminalServer) settingsHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if !ValidateShowMenubar(req.Server.ShowMenubar) {
+		Warnf("%s %s: bad request: invalid show-menubar %q", r.Method, r.URL.Path, req.Server.ShowMenubar)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
 	if req.Terminal.FontSize < 1 {
 		Warnf("%s %s: bad request: invalid font-size %d", r.Method, r.URL.Path, req.Terminal.FontSize)
 		w.WriteHeader(http.StatusBadRequest)
@@ -151,7 +157,6 @@ func (ts *TerminalServer) settingsHandler(w http.ResponseWriter, r *http.Request
 	ts.StateMu.Lock()
 	ts.Client.FontFamily = req.Terminal.FontFamily
 	ts.Client.FontSize = req.Terminal.FontSize
-	ts.Client.CursorBlink = req.Terminal.CursorBlink
 	ts.Client.AutoResize = req.Terminal.AutoResize
 	ts.Client.Rows = req.Terminal.Rows
 	ts.Client.Columns = req.Terminal.Columns
@@ -165,14 +170,15 @@ func (ts *TerminalServer) settingsHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	Debugf("saved settings: server.port=%d noAuth=%v noBrowser=%v terminal.fontSize=%d",
-		req.Server.Port, req.Server.NoAuth, req.Server.NoBrowser, req.Terminal.FontSize)
+	Debugf("saved settings: server.port=%d noAuth=%v noBrowser=%v showMenubar=%s terminal.fontSize=%d",
+		req.Server.Port, req.Server.NoAuth, req.Server.NoBrowser, req.Server.ShowMenubar, req.Terminal.FontSize)
 
 	writeJSON(w, settingsConfigResponse{
 		Server: SettingsServerConfig{
-			Port:      ts.Server.Port,
-			NoAuth:    ts.Server.NoAuth,
-			NoBrowser: ts.NoBrowser,
+			Port:        ts.Server.Port,
+			NoAuth:      ts.Server.NoAuth,
+			NoBrowser:   ts.NoBrowser,
+			ShowMenubar: ts.ShowMenubar,
 		},
 		// Echo back req.Terminal directly rather than re-reading ts.Client: we
 		// just wrote these exact values under StateMu above, and re-reading

@@ -33,7 +33,6 @@ export interface TermConfig {
     port: number;
     fontSize: number;
     fontFamily: string;
-    cursorBlink: boolean;
     autoResize?: boolean;
     rows: number;
     columns: number;
@@ -45,6 +44,7 @@ export interface TermConfig {
     builtinThemeNames?: string[];
     profileNames?: string[];
     activeTheme?: string;
+    showMenubar?: string;
 }
 
 export interface ThemeActivateResponse extends ThemeConfigBase {
@@ -81,7 +81,6 @@ export function isEditProfileResponse(val: unknown): val is EditProfileResponse 
 }
 
 export interface ClientConfig {
-    cursorBlink: boolean;
     fontFamily: string;
     fontSize: number;
     rows: number;
@@ -122,12 +121,12 @@ export interface SettingsServerConfig {
     port: number;
     noAuth: boolean;
     noBrowser: boolean;
+    showMenubar: "hover" | "visible" | "disable";
 }
 
 export interface SettingsTerminalConfig {
     fontFamily: string;
     fontSize: number;
-    cursorBlink: boolean;
     autoResize: boolean;
     rows: number;
     columns: number;

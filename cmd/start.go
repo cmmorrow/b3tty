@@ -10,7 +10,6 @@ import (
 )
 
 var debug bool
-var cursorBlink bool
 var autoResize bool
 var fontFamily string
 var fontSize int
@@ -25,6 +24,7 @@ var certFile string
 var keyFile string
 var noAuth bool
 var noBrowser bool
+var showMenubar string
 var startupProfile string
 
 // startCmd represents the start command
@@ -50,6 +50,9 @@ configuration. For additional security, b3tty supports TLS over https and wss.`,
 		if !src.ValidatePortNumber(port) {
 			src.Fatalf("port number must be 1 - 65535")
 		}
+		if !src.ValidateShowMenubar(showMenubar) {
+			src.Fatalf("show-menubar must be one of: hover, visible, disable")
+		}
 		if rows < 10 {
 			src.Fatalf("rows must be 10 or greater")
 		}
@@ -70,7 +73,7 @@ configuration. For additional security, b3tty supports TLS over https and wss.`,
 			startupProfile = src.DEFAULT_PROFILE_NAME
 		}
 		ts := src.TerminalServer{
-			Client:         src.NewClient(&rows, &columns, &autoResize, &cursorBlink, &fontFamily, &fontSize, &theme),
+			Client:         src.NewClient(&rows, &columns, &autoResize, &fontFamily, &fontSize, &theme),
 			Server:         src.NewServer(&uri, &port, &noAuth, &src.TLS{CertFilePath: certFile, KeyFilePath: keyFile, Enabled: tls}),
 			Profiles:       profiles,
 			Themes:         themes,
@@ -80,6 +83,7 @@ configuration. For additional security, b3tty supports TLS over https and wss.`,
 			ConfigFile:     viper.ConfigFileUsed(),
 			FirstRun:       !configFileFound,
 			NoBrowser:      noBrowser,
+			ShowMenubar:    showMenubar,
 			AuthSleep:      time.Sleep,
 			StartTime:      startTime,
 		}
@@ -93,7 +97,6 @@ func init() {
 	// Setting these parameters from the command-line has been deprecated but can still
 	// be set from a config file.
 	uri = src.DEFAULT_URI
-	cursorBlink = src.DEFAULT_CURSOR_BLINK
 	fontFamily = src.DEFAULT_FONT_FAMILY
 	fontSize = src.DEFAULT_FONT_SIZE
 	startCmd.Flags().IntVar(&rows, "rows", src.DEFAULT_ROWS, "Fixed terminal height in rows (minimum 10). Used only when auto-resize is disabled.")
@@ -109,6 +112,7 @@ func init() {
 	startCmd.Flags().StringVar(&keyFile, "key-file", "", "Path to TLS private key file.")
 	startCmd.Flags().BoolVar(&noAuth, "no-auth", false, "Disable API token verification. Using this flag will reduce security posture.")
 	startCmd.Flags().BoolVar(&noBrowser, "no-browser", false, "Disables opening b3tty in the default browser.")
+	startCmd.Flags().StringVar(&showMenubar, "show-menubar", src.DEFAULT_SHOW_MENUBAR, "Menu bar visibility: hover, visible, or disable.")
 	startCmd.Flags().BoolVar(&debug, "debug", false, "Enable debug logging.")
 	startCmd.Flags().StringVar(&startupProfile, "profile", "", "Profile to load on startup. Must exist in the config file.")
 }

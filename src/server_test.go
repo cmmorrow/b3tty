@@ -65,12 +65,11 @@ func captureLog(f func()) string {
 // profile and a known token, suitable for use in handler tests.
 func newTestTerminalServer() *TerminalServer {
 	client := &Client{
-		Rows:        24,
-		Columns:     80,
-		CursorBlink: true,
-		FontFamily:  "monospace",
-		FontSize:    14,
-		Theme:       Theme{},
+		Rows:       24,
+		Columns:    80,
+		FontFamily: "monospace",
+		FontSize:   14,
+		Theme:      Theme{},
 	}
 	server := &Server{
 		Uri:  "localhost",
@@ -457,22 +456,21 @@ func TestBuildConfigJSON(t *testing.T) {
 		TLS:  TLS{Enabled: false},
 	}
 	clnt := &Client{
-		Rows:        24,
-		Columns:     80,
-		CursorBlink: true,
-		FontFamily:  "monospace",
-		FontSize:    14,
+		Rows:       24,
+		Columns:    80,
+		FontFamily: "monospace",
+		FontSize:   14,
 	}
 	thm := &Theme{Foreground: "#ffffff", Background: "#000000"}
 
 	t.Run("returns valid JSON", func(t *testing.T) {
-		data, err := buildConfigJSON(srv, clnt, thm, nil, nil, nil, nil, "")
+		data, err := buildConfigJSON(srv, clnt, thm, nil, nil, nil, nil, "", "")
 		require.NoError(t, err)
 		assert.True(t, json.Valid(data))
 	})
 
 	t.Run("JSON contains expected scalar fields", func(t *testing.T) {
-		data, err := buildConfigJSON(srv, clnt, thm, nil, nil, nil, nil, "")
+		data, err := buildConfigJSON(srv, clnt, thm, nil, nil, nil, nil, "", "")
 		require.NoError(t, err)
 
 		var result map[string]any
@@ -481,7 +479,6 @@ func TestBuildConfigJSON(t *testing.T) {
 		assert.Equal(t, "localhost", result["uri"])
 		assert.Equal(t, float64(8080), result["port"])
 		assert.Equal(t, false, result["tls"])
-		assert.Equal(t, true, result["cursorBlink"])
 		assert.Equal(t, "monospace", result["fontFamily"])
 		assert.Equal(t, float64(14), result["fontSize"])
 		assert.Equal(t, float64(24), result["rows"])
@@ -489,7 +486,7 @@ func TestBuildConfigJSON(t *testing.T) {
 	})
 
 	t.Run("JSON embeds theme colours", func(t *testing.T) {
-		data, err := buildConfigJSON(srv, clnt, thm, nil, nil, nil, nil, "")
+		data, err := buildConfigJSON(srv, clnt, thm, nil, nil, nil, nil, "", "")
 		require.NoError(t, err)
 
 		var result map[string]any
@@ -503,7 +500,7 @@ func TestBuildConfigJSON(t *testing.T) {
 
 	t.Run("TLS enabled is reflected in JSON", func(t *testing.T) {
 		tlsSrv := &Server{Uri: "example.com", Port: 8443, TLS: TLS{Enabled: true}}
-		data, err := buildConfigJSON(tlsSrv, clnt, thm, nil, nil, nil, nil, "")
+		data, err := buildConfigJSON(tlsSrv, clnt, thm, nil, nil, nil, nil, "", "")
 		require.NoError(t, err)
 
 		var result map[string]any
@@ -513,9 +510,18 @@ func TestBuildConfigJSON(t *testing.T) {
 
 	t.Run("empty theme produces valid JSON", func(t *testing.T) {
 		emptyTheme := &Theme{}
-		data, err := buildConfigJSON(srv, clnt, emptyTheme, nil, nil, nil, nil, "")
+		data, err := buildConfigJSON(srv, clnt, emptyTheme, nil, nil, nil, nil, "", "")
 		require.NoError(t, err)
 		assert.True(t, json.Valid(data))
+	})
+
+	t.Run("showMenubar is reflected in JSON", func(t *testing.T) {
+		data, err := buildConfigJSON(srv, clnt, thm, nil, nil, nil, nil, "", "visible")
+		require.NoError(t, err)
+
+		var result map[string]any
+		require.NoError(t, json.Unmarshal(data, &result))
+		assert.Equal(t, "visible", result["showMenubar"])
 	})
 }
 

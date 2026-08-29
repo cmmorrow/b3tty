@@ -46,13 +46,13 @@ func TestSettingsHandlerGet(t *testing.T) {
 		ts := newSettingsTestServer()
 		ts.Client.FontSize = 18
 		ts.Client.FontFamily = "Fira Code"
-		ts.Client.CursorBlink = false
 		ts.Client.AutoResize = false
 		ts.Client.Rows = 30
 		ts.Client.Columns = 100
 		ts.Server.Port = 9090
 		ts.Server.NoAuth = true
 		ts.NoBrowser = true
+		ts.ShowMenubar = "visible"
 
 		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
 		w := httptest.NewRecorder()
@@ -64,9 +64,9 @@ func TestSettingsHandlerGet(t *testing.T) {
 		assert.Equal(t, 9090, resp.Server.Port)
 		assert.True(t, resp.Server.NoAuth)
 		assert.True(t, resp.Server.NoBrowser)
+		assert.Equal(t, "visible", resp.Server.ShowMenubar)
 		assert.Equal(t, 18, resp.Terminal.FontSize)
 		assert.Equal(t, "Fira Code", resp.Terminal.FontFamily)
-		assert.False(t, resp.Terminal.CursorBlink)
 		assert.False(t, resp.Terminal.AutoResize)
 		assert.Equal(t, 30, resp.Terminal.Rows)
 		assert.Equal(t, 100, resp.Terminal.Columns)
@@ -77,19 +77,23 @@ func TestSettingsHandlerGet(t *testing.T) {
 // POST /settings
 // ---------------------------------------------------------------------------
 
+func makeBodyWithShowMenubar(port, fontSize, rows, cols int, fontFamily, showMenubar string, autoResize, noAuth, noBrowser bool) *bytes.Buffer {
+	req := settingsConfigResponse{
+		Server:   SettingsServerConfig{Port: port, NoAuth: noAuth, NoBrowser: noBrowser, ShowMenubar: showMenubar},
+		Terminal: SettingsTerminalConfig{FontFamily: fontFamily, FontSize: fontSize, AutoResize: autoResize, Rows: rows, Columns: cols},
+	}
+	b, _ := json.Marshal(req)
+	return bytes.NewBuffer(b)
+}
+
 func TestSettingsHandlerPost(t *testing.T) {
-	makeBody := func(port, fontSize, rows, cols int, fontFamily string, cursorBlink, autoResize, noAuth, noBrowser bool) *bytes.Buffer {
-		req := settingsConfigResponse{
-			Server:   SettingsServerConfig{Port: port, NoAuth: noAuth, NoBrowser: noBrowser},
-			Terminal: SettingsTerminalConfig{FontFamily: fontFamily, FontSize: fontSize, CursorBlink: cursorBlink, AutoResize: autoResize, Rows: rows, Columns: cols},
-		}
-		b, _ := json.Marshal(req)
-		return bytes.NewBuffer(b)
+	makeBody := func(port, fontSize, rows, cols int, fontFamily string, autoResize, noAuth, noBrowser bool) *bytes.Buffer {
+		return makeBodyWithShowMenubar(port, fontSize, rows, cols, fontFamily, "hover", autoResize, noAuth, noBrowser)
 	}
 
 	t.Run("cross-origin POST is rejected with 403", func(t *testing.T) {
 		ts := newSettingsTestServer()
-		req := httptest.NewRequest(http.MethodPost, "/settings", makeBody(8080, 14, 24, 80, "mono", true, true, false, false))
+		req := httptest.NewRequest(http.MethodPost, "/settings", makeBody(8080, 14, 24, 80, "mono", true, false, false))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Sec-Fetch-Site", "cross-site")
 		w := httptest.NewRecorder()
@@ -100,7 +104,7 @@ func TestSettingsHandlerPost(t *testing.T) {
 
 	t.Run("POST with invalid port returns 400", func(t *testing.T) {
 		ts := newSettingsTestServer()
-		req := httptest.NewRequest(http.MethodPost, "/settings", makeBody(0, 14, 24, 80, "mono", true, true, false, false))
+		req := httptest.NewRequest(http.MethodPost, "/settings", makeBody(0, 14, 24, 80, "mono", true, false, false))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		w := httptest.NewRecorder()
@@ -111,7 +115,7 @@ func TestSettingsHandlerPost(t *testing.T) {
 
 	t.Run("POST with invalid font-size returns 400", func(t *testing.T) {
 		ts := newSettingsTestServer()
-		req := httptest.NewRequest(http.MethodPost, "/settings", makeBody(8080, 0, 24, 80, "mono", true, true, false, false))
+		req := httptest.NewRequest(http.MethodPost, "/settings", makeBody(8080, 0, 24, 80, "mono", true, false, false))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		w := httptest.NewRecorder()
@@ -122,7 +126,7 @@ func TestSettingsHandlerPost(t *testing.T) {
 
 	t.Run("POST with rows below minimum returns 400", func(t *testing.T) {
 		ts := newSettingsTestServer()
-		req := httptest.NewRequest(http.MethodPost, "/settings", makeBody(8080, 14, 9, 80, "mono", true, true, false, false))
+		req := httptest.NewRequest(http.MethodPost, "/settings", makeBody(8080, 14, 9, 80, "mono", true, false, false))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		w := httptest.NewRecorder()
@@ -133,13 +137,25 @@ func TestSettingsHandlerPost(t *testing.T) {
 
 	t.Run("POST with columns below minimum returns 400", func(t *testing.T) {
 		ts := newSettingsTestServer()
-		req := httptest.NewRequest(http.MethodPost, "/settings", makeBody(8080, 14, 24, 9, "mono", true, true, false, false))
+		req := httptest.NewRequest(http.MethodPost, "/settings", makeBody(8080, 14, 24, 9, "mono", true, false, false))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		w := httptest.NewRecorder()
 		logged := captureLog(func() { ts.settingsHandler(w, req) })
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Contains(t, logged, "invalid columns")
+	})
+
+	t.Run("POST with invalid show-menubar returns 400", func(t *testing.T) {
+		ts := newSettingsTestServer()
+		req := httptest.NewRequest(http.MethodPost, "/settings",
+			makeBodyWithShowMenubar(8080, 14, 24, 80, "mono", "always", true, false, false))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		w := httptest.NewRecorder()
+		logged := captureLog(func() { ts.settingsHandler(w, req) })
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, logged, "invalid show-menubar")
 	})
 
 	t.Run("POST with malformed JSON returns 400", func(t *testing.T) {
@@ -160,7 +176,7 @@ func TestSettingsHandlerPost(t *testing.T) {
 		require.NoError(t, os.WriteFile(ts.ConfigFile, []byte("theme: b3tty-dark\n"), 0644))
 
 		req := httptest.NewRequest(http.MethodPost, "/settings",
-			makeBody(8080, 20, 30, 120, "JetBrains Mono", false, false, false, false))
+			makeBody(8080, 20, 30, 120, "JetBrains Mono", false, false, false))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		w := httptest.NewRecorder()
@@ -169,7 +185,6 @@ func TestSettingsHandlerPost(t *testing.T) {
 
 		assert.Equal(t, 20, ts.Client.FontSize)
 		assert.Equal(t, "JetBrains Mono", ts.Client.FontFamily)
-		assert.False(t, ts.Client.CursorBlink)
 		assert.False(t, ts.Client.AutoResize)
 		assert.Equal(t, 30, ts.Client.Rows)
 		assert.Equal(t, 120, ts.Client.Columns)
@@ -182,9 +197,10 @@ func TestSettingsHandlerPost(t *testing.T) {
 		require.NoError(t, os.WriteFile(ts.ConfigFile, []byte("theme: b3tty-dark\n"), 0644))
 
 		originalPort := ts.Server.Port
+		originalShowMenubar := ts.ShowMenubar
 
 		req := httptest.NewRequest(http.MethodPost, "/settings",
-			makeBody(9999, 14, 24, 80, "mono", true, true, true, true))
+			makeBodyWithShowMenubar(9999, 14, 24, 80, "mono", "disable", true, true, true))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		w := httptest.NewRecorder()
@@ -192,6 +208,7 @@ func TestSettingsHandlerPost(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 
 		assert.Equal(t, originalPort, ts.Server.Port, "server port should not change in memory")
+		assert.Equal(t, originalShowMenubar, ts.ShowMenubar, "show-menubar should not change in memory")
 	})
 
 	t.Run("POST returns live server state in response", func(t *testing.T) {
@@ -201,7 +218,7 @@ func TestSettingsHandlerPost(t *testing.T) {
 		require.NoError(t, os.WriteFile(ts.ConfigFile, []byte("theme: b3tty-dark\n"), 0644))
 
 		req := httptest.NewRequest(http.MethodPost, "/settings",
-			makeBody(9999, 16, 24, 80, "mono", true, true, false, false))
+			makeBody(9999, 16, 24, 80, "mono", true, false, false))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		w := httptest.NewRecorder()
@@ -222,7 +239,7 @@ func TestSettingsHandlerPost(t *testing.T) {
 		require.NoError(t, os.WriteFile(ts.ConfigFile, []byte("theme: b3tty-dark\n"), 0644))
 
 		req := httptest.NewRequest(http.MethodPost, "/settings",
-			makeBody(8080, 14, 24, 80, "mono", true, true, false, false))
+			makeBody(8080, 14, 24, 80, "mono", true, false, false))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		ts.settingsHandler(w, req)
@@ -236,7 +253,7 @@ func TestSettingsHandlerPost(t *testing.T) {
 		require.NoError(t, os.WriteFile(ts.ConfigFile, []byte("theme: b3tty-dark\n"), 0644))
 
 		req := httptest.NewRequest(http.MethodPost, "/settings",
-			makeBody(8080, 14, 24, 80, "", true, true, false, false))
+			makeBody(8080, 14, 24, 80, "", true, false, false))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		w := httptest.NewRecorder()
@@ -261,7 +278,7 @@ func TestSettingsHandlerPost(t *testing.T) {
 		require.NoError(t, os.WriteFile(ts.ConfigFile, []byte("theme: b3tty-dark\n"), 0644))
 
 		req := httptest.NewRequest(http.MethodPost, "/settings",
-			makeBody(8080, 16, 25, 90, "Fira Code", false, true, false, true))
+			makeBodyWithShowMenubar(8080, 16, 25, 90, "Fira Code", "visible", true, false, true))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		w := httptest.NewRecorder()
@@ -274,5 +291,6 @@ func TestSettingsHandlerPost(t *testing.T) {
 		assert.Contains(t, content, "font-size: 16")
 		assert.Contains(t, content, "Fira Code")
 		assert.Contains(t, content, "no-browser: true")
+		assert.Contains(t, content, "show-menubar: visible")
 	})
 }

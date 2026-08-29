@@ -88,6 +88,18 @@ func TestValidatePortNumber(t *testing.T) {
 	}
 }
 
+func TestValidateShowMenubar(t *testing.T) {
+	valid := []string{"hover", "visible", "disable"}
+	for _, v := range valid {
+		assert.True(t, ValidateShowMenubar(v), "expected valid: %q", v)
+	}
+
+	invalid := []string{"", "Hover", "always", "true"}
+	for _, v := range invalid {
+		assert.False(t, ValidateShowMenubar(v), "expected invalid: %q", v)
+	}
+}
+
 func TestValidateTerminalDimension(t *testing.T) {
 	assert.True(t, validateTerminalDimension(0))
 	assert.True(t, validateTerminalDimension(80))
