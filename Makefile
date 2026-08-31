@@ -38,7 +38,8 @@ lint:
 client:
 	rm -rf src/dist
 	bun build src/client/terminal.ts --outdir src/dist --target browser --splitting --minify \
-		--entry-naming=terminal.min.js --chunk-naming="[name]-[hash].chunk.js"
+		--entry-naming=terminal.min.js --chunk-naming="[name]-[hash].chunk.js" \
+		--define __B3TTY_VERSION__='"$(PACKAGE_VERSION)"'
 	cp src/client/node_modules/@xterm/xterm/css/xterm.css src/dist/xterm.min.css
 
 build: client

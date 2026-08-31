@@ -22,6 +22,17 @@ import {
 } from "./design.ts";
 
 /**
+ * Version string baked in at build time by bun's --define (see Makefile's
+ * client target). Under `bun test`, which runs this module unbundled with no
+ * --define applied, __B3TTY_VERSION__ is an undeclared identifier; `typeof`
+ * on an undeclared identifier never throws, so this falls back to "dev"
+ * instead of raising a ReferenceError. In the built bundle, bun replaces
+ * every __B3TTY_VERSION__ occurrence with the VERSION file's literal before
+ * this code runs, so the whole expression constant-folds to that literal.
+ */
+const B3TTY_VERSION: string = typeof __B3TTY_VERSION__ !== "undefined" ? __B3TTY_VERSION__ : "dev";
+
+/**
  * Interface for the b3tty-dialog web component. The concrete class is defined
  * conditionally so that importing this module in non-browser environments (e.g.
  * bun test) does not throw a ReferenceError for HTMLElement.
@@ -150,6 +161,21 @@ export interface B3ttySettingsEditor {
  */
 export function isB3ttySettingsEditor(el: Element): el is HTMLElement & B3ttySettingsEditor {
     return el.tagName.toLowerCase() === "b3tty-settings-editor";
+}
+
+/**
+ * Interface for the b3tty-about-dialog web component.
+ */
+export interface B3ttyAboutDialog {
+    open(): void;
+    close(): void;
+}
+
+/**
+ * Returns true when el is a b3tty-about-dialog element.
+ */
+export function isB3ttyAboutDialog(el: Element): el is HTMLElement & B3ttyAboutDialog {
+    return el.tagName.toLowerCase() === "b3tty-about-dialog";
 }
 
 /**
@@ -759,6 +785,16 @@ if (typeof HTMLElement !== "undefined") {
             dropdown.className = "dropdown";
 
             if (type === "b3tty") {
+                const aboutItem = document.createElement("div");
+                aboutItem.className = "menu-item";
+                aboutItem.textContent = "About…";
+                aboutItem.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    this.dispatchEvent(new CustomEvent("b3tty-open-about-dialog", { bubbles: true, composed: true }));
+                    this.#close();
+                });
+                dropdown.appendChild(aboutItem);
+
                 const settingsItem = document.createElement("div");
                 settingsItem.className = "menu-item";
                 settingsItem.textContent = "Settings\u2026";
@@ -2475,4 +2511,80 @@ if (typeof HTMLElement !== "undefined") {
     }
 
     customElements.define("b3tty-settings-editor", B3ttySettingsEditorImpl);
+
+    class B3ttyAboutDialogImpl extends HTMLElement implements B3ttyAboutDialog {
+        #shadow: ShadowRoot;
+
+        constructor() {
+            super();
+            this.#shadow = this.attachShadow({ mode: "open" });
+
+            const style = document.createElement("style");
+            style.textContent = `
+                ${DESIGN_TOKENS}
+                ${OVERLAY_STYLES}
+                .modal {
+                    padding: 28px 32px 20px;
+                    display: flex; flex-direction: column; align-items: center; gap: 6px;
+                    max-width: 420px; width: 100%;
+                    text-align: center;
+                }
+                .title {
+                    margin: 0; font-family: sans-serif; font-size: 16px; font-weight: 700;
+                    color: var(--color-text);
+                }
+                .byline {
+                    margin: 0; font-family: sans-serif; font-size: var(--font-md); font-weight: 400;
+                    color: var(--color-text-subtle);
+                }
+                .version {
+                    margin: 0; font-family: sans-serif; font-size: var(--font-sm);
+                    color: var(--color-muted);
+                }
+                .actions { display: flex; justify-content: center; margin-top: 14px; }
+                ${BUTTON_STYLES}
+            `;
+
+            const overlay = document.createElement("div");
+            overlay.className = "overlay";
+            const modal = document.createElement("div");
+            modal.className = "modal";
+            modal.setAttribute("role", "dialog");
+            modal.setAttribute("aria-modal", "true");
+
+            const title = document.createElement("p");
+            title.className = "title";
+            title.textContent = "b3tty - A better, browser-based terminal emulator";
+
+            const byline = document.createElement("p");
+            byline.className = "byline";
+            byline.textContent = "By Chris Morrow";
+
+            const version = document.createElement("p");
+            version.className = "version";
+            version.textContent = `Version ${B3TTY_VERSION}`;
+
+            const actions = document.createElement("div");
+            actions.className = "actions";
+            const okBtn = document.createElement("button");
+            okBtn.className = "ok-btn";
+            okBtn.textContent = "OK";
+            okBtn.addEventListener("click", () => this.close());
+            actions.appendChild(okBtn);
+
+            modal.append(title, byline, version, actions);
+            overlay.appendChild(modal);
+            this.#shadow.append(style, overlay);
+        }
+
+        open(): void {
+            this.setAttribute("open", "");
+        }
+
+        close(): void {
+            this.removeAttribute("open");
+        }
+    }
+
+    customElements.define("b3tty-about-dialog", B3ttyAboutDialogImpl);
 }
