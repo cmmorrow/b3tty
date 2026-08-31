@@ -805,6 +805,16 @@ export async function main(config: TermConfig): Promise<void> {
                 }
             );
         }
+
+        const aboutDialog = getOverlay("about-dialog", components.isB3ttyAboutDialog);
+
+        menuBarEl.addEventListener(
+            "b3tty-open-about-dialog",
+            () => {
+                aboutDialog?.open();
+            },
+            { signal }
+        );
     }
 
     term.onResize(({ cols, rows }) => {
