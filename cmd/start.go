@@ -73,7 +73,8 @@ configuration. For additional security, b3tty supports TLS over https and wss.`,
 			startupProfile = src.DEFAULT_PROFILE_NAME
 		}
 		ts := src.TerminalServer{
-			Client:         src.NewClient(&rows, &columns, &autoResize, &fontFamily, &fontSize, &theme),
+			Client:         src.NewTerminalClient(&rows, &columns, &autoResize, &fontFamily, &fontSize),
+			Theme:          theme,
 			Server:         src.NewServer(&uri, &port, &noAuth, &src.TLS{CertFilePath: certFile, KeyFilePath: keyFile, Enabled: tls}),
 			Profiles:       profiles,
 			Themes:         themes,

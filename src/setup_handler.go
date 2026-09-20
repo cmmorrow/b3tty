@@ -74,10 +74,10 @@ func (ts *TerminalServer) saveConfigHandler(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		ts.StateMu.Lock()
-		ts.Client.Theme.MapToTheme(themeColors)
+		ts.Theme.MapToTheme(themeColors)
 		// Register the selected theme in ts.Themes so it appears in the Themes
 		// menu after the browser reloads into the normal terminal flow.
-		ts.Themes[req.Theme] = ts.Client.Theme
+		ts.Themes[req.Theme] = ts.Theme
 		ts.ActiveTheme = req.Theme
 		ts.StateMu.Unlock()
 		Infof("created default %s theme config", req.Theme)

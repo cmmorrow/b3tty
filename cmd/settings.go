@@ -129,13 +129,8 @@ font-size apply to live sessions immediately.`,
 		if !src.ValidateShowMenubar(currentShowMenubar) {
 			cmdLog.Fatalf("invalid show-menubar %q: must be one of hover, visible, disable", currentShowMenubar)
 		}
-		serverCfg := src.SettingsServerConfig{
-			Port:        currentPort,
-			NoAuth:      currentNoAuth,
-			NoBrowser:   currentNoBrowser,
-			ShowMenubar: currentShowMenubar,
-		}
-		terminalCfg := src.SettingsTerminalConfig{
+		serverCfg := src.NewSettingsServerConfig(currentPort, currentNoAuth, currentNoBrowser, currentShowMenubar)
+		terminalCfg := src.TerminalClient{
 			FontFamily: currentFontFamily,
 			FontSize:   currentFontSize,
 			AutoResize: currentAutoResize,
@@ -226,10 +221,10 @@ func postToRunningServer(serverPort int, path string, body any) {
 // notifyRunningServer attempts to POST the new settings to the running b3tty
 // server so it can update its in-memory state and push the change to any open
 // browser sessions. Errors are ignored — the server may simply not be running.
-func notifyRunningServer(serverPort int, serverCfg src.SettingsServerConfig, terminalCfg src.SettingsTerminalConfig) {
+func notifyRunningServer(serverPort int, serverCfg src.SettingsServerConfig, terminalCfg src.TerminalClient) {
 	payload := struct {
-		Server   src.SettingsServerConfig   `json:"server"`
-		Terminal src.SettingsTerminalConfig `json:"terminal"`
+		Server   src.SettingsServerConfig `json:"server"`
+		Terminal src.TerminalClient       `json:"terminal"`
 	}{Server: serverCfg, Terminal: terminalCfg}
 	postToRunningServer(serverPort, "/settings", payload)
 }

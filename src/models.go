@@ -2,6 +2,7 @@ package src
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -12,61 +13,71 @@ import (
 	"github.com/google/shlex"
 )
 
-type Client struct {
-	Rows       int
-	Columns    int
-	AutoResize bool
-	FontFamily string
-	FontSize   int
-	Theme      Theme
+// TerminalClient holds the terminal-display settings shared across in-memory
+// runtime state (TerminalServer.Client), the YAML config file's terminal
+// section (see configFile in config.go), and the /settings JSON API.
+type TerminalClient struct {
+	FontFamily string `yaml:"font-family" json:"fontFamily"`
+	FontSize   int    `yaml:"font-size" json:"fontSize"`
+	AutoResize bool   `yaml:"auto-resize" json:"autoResize"`
+	Rows       int    `yaml:"rows" json:"rows"`
+	Columns    int    `yaml:"columns" json:"columns"`
 }
 
-func NewClient(rows *int, columns *int, autoResize *bool, fontFamily *string, fontSize *int, theme *Theme) *Client {
-	return &Client{
+func NewTerminalClient(rows *int, columns *int, autoResize *bool, fontFamily *string, fontSize *int) *TerminalClient {
+	return &TerminalClient{
 		Rows:       *rows,
 		Columns:    *columns,
 		AutoResize: *autoResize,
 		FontFamily: *fontFamily,
 		FontSize:   *fontSize,
-		Theme:      *theme,
 	}
 }
 
 type Server struct {
-	Uri      string
-	Port     int
-	NoAuth   bool
-	FirstRun bool
+	URL    url.URL
+	NoAuth bool
 	TLS
 }
 
 func NewServer(uri *string, port *int, noAuth *bool, tls *TLS) *Server {
+	scheme := "http"
+	if tls.Enabled {
+		scheme = "https"
+	}
 	return &Server{
-		Uri:    *uri,
-		Port:   *port,
+		URL: url.URL{
+			Scheme: scheme,
+			Host:   net.JoinHostPort(*uri, strconv.Itoa(*port)),
+		},
 		NoAuth: *noAuth,
 		TLS:    *tls,
 	}
 }
 
-func (s *Server) Addr() url.URL {
-	return url.URL{
-		Host: s.Uri + ":" + strconv.Itoa(s.Port),
-	}
+// Port returns the server's port as an int, parsed from URL.Host. url.URL has
+// no dedicated Port field — net/url convention encodes host:port together in
+// Host, with Port() as the accessor that splits it back out as a string.
+func (s *Server) Port() int {
+	port, _ := strconv.Atoi(s.URL.Port())
+	return port
 }
 
 type TLS struct {
-	Enabled      bool
-	CertFilePath string
-	KeyFilePath  string
+	Enabled      bool   `yaml:"tls"`
+	CertFilePath string `yaml:"cert-file"`
+	KeyFilePath  string `yaml:"key-file"`
 }
 
+// Profile holds a terminal profile's settings, shared across in-memory runtime
+// state (TerminalServer.Profiles), the YAML config file's profiles: section
+// (configFile.Profiles in src/config.go), and the /profile-config JSON API.
 type Profile struct {
-	Root             string
-	WorkingDirectory string
-	Shell            string
-	Title            string
-	Commands         []string
+	Root             string   `yaml:"root" json:"root"`
+	WorkingDirectory string   `yaml:"working-directory" json:"workingDirectory"`
+	Shell            string   `yaml:"shell" json:"shell"`
+	Title            string   `yaml:"title" json:"title"`
+	Commands         []string `yaml:"commands" json:"commands"`
 }
 
 // ParseCommands processes the Profile Commands and returns a slice of string slices.
@@ -123,32 +134,45 @@ func NewProfile(shell string, wd string, root string, title string, commands []s
 	}
 }
 
+// Theme holds a color scheme's settings, shared across in-memory runtime
+// state (TerminalServer.Theme, TerminalServer.Themes), the YAML config file's
+// themes: section (configFile.Themes in src/config.go), and the
+// /theme-config JSON API (via themeConfigResponse, which embeds Theme).
+// MapToTheme/toColorMap remain the conversion path to/from map[string]any —
+// used by built-in JSON themes, Viper-loaded config themes, and POST request
+// bodies — none of which go through these yaml/json struct tags directly.
 type Theme struct {
-	Foreground          string `json:"foreground,omitempty"`
-	Background          string `json:"background,omitempty"`
-	Cursor              string `json:"cursor,omitempty"`
-	CursorAccent        string `json:"cursorAccent,omitempty"`
-	SelectionForeground string `json:"selectionForeground,omitempty"`
-	SelectionBackground string `json:"selectionBackground,omitempty"`
-	Black               string `json:"black,omitempty"`
-	BrightBlack         string `json:"brightBlack,omitempty"`
-	Red                 string `json:"red,omitempty"`
-	BrightRed           string `json:"brightRed,omitempty"`
-	Yellow              string `json:"yellow,omitempty"`
-	BrightYellow        string `json:"brightYellow,omitempty"`
-	Green               string `json:"green,omitempty"`
-	BrightGreen         string `json:"brightGreen,omitempty"`
-	Blue                string `json:"blue,omitempty"`
-	BrightBlue          string `json:"brightBlue,omitempty"`
-	Magenta             string `json:"magenta,omitempty"`
-	BrightMagenta       string `json:"brightMagenta,omitempty"`
-	Cyan                string `json:"cyan,omitempty"`
-	BrightCyan          string `json:"brightCyan,omitempty"`
-	White               string `json:"white,omitempty"`
-	BrightWhite         string `json:"brightWhite,omitempty"`
+	Foreground          string `yaml:"foreground" json:"foreground,omitempty"`
+	Background          string `yaml:"background" json:"background,omitempty"`
+	Cursor              string `yaml:"cursor" json:"cursor,omitempty"`
+	CursorAccent        string `yaml:"cursor-accent" json:"cursorAccent,omitempty"`
+	SelectionForeground string `yaml:"selection-foreground" json:"selectionForeground,omitempty"`
+	SelectionBackground string `yaml:"selection-background" json:"selectionBackground,omitempty"`
+	Black               string `yaml:"black" json:"black,omitempty"`
+	BrightBlack         string `yaml:"bright-black" json:"brightBlack,omitempty"`
+	Red                 string `yaml:"red" json:"red,omitempty"`
+	BrightRed           string `yaml:"bright-red" json:"brightRed,omitempty"`
+	Yellow              string `yaml:"yellow" json:"yellow,omitempty"`
+	BrightYellow        string `yaml:"bright-yellow" json:"brightYellow,omitempty"`
+	Green               string `yaml:"green" json:"green,omitempty"`
+	BrightGreen         string `yaml:"bright-green" json:"brightGreen,omitempty"`
+	Blue                string `yaml:"blue" json:"blue,omitempty"`
+	BrightBlue          string `yaml:"bright-blue" json:"brightBlue,omitempty"`
+	Magenta             string `yaml:"magenta" json:"magenta,omitempty"`
+	BrightMagenta       string `yaml:"bright-magenta" json:"brightMagenta,omitempty"`
+	Cyan                string `yaml:"cyan" json:"cyan,omitempty"`
+	BrightCyan          string `yaml:"bright-cyan" json:"brightCyan,omitempty"`
+	White               string `yaml:"white" json:"white,omitempty"`
+	BrightWhite         string `yaml:"bright-white" json:"brightWhite,omitempty"`
 	// BackgroundImage is a server-side file path and is intentionally excluded
 	// from JSON serialization to avoid exposing local paths to the browser.
-	BackgroundImage string `json:"-"`
+	BackgroundImage string `yaml:"background-image" json:"-"`
+}
+
+// HasBackgroundImage reports whether the theme has a background image
+// configured, i.e. whether BackgroundImage is a non-empty file path.
+func (tm *Theme) HasBackgroundImage() bool {
+	return len(tm.BackgroundImage) > 0
 }
 
 // MapToTheme maps the key-value pairs from the given map to the corresponding
@@ -229,7 +253,7 @@ type TermConfig struct {
 	ShowMenubar        string   `json:"showMenubar"`
 }
 
-func NewTermConfig(srv *Server, clnt *Client, thm *Theme, themeNames []string, allThemeNames []string, builtinThemeNames []string, profileNames []string, activeTheme string, showMenubar string) *TermConfig {
+func NewTermConfig(srv *Server, clnt *TerminalClient, thm *Theme, themeNames []string, allThemeNames []string, builtinThemeNames []string, profileNames []string, activeTheme string, showMenubar string) *TermConfig {
 	return &TermConfig{
 		TLS:                srv.TLS.Enabled,
 		FontFamily:         clnt.FontFamily,
@@ -238,10 +262,10 @@ func NewTermConfig(srv *Server, clnt *Client, thm *Theme, themeNames []string, a
 		Columns:            clnt.Columns,
 		AutoResize:         clnt.AutoResize,
 		Theme:              *thm,
-		Uri:                srv.Uri,
-		Port:               srv.Port,
+		Uri:                srv.URL.Hostname(),
+		Port:               srv.Port(),
 		Debug:              debugEnabled.Load(),
-		HasBackgroundImage: thm.BackgroundImage != "",
+		HasBackgroundImage: thm.HasBackgroundImage(),
 		ThemeNames:         themeNames,
 		AllThemeNames:      allThemeNames,
 		BuiltinThemeNames:  builtinThemeNames,
@@ -272,15 +296,6 @@ type themeConfigResponse struct {
 	ThemeNames         []string `json:"themeNames,omitempty"`
 }
 
-// profileConfigResponse is the JSON shape returned by GET /profile-config.
-type profileConfigResponse struct {
-	Shell            string   `json:"shell"`
-	WorkingDirectory string   `json:"workingDirectory"`
-	Title            string   `json:"title"`
-	Root             string   `json:"root"`
-	Commands         []string `json:"commands"`
-}
-
 // editProfileResponse is returned by POST /edit-profile and POST /delete-profile.
 // ProfileNames is the sorted list of all non-default profile names after the operation.
 type editProfileResponse struct {
@@ -289,28 +304,33 @@ type editProfileResponse struct {
 
 // SettingsServerConfig holds the subset of server settings exposed via the
 // Settings overlay. These fields require a server restart to take effect.
+// It also composes into serverConfig (src/config.go) for YAML config file
+// validation, hence the yaml tags alongside the existing json tags.
 type SettingsServerConfig struct {
-	Port        int    `json:"port"`
-	NoAuth      bool   `json:"noAuth"`
-	NoBrowser   bool   `json:"noBrowser"`
-	ShowMenubar string `json:"showMenubar"`
+	Port        int    `yaml:"port" json:"port"`
+	NoAuth      bool   `yaml:"no-auth" json:"noAuth"`
+	NoBrowser   bool   `yaml:"no-browser" json:"noBrowser"`
+	ShowMenubar string `yaml:"show-menubar" json:"showMenubar"`
 }
 
-// SettingsTerminalConfig holds the terminal settings exposed via the
-// Settings overlay. Font fields apply to the live session; auto-resize,
-// rows, and columns only persist to the config file.
-type SettingsTerminalConfig struct {
-	FontFamily string `json:"fontFamily"`
-	FontSize   int    `json:"fontSize"`
-	AutoResize bool   `json:"autoResize"`
-	Rows       int    `json:"rows"`
-	Columns    int    `json:"columns"`
+// NewSettingsServerConfig constructs a SettingsServerConfig from plain values.
+// Unlike NewServer/NewTerminalClient, this takes non-pointer params: every
+// call site already holds plain values (a method-call result, dereferenced
+// struct fields, or local vars), not addresses of long-lived cobra-flag
+// package vars, so pointer params would only force throwaway locals.
+func NewSettingsServerConfig(port int, noAuth bool, noBrowser bool, showMenubar string) SettingsServerConfig {
+	return SettingsServerConfig{
+		Port:        port,
+		NoAuth:      noAuth,
+		NoBrowser:   noBrowser,
+		ShowMenubar: showMenubar,
+	}
 }
 
 // settingsConfigResponse is the JSON shape for GET and POST /settings.
 type settingsConfigResponse struct {
-	Server   SettingsServerConfig   `json:"server"`
-	Terminal SettingsTerminalConfig `json:"terminal"`
+	Server   SettingsServerConfig `json:"server"`
+	Terminal TerminalClient       `json:"terminal"`
 }
 
 // CSPHeader represents a single Content-Security-Policy directive, consisting of

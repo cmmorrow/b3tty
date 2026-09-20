@@ -124,7 +124,7 @@ export interface SettingsServerConfig {
     showMenubar: "hover" | "visible" | "disable";
 }
 
-export interface SettingsTerminalConfig {
+export interface TerminalClient {
     fontFamily: string;
     fontSize: number;
     autoResize: boolean;
@@ -134,7 +134,7 @@ export interface SettingsTerminalConfig {
 
 export interface SettingsConfig {
     server: SettingsServerConfig;
-    terminal: SettingsTerminalConfig;
+    terminal: TerminalClient;
 }
 
 export function isSettingsConfig(val: unknown): val is SettingsConfig {

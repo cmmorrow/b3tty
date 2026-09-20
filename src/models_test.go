@@ -9,43 +9,67 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestServerAddr(t *testing.T) {
+func TestNewServer(t *testing.T) {
 	testCases := []struct {
-		name     string
-		server   Server
-		expected string
+		name           string
+		uri            string
+		port           int
+		tls            bool
+		expectedHost   string
+		expectedScheme string
 	}{
 		{
-			name:     "Standard case",
-			server:   Server{Uri: "example.com", Port: 8080},
-			expected: "example.com:8080",
+			name:           "Standard case",
+			uri:            "example.com",
+			port:           8080,
+			expectedHost:   "example.com:8080",
+			expectedScheme: "http",
 		},
 		{
-			name:     "Localhost",
-			server:   Server{Uri: "localhost", Port: 3000},
-			expected: "localhost:3000",
+			name:           "Localhost",
+			uri:            "localhost",
+			port:           3000,
+			expectedHost:   "localhost:3000",
+			expectedScheme: "http",
 		},
 		{
-			name:     "IP address",
-			server:   Server{Uri: "192.168.1.1", Port: 443},
-			expected: "192.168.1.1:443",
+			name:           "IP address",
+			uri:            "192.168.1.1",
+			port:           443,
+			expectedHost:   "192.168.1.1:443",
+			expectedScheme: "http",
 		},
 		{
-			name:     "No port",
-			server:   Server{Uri: "localhost"},
-			expected: "localhost:0", // TODO: Handle this case
+			name:           "TLS enabled uses https scheme",
+			uri:            "example.com",
+			port:           8443,
+			tls:            true,
+			expectedHost:   "example.com:8443",
+			expectedScheme: "https",
 		},
 		{
-			name:     "No Uri",
-			server:   Server{Port: 8080},
-			expected: ":8080",
+			name:           "No port",
+			uri:            "localhost",
+			port:           0,
+			expectedHost:   "localhost:0", // TODO: Handle this case
+			expectedScheme: "http",
+		},
+		{
+			name:           "No Uri",
+			uri:            "",
+			port:           8080,
+			expectedHost:   ":8080",
+			expectedScheme: "http",
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := tc.server.Addr()
-			assert.Equal(t, tc.expected, result.Host)
+			noAuth := false
+			server := NewServer(&tc.uri, &tc.port, &noAuth, &TLS{Enabled: tc.tls})
+			assert.Equal(t, tc.expectedHost, server.URL.Host)
+			assert.Equal(t, tc.expectedScheme, server.URL.Scheme)
+			assert.Equal(t, tc.port, server.Port())
 		})
 	}
 }
@@ -430,6 +454,23 @@ func TestMapToTheme(t *testing.T) {
 	assert.NotPanics(func() { theme.MapToTheme(nonStringMap) })
 	assert.Equal("red", theme.Foreground)
 	assert.Empty(theme.Background)
+}
+
+func TestThemeHasBackgroundImage(t *testing.T) {
+	t.Run("returns false when BackgroundImage is empty", func(t *testing.T) {
+		theme := &Theme{}
+		assert.False(t, theme.HasBackgroundImage())
+	})
+
+	t.Run("returns true when BackgroundImage is set", func(t *testing.T) {
+		theme := &Theme{BackgroundImage: "/path/to/image.png"}
+		assert.True(t, theme.HasBackgroundImage())
+	})
+
+	t.Run("other fields being populated does not affect the result", func(t *testing.T) {
+		theme := &Theme{Foreground: "#ffffff", Background: "#000000"}
+		assert.False(t, theme.HasBackgroundImage())
+	})
 }
 
 func TestThemeToColorMap(t *testing.T) {

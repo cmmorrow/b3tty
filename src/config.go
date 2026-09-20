@@ -28,66 +28,31 @@ var configFileMu sync.Mutex
 
 // The following types mirror the YAML config file structure. They exist solely
 // for structural and type validation at startup and are intentionally separate
-// from the runtime structs in src/models.go.
+// from the runtime structs in src/models.go — with the exception of the
+// terminal section, which reuses TerminalClient (src/models.go) directly since
+// its field set already matches the config file's terminal section exactly,
+// the server section, whose serverConfig type composes TLS and
+// SettingsServerConfig (src/models.go) via yaml:",inline", since their
+// combined field set already matches the config file's server section exactly,
+// the profiles section, which reuses Profile (src/models.go) directly as
+// the map value type (map[string]Profile) since its field set already matches
+// the config file's profile entry shape exactly — no yaml:",inline" is needed
+// here, unlike the server section, because Profile is a plain named map value
+// type rather than an anonymously embedded field, and the themes section,
+// which reuses Theme (src/models.go) directly as the map value type
+// (map[string]Theme) for the same reason.
 
 type configFile struct {
-	Server   serverConfig             `yaml:"server"`
-	Terminal terminalConfig           `yaml:"terminal"`
-	Theme    string                   `yaml:"theme"`
-	Themes   map[string]themeConfig   `yaml:"themes"`
-	Profiles map[string]profileConfig `yaml:"profiles"`
+	Server   serverConfig       `yaml:"server"`
+	Terminal TerminalClient     `yaml:"terminal"`
+	Theme    string             `yaml:"theme"`
+	Themes   map[string]Theme   `yaml:"themes"`
+	Profiles map[string]Profile `yaml:"profiles"`
 }
 
 type serverConfig struct {
-	TLS         bool   `yaml:"tls"`
-	CertFile    string `yaml:"cert-file"`
-	KeyFile     string `yaml:"key-file"`
-	NoAuth      bool   `yaml:"no-auth"`
-	NoBrowser   bool   `yaml:"no-browser"`
-	Port        int    `yaml:"port"`
-	ShowMenubar string `yaml:"show-menubar"`
-}
-
-type terminalConfig struct {
-	FontFamily string `yaml:"font-family"`
-	FontSize   int    `yaml:"font-size"`
-	AutoResize bool   `yaml:"auto-resize"`
-	Rows       int    `yaml:"rows"`
-	Columns    int    `yaml:"columns"`
-}
-
-type themeConfig struct {
-	Black               string `yaml:"black"`
-	BrightBlack         string `yaml:"bright-black"`
-	Red                 string `yaml:"red"`
-	BrightRed           string `yaml:"bright-red"`
-	Green               string `yaml:"green"`
-	BrightGreen         string `yaml:"bright-green"`
-	Yellow              string `yaml:"yellow"`
-	BrightYellow        string `yaml:"bright-yellow"`
-	Blue                string `yaml:"blue"`
-	BrightBlue          string `yaml:"bright-blue"`
-	Magenta             string `yaml:"magenta"`
-	BrightMagenta       string `yaml:"bright-magenta"`
-	Cyan                string `yaml:"cyan"`
-	BrightCyan          string `yaml:"bright-cyan"`
-	White               string `yaml:"white"`
-	BrightWhite         string `yaml:"bright-white"`
-	Foreground          string `yaml:"foreground"`
-	Background          string `yaml:"background"`
-	Cursor              string `yaml:"cursor"`
-	CursorAccent        string `yaml:"cursor-accent"`
-	SelectionForeground string `yaml:"selection-foreground"`
-	SelectionBackground string `yaml:"selection-background"`
-	BackgroundImage     string `yaml:"background-image"`
-}
-
-type profileConfig struct {
-	WorkingDirectory string   `yaml:"working-directory"`
-	Title            string   `yaml:"title"`
-	Shell            string   `yaml:"shell"`
-	Commands         []string `yaml:"commands"`
-	Root             string   `yaml:"root"`
+	TLS                  `yaml:",inline"`
+	SettingsServerConfig `yaml:",inline"`
 }
 
 // resolveConfigPath returns configPath unchanged when non-empty, or the
@@ -316,7 +281,7 @@ func DeleteProfileFromConfig(configPath string, name string) error {
 // SaveSettingsToConfig reads the existing config file at configPath (creating it if
 // absent), updates the server and terminal sections with the provided values, and
 // writes the file back. Existing settings not covered by the structs are preserved.
-func SaveSettingsToConfig(configPath string, server SettingsServerConfig, terminal SettingsTerminalConfig) error {
+func SaveSettingsToConfig(configPath string, server SettingsServerConfig, terminal TerminalClient) error {
 	configFileMu.Lock()
 	defer configFileMu.Unlock()
 

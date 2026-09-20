@@ -183,7 +183,7 @@ func (ts *TerminalServer) themeConfigHandler(w http.ResponseWriter, r *http.Requ
 	}
 	if r.Method == "POST" {
 		ts.StateMu.Lock()
-		ts.Client.Theme = theme
+		ts.Theme = theme
 		ts.ActiveTheme = name
 		ts.StateMu.Unlock()
 		var colors map[string]any
@@ -251,9 +251,9 @@ func (ts *TerminalServer) addThemeHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ts.Client.Theme = ts.Themes[req.Theme]
+	ts.Theme = ts.Themes[req.Theme]
 	ts.ActiveTheme = req.Theme
-	activeTheme := ts.Client.Theme
+	activeTheme := ts.Theme
 	themeNames := ts.sortedThemeNames()
 	ts.StateMu.Unlock()
 
@@ -310,7 +310,7 @@ func (ts *TerminalServer) editThemeHandler(w http.ResponseWriter, r *http.Reques
 		req.Theme.BackgroundImage = existing.BackgroundImage
 	}
 	ts.Themes[req.Name] = req.Theme
-	ts.Client.Theme = req.Theme
+	ts.Theme = req.Theme
 	ts.ActiveTheme = req.Name
 	themeNames := ts.sortedThemeNames()
 	ts.StateMu.Unlock()
