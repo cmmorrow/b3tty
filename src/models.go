@@ -15,7 +15,7 @@ import (
 
 // TerminalClient holds the terminal-display settings shared across in-memory
 // runtime state (TerminalServer.Client), the YAML config file's terminal
-// section (see configFile in config.go), and the /settings JSON API.
+// section (see Config in config.go), and the /settings JSON API.
 type TerminalClient struct {
 	FontFamily string `yaml:"font-family" json:"fontFamily"`
 	FontSize   int    `yaml:"font-size" json:"fontSize"`
@@ -71,7 +71,7 @@ type TLS struct {
 
 // Profile holds a terminal profile's settings, shared across in-memory runtime
 // state (TerminalServer.Profiles), the YAML config file's profiles: section
-// (configFile.Profiles in src/config.go), and the /profile-config JSON API.
+// (Config.Profiles in src/config.go), and the /profile-config JSON API.
 type Profile struct {
 	Root             string   `yaml:"root" json:"root"`
 	WorkingDirectory string   `yaml:"working-directory" json:"workingDirectory"`
@@ -136,11 +136,12 @@ func NewProfile(shell string, wd string, root string, title string, commands []s
 
 // Theme holds a color scheme's settings, shared across in-memory runtime
 // state (TerminalServer.Theme, TerminalServer.Themes), the YAML config file's
-// themes: section (configFile.Themes in src/config.go), and the
+// themes: section (Config.Themes in src/config.go), and the
 // /theme-config JSON API (via themeConfigResponse, which embeds Theme).
 // MapToTheme/toColorMap remain the conversion path to/from map[string]any —
-// used by built-in JSON themes, Viper-loaded config themes, and POST request
-// bodies — none of which go through these yaml/json struct tags directly.
+// used by built-in JSON themes and POST request bodies — neither of which
+// goes through these yaml/json struct tags directly. The config file's themes:
+// section does go through them, via Config.Themes.
 type Theme struct {
 	Foreground          string `yaml:"foreground" json:"foreground,omitempty"`
 	Background          string `yaml:"background" json:"background,omitempty"`
@@ -304,7 +305,7 @@ type editProfileResponse struct {
 
 // SettingsServerConfig holds the subset of server settings exposed via the
 // Settings overlay. These fields require a server restart to take effect.
-// It also composes into serverConfig (src/config.go) for YAML config file
+// It also composes into ServerConfig (src/config.go) for YAML config file
 // validation, hence the yaml tags alongside the existing json tags.
 type SettingsServerConfig struct {
 	Port        int    `yaml:"port" json:"port"`

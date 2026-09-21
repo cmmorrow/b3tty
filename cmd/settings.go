@@ -50,10 +50,10 @@ var settingsGetCmd = &cobra.Command{
 		fmt.Fprintf(w, "  font-family:\t%s\n", fontFamily)
 		fmt.Fprintf(w, "  font-size:\t%d\n", fontSize)
 		fmt.Fprintf(w, "  auto-resize:\t%v\n", autoResize)
-		if viper.IsSet("terminal.rows") {
+		if configKeys.Has("terminal.rows") {
 			fmt.Fprintf(w, "  rows:\t%d\n", rows)
 		}
-		if viper.IsSet("terminal.columns") {
+		if configKeys.Has("terminal.columns") {
 			fmt.Fprintf(w, "  columns:\t%d\n", columns)
 		}
 		w.Flush()

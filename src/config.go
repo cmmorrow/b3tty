@@ -1,6 +1,7 @@
 package src
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -26,31 +27,34 @@ import (
 // require OS-level file locking and is a larger, separate change.
 var configFileMu sync.Mutex
 
-// The following types mirror the YAML config file structure. They exist solely
-// for structural and type validation at startup and are intentionally separate
-// from the runtime structs in src/models.go — with the exception of the
-// terminal section, which reuses TerminalClient (src/models.go) directly since
-// its field set already matches the config file's terminal section exactly,
-// the server section, whose serverConfig type composes TLS and
-// SettingsServerConfig (src/models.go) via yaml:",inline", since their
-// combined field set already matches the config file's server section exactly,
-// the profiles section, which reuses Profile (src/models.go) directly as
-// the map value type (map[string]Profile) since its field set already matches
-// the config file's profile entry shape exactly — no yaml:",inline" is needed
-// here, unlike the server section, because Profile is a plain named map value
-// type rather than an anonymously embedded field, and the themes section,
-// which reuses Theme (src/models.go) directly as the map value type
-// (map[string]Theme) for the same reason.
+// The following types mirror the YAML config file structure. They are the
+// single decode target for the config file: LoadConfig fills them at startup
+// and the same decode performs structural and type validation. They are
+// intentionally separate from the runtime structs in src/models.go — with the
+// exception of the terminal section, which reuses TerminalClient
+// (src/models.go) directly since its field set already matches the config
+// file's terminal section exactly, the server section, whose ServerConfig type
+// composes TLS and SettingsServerConfig (src/models.go) via yaml:",inline",
+// since their combined field set already matches the config file's server
+// section exactly, the profiles section, which reuses Profile (src/models.go)
+// directly as the map value type (map[string]Profile) since its field set
+// already matches the config file's profile entry shape exactly — no
+// yaml:",inline" is needed here, unlike the server section, because Profile is
+// a plain named map value type rather than an anonymously embedded field, and
+// the themes section, which reuses Theme (src/models.go) directly as the map
+// value type (map[string]Theme) for the same reason.
 
-type configFile struct {
-	Server   serverConfig       `yaml:"server"`
+// Config is the decoded contents of conf.yaml.
+type Config struct {
+	Server   ServerConfig       `yaml:"server"`
 	Terminal TerminalClient     `yaml:"terminal"`
 	Theme    string             `yaml:"theme"`
 	Themes   map[string]Theme   `yaml:"themes"`
 	Profiles map[string]Profile `yaml:"profiles"`
 }
 
-type serverConfig struct {
+// ServerConfig is the config file's server section.
+type ServerConfig struct {
 	TLS                  `yaml:",inline"`
 	SettingsServerConfig `yaml:",inline"`
 }
@@ -314,27 +318,68 @@ func SaveSettingsToConfig(configPath string, server SettingsServerConfig, termin
 	return writeConfigMap(configPath, cfg, "SaveSettingsToConfig")
 }
 
-// ValidateConfig opens the YAML file at path, decodes it into typed structs
-// with KnownFields(true) enabled, and returns a descriptive error (including
-// the line number from the YAML parser) if any field has the wrong type or any
-// unrecognised key is present.
-func ValidateConfig(path string) error {
-	f, err := os.Open(path)
+// ConfigKeys is the set of dotted key paths present in the config file, e.g.
+// "terminal.rows". LoadConfig builds it so callers can distinguish "the user
+// wrote this key" from "this field decoded to its zero value" — the one thing
+// a typed decode cannot express on its own.
+type ConfigKeys map[string]bool
+
+// Has reports whether the config file contained the given dotted key path.
+// It is nil-safe, so the zero ConfigKeys returned by a failed load simply
+// reports every key as absent.
+func (k ConfigKeys) Has(key string) bool { return k[key] }
+
+// LoadConfig reads the YAML config file at path and decodes it into cfg with
+// KnownFields(true) enabled, returning a descriptive error (including the line
+// number from the YAML parser) if any field has the wrong type or any
+// unrecognised key is present. Loading and validating are the same pass.
+//
+// cfg is decoded into in place rather than returned fresh so that callers can
+// pre-seed it with the values to fall back on: yaml.v3 leaves fields whose
+// keys are absent from the document untouched, so after Decode every field
+// either holds what the file said or the caller's seed value. That gives
+// "config file overrides default, absent key keeps default" for free, with no
+// pointer fields and no second is-this-key-set lookup per field.
+func LoadConfig(path string, cfg *Config) (ConfigKeys, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("cannot open config file: %w", err)
+		return nil, fmt.Errorf("cannot read config file: %w", err)
 	}
-	defer f.Close()
 
-	dec := yaml.NewDecoder(f)
+	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
-
-	var cfg configFile
-	if err := dec.Decode(&cfg); err != nil {
+	if err := dec.Decode(cfg); err != nil {
 		// An empty file produces io.EOF from the decoder, which is not an error.
 		if errors.Is(err, io.EOF) {
-			return nil
+			return ConfigKeys{}, nil
 		}
-		return fmt.Errorf("config file %s: %w", path, err)
+		return nil, fmt.Errorf("config file %s: %w", path, err)
 	}
-	return nil
+
+	// A second pass over the same bytes, purely to record which keys the file
+	// actually contains. Only the handful of settings whose absence is
+	// meaningful need this (see `b3tty settings get`); everything else is
+	// served by the pre-seeded decode above.
+	var raw map[string]any
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("config file %s: %w", path, err)
+	}
+	keys := ConfigKeys{}
+	collectConfigKeys(raw, "", keys)
+	return keys, nil
+}
+
+// collectConfigKeys walks a decoded YAML mapping and records every dotted key
+// path it contains into keys, recursing into nested mappings.
+func collectConfigKeys(m map[string]any, prefix string, keys ConfigKeys) {
+	for k, v := range m {
+		path := k
+		if prefix != "" {
+			path = prefix + "." + k
+		}
+		keys[path] = true
+		if nested, ok := v.(map[string]any); ok {
+			collectConfigKeys(nested, path, keys)
+		}
+	}
 }

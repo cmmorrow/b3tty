@@ -25,6 +25,12 @@ var configFileFound bool
 var activeThemeName string
 var themes = make(map[string]src.Theme)
 
+// configKeys records which dotted keys the config file actually contained,
+// and configLoadErr the error from decoding it (nil on success, and always
+// nil when no config file was found). Both are populated by initConfig.
+var configKeys src.ConfigKeys
+var configLoadErr error
+
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Version: Version,
@@ -43,6 +49,18 @@ and terminal configuration options:
 	// Uncomment the following line if your bare application
 	// has an action associated with it:
 	// Run: func(cmd *cobra.Command, args []string) { },
+
+	// A config file that failed to load is a warning, not a failure, for every
+	// subcommand except start: `b3tty settings edit` in particular has to stay
+	// usable against a broken config, since it is how the user repairs it.
+	// startCmd declares its own PersistentPreRun to make the same condition
+	// fatal — cobra runs only the nearest one it finds walking up from the
+	// command being executed, so this hook does not run for `b3tty start`.
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		if configLoadErr != nil {
+			cmdLog.Warnf("config validation error: %v", configLoadErr)
+		}
+	},
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -63,7 +81,6 @@ func init() {
 	// will be global for your application.
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "b3tty config file to use")
-	viper.BindPFlags(startCmd.Flags())
 }
 
 // initConfig reads in config file and ENV variables if set.
@@ -94,109 +111,123 @@ func initConfig() {
 	}
 
 	configFileFound = viper.ConfigFileUsed() != "" || cfgFile != ""
-
-	if configFileFound {
-		src.Debugf("using config file: %s", viper.ConfigFileUsed())
-
-		// Config-file values are only applied when the corresponding flag was
-		// not explicitly passed on the command line, so CLI flag > config
-		// file > flag default holds for every flag-backed setting below.
-		if viper.IsSet("server.port") && !startCmd.Flags().Changed("port") {
-			port = viper.GetInt("server.port")
-		}
-		if viper.IsSet("server.tls") && !startCmd.Flags().Changed("tls") {
-			tls = viper.GetBool("server.tls")
-		}
-		if viper.IsSet("server.cert-file") && !startCmd.Flags().Changed("cert-file") {
-			certFile = viper.GetString("server.cert-file")
-		}
-		if viper.IsSet("server.key-file") && !startCmd.Flags().Changed("key-file") {
-			keyFile = viper.GetString("server.key-file")
-		}
-		if viper.IsSet("server.no-auth") && !startCmd.Flags().Changed("no-auth") {
-			noAuth = viper.GetBool("server.no-auth")
-		}
-		if viper.IsSet("server.no-browser") && !startCmd.Flags().Changed("no-browser") {
-			noBrowser = viper.GetBool("server.no-browser")
-		}
-		if viper.IsSet("server.show-menubar") && !startCmd.Flags().Changed("show-menubar") {
-			showMenubar = viper.GetString("server.show-menubar")
-		}
-		if viper.IsSet("terminal.rows") && !startCmd.Flags().Changed("rows") {
-			rows = viper.GetInt("terminal.rows")
-		}
-		if viper.IsSet("terminal.columns") && !startCmd.Flags().Changed("columns") {
-			columns = viper.GetInt("terminal.columns")
-		}
-		if viper.IsSet("terminal.auto-resize") && !startCmd.Flags().Changed("auto-resize") {
-			autoResize = viper.GetBool("terminal.auto-resize")
-		}
-		// font-family and font-size have no corresponding start flag (CLI
-		// setting was deprecated for these — see startCmd's init()), so
-		// there's no precedence to guard here.
-		if viper.IsSet("terminal.font-family") {
-			fontFamily = viper.GetString("terminal.font-family")
-		}
-		if viper.IsSet("terminal.font-size") {
-			fontSize = viper.GetInt("terminal.font-size")
-		}
-		if viper.IsSet("theme") {
-			themeName = viper.GetString("theme")
-			themeCfg := viper.Sub("themes." + themeName)
-			if themeCfg == nil {
-				src.Errorf("cannot find theme %s", themeName)
-				os.Exit(3)
-			}
-			theme.MapToTheme(themeCfg.AllSettings())
-			activeThemeName = themeName
-		}
-
-		if viper.IsSet("themes") {
-			// ReadThemeNames reads directly from YAML to preserve key case;
-			// viper.GetStringMap lowercases all keys.
-			themeNames, err := src.ReadThemeNames(viper.ConfigFileUsed())
-			if err != nil {
-				src.Warnf("could not read theme names from config: %v", err)
-			}
-			for _, name := range themeNames {
-				var t src.Theme
-				if themeCfg := viper.Sub("themes." + name); themeCfg != nil {
-					t.MapToTheme(themeCfg.AllSettings())
-				}
-				themes[name] = t
-			}
-		}
-
-		// Guarantee the active theme is always in themes when the themes section
-		// is missing or empty (some YAML parser versions return an empty map).
-		if themeName != "" {
-			if _, exists := themes[themeName]; !exists {
-				themes[themeName] = theme
-			}
-		}
-
-		if viper.IsSet("profiles") {
-			profileNames := viper.GetStringMap("profiles")
-			for name := range profileNames {
-				profileCfg := viper.Sub("profiles." + name)
-				if profileCfg == nil {
-					continue
-				}
-				profileCfg.SetDefault("root", src.DEFAULT_ROOT)
-				profileCfg.SetDefault("working-directory", src.DEFAULT_WORKING_DIRECTORY)
-				profileCfg.SetDefault("shell", src.DEFAULT_SHELL)
-				profileCfg.SetDefault("title", src.DEFAULT_TITLE)
-				profileCfg.SetDefault("commands", []string{})
-				root := profileCfg.GetString("root")
-				workingDirectory := profileCfg.GetString("working-directory")
-				shell := profileCfg.GetString("shell")
-				title := profileCfg.GetString("title")
-				commands := profileCfg.GetStringSlice("commands")
-				profiles[name] = src.NewProfile(shell, workingDirectory, root, title, commands)
-			}
-		}
-
+	if !configFileFound {
+		return
 	}
 
-	// viper.AutomaticEnv() // read in environment variables that match
+	configPath := viper.ConfigFileUsed()
+	src.Debugf("using config file: %s", configPath)
+
+	// Pre-seed the decode target with the current flag values. Cobra parses
+	// flags before OnInitialize runs, so each field already holds the CLI
+	// value when one was passed and the flag's default otherwise; yaml.v3
+	// leaves fields the file does not mention untouched, which is what makes
+	// the Changed() guards below sufficient to give CLI > config > default.
+	cfg := src.Config{
+		Server: src.ServerConfig{
+			TLS:                  src.TLS{Enabled: tls, CertFilePath: certFile, KeyFilePath: keyFile},
+			SettingsServerConfig: src.NewSettingsServerConfig(port, noAuth, noBrowser, showMenubar),
+		},
+		Terminal: src.TerminalClient{
+			FontFamily: fontFamily,
+			FontSize:   fontSize,
+			AutoResize: autoResize,
+			Rows:       rows,
+			Columns:    columns,
+		},
+	}
+
+	var err error
+	configKeys, err = src.LoadConfig(configPath, &cfg)
+	if err != nil {
+		// Recorded rather than handled here: `b3tty start` treats this as
+		// fatal, every other subcommand warns and carries on with flag
+		// defaults so `b3tty settings edit` can still open the file that
+		// needs repairing. See the PersistentPreRun hooks on rootCmd and
+		// startCmd.
+		configLoadErr = err
+		return
+	}
+
+	// Config-file values are only applied when the corresponding flag was not
+	// explicitly passed on the command line, so CLI flag > config file > flag
+	// default holds for every flag-backed setting below.
+	if !startCmd.Flags().Changed("port") {
+		port = cfg.Server.Port
+	}
+	if !startCmd.Flags().Changed("tls") {
+		tls = cfg.Server.Enabled
+	}
+	if !startCmd.Flags().Changed("cert-file") {
+		certFile = cfg.Server.CertFilePath
+	}
+	if !startCmd.Flags().Changed("key-file") {
+		keyFile = cfg.Server.KeyFilePath
+	}
+	if !startCmd.Flags().Changed("no-auth") {
+		noAuth = cfg.Server.NoAuth
+	}
+	if !startCmd.Flags().Changed("no-browser") {
+		noBrowser = cfg.Server.NoBrowser
+	}
+	if !startCmd.Flags().Changed("show-menubar") {
+		showMenubar = cfg.Server.ShowMenubar
+	}
+	if !startCmd.Flags().Changed("rows") {
+		rows = cfg.Terminal.Rows
+	}
+	if !startCmd.Flags().Changed("columns") {
+		columns = cfg.Terminal.Columns
+	}
+	if !startCmd.Flags().Changed("auto-resize") {
+		autoResize = cfg.Terminal.AutoResize
+	}
+	// font-family and font-size have no corresponding start flag (CLI setting
+	// was deprecated for these — see startCmd's init()), so there is no
+	// precedence to guard; the seed value is already the effective default.
+	fontFamily = cfg.Terminal.FontFamily
+	fontSize = cfg.Terminal.FontSize
+
+	// Decoding straight into map[string]Theme preserves each theme name's
+	// exact case, which viper.GetStringMap does not — the reason the active
+	// theme and the themes list used to be read back out of the raw YAML
+	// separately.
+	for name, t := range cfg.Themes {
+		themes[name] = t
+	}
+	if cfg.Theme != "" {
+		t, ok := cfg.Themes[cfg.Theme]
+		if !ok {
+			src.Errorf("cannot find theme %s", cfg.Theme)
+			os.Exit(3)
+		}
+		theme = t
+		activeThemeName = cfg.Theme
+	}
+
+	for name, p := range cfg.Profiles {
+		profiles[name] = applyProfileDefaults(p)
+	}
+}
+
+// applyProfileDefaults fills in a default for every profile field the config
+// file left empty, replacing the per-field SetDefault calls that the old
+// viper.Sub-based profile loading used.
+func applyProfileDefaults(p src.Profile) src.Profile {
+	if p.Shell == "" {
+		p.Shell = src.DEFAULT_SHELL
+	}
+	if p.WorkingDirectory == "" {
+		p.WorkingDirectory = src.DEFAULT_WORKING_DIRECTORY
+	}
+	if p.Root == "" {
+		p.Root = src.DEFAULT_ROOT
+	}
+	if p.Title == "" {
+		p.Title = src.DEFAULT_TITLE
+	}
+	if p.Commands == nil {
+		p.Commands = []string{}
+	}
+	return p
 }
