@@ -247,14 +247,12 @@ func SaveProfileToConfig(configPath string, name string, p Profile) error {
 
 	profilesSection := getOrCreateSection(cfg, "profiles")
 
-	entry := map[string]any{
-		"shell":             p.Shell,
-		"title":             p.Title,
-		"working-directory": p.WorkingDirectory,
-		"root":              p.Root,
-		"commands":          p.Commands,
-	}
-	profilesSection[name] = entry
+	// Stored as the Profile struct itself rather than a hand-built map:
+	// gopkg.in/yaml.v3 marshals a struct nested inside a map[string]any using
+	// its own yaml tags, so the hyphenated key names live in exactly one place
+	// (Profile in models.go) and a field added there cannot be silently
+	// dropped here.
+	profilesSection[name] = p
 
 	return writeConfigMap(configPath, cfg, "SaveProfileToConfig")
 }
