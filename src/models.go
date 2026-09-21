@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"reflect"
 	"strconv"
 	"strings"
 
@@ -176,30 +175,9 @@ func (tm *Theme) HasBackgroundImage() bool {
 	return len(tm.BackgroundImage) > 0
 }
 
-// MapToTheme maps the key-value pairs from the given map to the corresponding
-// fields of the Theme struct. It uses reflection to set the values of the
-// struct fields based on the map keys. The map keys are expected to be in a
-// format that can be converted to the struct field names. Only string values
-// from the map are set to the corresponding struct fields.
-//
-// Parameters:
-//   - m: A map[string]any containing the theme properties to be set.
-//
-// Note: This method modifies the Theme struct in-place.
-func (tm *Theme) MapToTheme(m map[string]any) {
-	val := reflect.ValueOf(tm).Elem()
-	for k, v := range m {
-		// Convert the map key to the struct field name
-		fieldName := convertToFieldName(k)
-		field := val.FieldByName(fieldName)
-		if s, ok := v.(string); ok && field.IsValid() && field.CanSet() {
-			field.SetString(s)
-		}
-	}
-}
-
 // toColorMap converts the Theme to a map[string]any using the hyphenated key
-// names expected by MapToTheme and the config.go read-modify-write helpers.
+// names of Theme's own yaml tags, which is the form the config.go
+// read-modify-write helpers write into the themes: section.
 // Empty fields are omitted.
 // BackgroundImage is intentionally excluded since it holds a file path, not a color.
 func (tm Theme) toColorMap() map[string]any {

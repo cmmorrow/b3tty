@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestNewServer(t *testing.T) {
@@ -398,64 +400,6 @@ func TestGetCSPHeadersMutationViaGet(t *testing.T) {
 	assert.Contains(t, result, "'nonce-abc123'")
 }
 
-func TestMapToTheme(t *testing.T) {
-	assert := assert.New(t)
-
-	// Test case 1: Empty map
-	theme := &Theme{}
-	emptyMap := map[string]any{}
-	theme.MapToTheme(emptyMap)
-	assert.Equal(Theme{}, *theme)
-
-	// Test case 2: Map with valid keys
-	theme = &Theme{}
-	validMap := map[string]any{
-		"foreground":           "white",
-		"background":           "black",
-		"selection-foreground": "yellow",
-		"selection-background": "blue",
-	}
-	theme.MapToTheme(validMap)
-	assert.Equal("white", theme.Foreground)
-	assert.Equal("black", theme.Background)
-	assert.Equal("yellow", theme.SelectionForeground)
-	assert.Equal("blue", theme.SelectionBackground)
-
-	// Test case 3: Map with invalid keys
-	theme = &Theme{Foreground: "red"}
-	invalidMap := map[string]any{
-		"invalid_key":     "value",
-		"another_invalid": 123,
-	}
-	theme.MapToTheme(invalidMap)
-	assert.Equal("red", theme.Foreground)
-	assert.Empty(theme.Background)
-
-	// Test case 4: Map with mixed valid and invalid keys
-	theme = &Theme{}
-	mixedMap := map[string]any{
-		"foreground":      "white",
-		"invalid_key":     "value",
-		"background":      "black",
-		"another_invalid": 123,
-	}
-	theme.MapToTheme(mixedMap)
-	assert.Equal("white", theme.Foreground)
-	assert.Equal("black", theme.Background)
-	assert.Empty(theme.SelectionForeground)
-	assert.Empty(theme.SelectionBackground)
-
-	// Test case 5: Valid field name with a non-string value does not panic
-	theme = &Theme{Foreground: "red"}
-	nonStringMap := map[string]any{
-		"foreground": 42,
-		"background": true,
-	}
-	assert.NotPanics(func() { theme.MapToTheme(nonStringMap) })
-	assert.Equal("red", theme.Foreground)
-	assert.Empty(theme.Background)
-}
-
 func TestThemeHasBackgroundImage(t *testing.T) {
 	t.Run("returns false when BackgroundImage is empty", func(t *testing.T) {
 		theme := &Theme{}
@@ -529,7 +473,10 @@ func TestThemeToColorMap(t *testing.T) {
 		assert.NotContains(t, m, "BackgroundImage")
 	})
 
-	t.Run("round-trips correctly through MapToTheme", func(t *testing.T) {
+	t.Run("round-trips through the YAML config form", func(t *testing.T) {
+		// toColorMap's hyphenated keys are what the config writers splice into
+		// themes:, and Theme's yaml tags are what LoadConfig reads back out —
+		// so this is the exact round trip production performs.
 		original := Theme{
 			Foreground: "#f8f8f2",
 			Background: "#282a36",
@@ -537,12 +484,10 @@ func TestThemeToColorMap(t *testing.T) {
 			BrightRed:  "#ff6e6e",
 			Cursor:     "#f8f8f2",
 		}
+		data, err := yaml.Marshal(original.toColorMap())
+		require.NoError(t, err)
 		var restored Theme
-		restored.MapToTheme(original.toColorMap())
-		assert.Equal(t, original.Foreground, restored.Foreground)
-		assert.Equal(t, original.Background, restored.Background)
-		assert.Equal(t, original.Red, restored.Red)
-		assert.Equal(t, original.BrightRed, restored.BrightRed)
-		assert.Equal(t, original.Cursor, restored.Cursor)
+		require.NoError(t, yaml.Unmarshal(data, &restored))
+		assert.Equal(t, original, restored)
 	})
 }

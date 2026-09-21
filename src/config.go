@@ -133,7 +133,8 @@ func filterValidThemeColors(colors map[string]any) map[string]any {
 // entries under the themes section. Unlike the other config-writing functions
 // in this file, it does not read or preserve any existing file content: it is
 // used solely for the first-run setup flow, where no config file exists yet.
-// Keys in colors use the hyphenated form expected by MapToTheme (e.g. "bright-red").
+// Keys in colors use the hyphenated form of Theme's yaml tags (e.g. "bright-red"),
+// as produced by Theme.toColorMap.
 func saveDefaultThemeConfig(configPath string, themeName string, colors map[string]any) error {
 	configFileMu.Lock()
 	defer configFileMu.Unlock()

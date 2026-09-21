@@ -109,13 +109,6 @@ func TestValidateTerminalDimension(t *testing.T) {
 	assert.False(t, validateTerminalDimension(-1000))
 }
 
-func TestConvertToFieldName(t *testing.T) {
-	assert.Equal(t, "UserFirstName", convertToFieldName("user-first-name"))
-	assert.Equal(t, "Id", convertToFieldName("id"))
-	assert.Equal(t, "LongHyphenatedString", convertToFieldName("long-hyphenated-string"))
-	assert.Equal(t, "", convertToFieldName(""))
-}
-
 func TestGenerateToken(t *testing.T) {
 	token, err := generateToken(10)
 	assert.NoError(t, err)
@@ -142,24 +135,38 @@ func TestGenerateToken(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestMustUnmarshalTheme(t *testing.T) {
-	t.Run("valid JSON returns populated map", func(t *testing.T) {
+	t.Run("valid JSON returns a populated Theme", func(t *testing.T) {
 		data := []byte(`{"foreground":"#ffffff","background":"#000000"}`)
-		m := mustUnmarshalTheme(data)
-		assert.Equal(t, "#ffffff", m["foreground"])
-		assert.Equal(t, "#000000", m["background"])
+		th := mustUnmarshalTheme(data)
+		assert.Equal(t, "#ffffff", th.Foreground)
+		assert.Equal(t, "#000000", th.Background)
 	})
 
-	t.Run("empty JSON object returns empty map", func(t *testing.T) {
-		m := mustUnmarshalTheme([]byte(`{}`))
-		assert.NotNil(t, m)
-		assert.Empty(t, m)
+	t.Run("camelCase keys map to their struct fields", func(t *testing.T) {
+		data := []byte(`{"brightRed":"#ee837b","selectionBackground":"#404040","cursorAccent":"#15191e"}`)
+		th := mustUnmarshalTheme(data)
+		assert.Equal(t, "#ee837b", th.BrightRed)
+		assert.Equal(t, "#404040", th.SelectionBackground)
+		assert.Equal(t, "#15191e", th.CursorAccent)
 	})
 
-	t.Run("non-string values are preserved", func(t *testing.T) {
-		data := []byte(`{"count":3,"flag":true}`)
-		m := mustUnmarshalTheme(data)
-		assert.Equal(t, float64(3), m["count"])
-		assert.Equal(t, true, m["flag"])
+	t.Run("hyphenated keys are not recognised", func(t *testing.T) {
+		// The embedded files use Theme's json tags; the hyphenated form is the
+		// YAML config spelling and is deliberately not accepted here.
+		th := mustUnmarshalTheme([]byte(`{"bright-red":"#ee837b"}`))
+		assert.Empty(t, th.BrightRed)
+	})
+
+	t.Run("empty JSON object returns the zero Theme", func(t *testing.T) {
+		th := mustUnmarshalTheme([]byte(`{}`))
+		assert.Equal(t, Theme{}, th)
+	})
+
+	t.Run("background-image is never read from a theme file", func(t *testing.T) {
+		// Theme.BackgroundImage is json:"-", so a built-in theme cannot carry
+		// a background image path.
+		th := mustUnmarshalTheme([]byte(`{"backgroundImage":"/tmp/x.png","background-image":"/tmp/y.png"}`))
+		assert.Empty(t, th.BackgroundImage)
 	})
 
 	t.Run("invalid JSON panics with descriptive message", func(t *testing.T) {
