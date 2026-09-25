@@ -73,7 +73,7 @@ func TestProfileConfigHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		ts.profileConfigHandler(w, req)
 		require.Equal(t, http.StatusOK, w.Code)
-		var resp profileConfigResponse
+		var resp Profile
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.Equal(t, "/bin/bash", resp.Shell)
 		assert.Equal(t, "~/dev", resp.WorkingDirectory)
@@ -89,7 +89,7 @@ func TestProfileConfigHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		ts.profileConfigHandler(w, req)
 		require.Equal(t, http.StatusOK, w.Code)
-		var resp profileConfigResponse
+		var resp Profile
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.Equal(t, []string{}, resp.Commands)
 	})

@@ -17,7 +17,6 @@ var rows int
 var columns int
 var uri string
 var port int
-var themeName string
 var theme src.Theme
 var tls bool
 var certFile string
@@ -37,13 +36,16 @@ B3tty also enables access via a randomly generated API token each time the
 server is started to prevent a user without access to the shell where b3tty is
 running from accessing the user's shell. This behavior can be disabled through
 configuration. For additional security, b3tty supports TLS over https and wss.`,
-	Run: func(cmd *cobra.Command, args []string) {
+	// PersistentPreRun overrides rootCmd's warn-only hook (cobra runs only the
+	// nearest one walking up from the executing command), because the server
+	// must not start against a config file it could not fully decode.
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		src.SetDebug(debug)
-		if cfgPath := viper.ConfigFileUsed(); cfgPath != "" {
-			if err := src.ValidateConfig(cfgPath); err != nil {
-				src.Fatalf("config validation error: %v", err)
-			}
+		if configLoadErr != nil {
+			src.Fatalf("config validation error: %v", configLoadErr)
 		}
+	},
+	Run: func(cmd *cobra.Command, args []string) {
 		if err := src.ValidateTheme(&theme); err != nil {
 			src.Fatalf("theme validation error: %v", err)
 		}
@@ -73,7 +75,8 @@ configuration. For additional security, b3tty supports TLS over https and wss.`,
 			startupProfile = src.DEFAULT_PROFILE_NAME
 		}
 		ts := src.TerminalServer{
-			Client:         src.NewClient(&rows, &columns, &autoResize, &fontFamily, &fontSize, &theme),
+			Client:         src.NewTerminalClient(&rows, &columns, &autoResize, &fontFamily, &fontSize),
+			Theme:          theme,
 			Server:         src.NewServer(&uri, &port, &noAuth, &src.TLS{CertFilePath: certFile, KeyFilePath: keyFile, Enabled: tls}),
 			Profiles:       profiles,
 			Themes:         themes,

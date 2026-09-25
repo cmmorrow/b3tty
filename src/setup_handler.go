@@ -58,26 +58,26 @@ func (ts *TerminalServer) saveConfigHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var themeColors map[string]any
+	var selected *Theme
 	switch req.Theme {
 	case "b3tty-dark":
-		themeColors = defaultDarkTheme
+		selected = &defaultDarkTheme
 	case "b3tty-light":
-		themeColors = defaultLightTheme
+		selected = &defaultLightTheme
 	}
 
-	if themeColors != nil {
+	if selected != nil {
 		Debug("writing config file....")
-		if err := saveDefaultThemeConfig(ts.ConfigFile, req.Theme, themeColors); err != nil {
+		if err := saveDefaultThemeConfig(ts.ConfigFile, req.Theme, selected.toColorMap()); err != nil {
 			Errorf("failed to write config: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 		ts.StateMu.Lock()
-		ts.Client.Theme.MapToTheme(themeColors)
+		ts.Theme = *selected
 		// Register the selected theme in ts.Themes so it appears in the Themes
 		// menu after the browser reloads into the normal terminal flow.
-		ts.Themes[req.Theme] = ts.Client.Theme
+		ts.Themes[req.Theme] = ts.Theme
 		ts.ActiveTheme = req.Theme
 		ts.StateMu.Unlock()
 		Infof("created default %s theme config", req.Theme)

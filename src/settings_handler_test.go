@@ -49,7 +49,7 @@ func TestSettingsHandlerGet(t *testing.T) {
 		ts.Client.AutoResize = false
 		ts.Client.Rows = 30
 		ts.Client.Columns = 100
-		ts.Server.Port = 9090
+		ts.Server.URL.Host = "localhost:9090"
 		ts.Server.NoAuth = true
 		ts.NoBrowser = true
 		ts.ShowMenubar = "visible"
@@ -79,8 +79,8 @@ func TestSettingsHandlerGet(t *testing.T) {
 
 func makeBodyWithShowMenubar(port, fontSize, rows, cols int, fontFamily, showMenubar string, autoResize, noAuth, noBrowser bool) *bytes.Buffer {
 	req := settingsConfigResponse{
-		Server:   SettingsServerConfig{Port: port, NoAuth: noAuth, NoBrowser: noBrowser, ShowMenubar: showMenubar},
-		Terminal: SettingsTerminalConfig{FontFamily: fontFamily, FontSize: fontSize, AutoResize: autoResize, Rows: rows, Columns: cols},
+		Server:   NewSettingsServerConfig(port, noAuth, noBrowser, showMenubar),
+		Terminal: TerminalClient{FontFamily: fontFamily, FontSize: fontSize, AutoResize: autoResize, Rows: rows, Columns: cols},
 	}
 	b, _ := json.Marshal(req)
 	return bytes.NewBuffer(b)
@@ -196,7 +196,7 @@ func TestSettingsHandlerPost(t *testing.T) {
 		ts.ConfigFile = filepath.Join(dir, "conf.yaml")
 		require.NoError(t, os.WriteFile(ts.ConfigFile, []byte("theme: b3tty-dark\n"), 0644))
 
-		originalPort := ts.Server.Port
+		originalPort := ts.Server.Port()
 		originalShowMenubar := ts.ShowMenubar
 
 		req := httptest.NewRequest(http.MethodPost, "/settings",
@@ -207,7 +207,7 @@ func TestSettingsHandlerPost(t *testing.T) {
 		ts.settingsHandler(w, req)
 		require.Equal(t, http.StatusOK, w.Code)
 
-		assert.Equal(t, originalPort, ts.Server.Port, "server port should not change in memory")
+		assert.Equal(t, originalPort, ts.Server.Port(), "server port should not change in memory")
 		assert.Equal(t, originalShowMenubar, ts.ShowMenubar, "show-menubar should not change in memory")
 	})
 
@@ -228,7 +228,7 @@ func TestSettingsHandlerPost(t *testing.T) {
 		var resp settingsConfigResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		// Response server port is the live port (8080), not the requested 9999
-		assert.Equal(t, ts.Server.Port, resp.Server.Port)
+		assert.Equal(t, ts.Server.Port(), resp.Server.Port)
 		assert.Equal(t, 16, resp.Terminal.FontSize)
 	})
 

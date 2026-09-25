@@ -14,7 +14,7 @@ import type {
     ClientConfig,
     ThemeConfig,
     SettingsConfig,
-    SettingsTerminalConfig,
+    TerminalClient,
 } from "./types.ts";
 import { isValidWsProtocol, isValidPort, isValidUri } from "./validators.ts";
 import { postThemeConfig, postAddTheme, getSettings } from "./api.ts";
@@ -188,7 +188,7 @@ export function handleSocketMessage(
     decoder: TextDecoder,
     term: TerminalLike,
     writeCallback?: () => void,
-    onSettings?: (t: SettingsTerminalConfig) => void,
+    onSettings?: (t: TerminalClient) => void,
     onTheme?: (name: string, theme: ThemeActivateResponse) => void
 ): void {
     if (!(event.data instanceof ArrayBuffer)) {
@@ -196,7 +196,7 @@ export function handleSocketMessage(
             try {
                 const msg = JSON.parse(event.data) as {
                     type: string;
-                    terminal?: SettingsTerminalConfig;
+                    terminal?: TerminalClient;
                     name?: string;
                     theme?: ThemeActivateResponse;
                 };
@@ -581,7 +581,7 @@ export async function handleThemeEdited(
  * are also applied live via term.resize(); the registered term.onResize listener
  * propagates the new dimensions to the server PTY over WebSocket.
  */
-export function applyTerminalSettings(t: SettingsTerminalConfig, term: Terminal, config: TermConfig): void {
+export function applyTerminalSettings(t: TerminalClient, term: Terminal, config: TermConfig): void {
     if (t.fontFamily) {
         term.options.fontFamily = buildFontFamily(t.fontFamily);
         document.documentElement.style.setProperty("--b3tty-font-family", buildFontFamilyCssVar(t.fontFamily));

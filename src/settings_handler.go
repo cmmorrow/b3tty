@@ -44,10 +44,10 @@ func (ts *TerminalServer) broadcastTheme(name string, resp themeConfigResponse) 
 // broadcastSettings sends a settings control message over every open WebSocket
 // session so the browser can apply live-applicable fields (fontFamily, fontSize)
 // without a page reload. Failed writes are silently discarded.
-func (ts *TerminalServer) broadcastSettings(terminal SettingsTerminalConfig) {
+func (ts *TerminalServer) broadcastSettings(terminal TerminalClient) {
 	msg := struct {
-		Type     string                `json:"type"`
-		Terminal SettingsTerminalConfig `json:"terminal"`
+		Type     string         `json:"type"`
+		Terminal TerminalClient `json:"terminal"`
 	}{
 		Type:     "settings",
 		Terminal: terminal,
@@ -91,21 +91,10 @@ func (ts *TerminalServer) settingsHandler(w http.ResponseWriter, r *http.Request
 
 	if r.Method == "GET" {
 		ts.StateMu.RLock()
-		terminal := SettingsTerminalConfig{
-			FontFamily: ts.Client.FontFamily,
-			FontSize:   ts.Client.FontSize,
-			AutoResize: ts.Client.AutoResize,
-			Rows:       ts.Client.Rows,
-			Columns:    ts.Client.Columns,
-		}
+		terminal := *ts.Client
 		ts.StateMu.RUnlock()
 		writeJSON(w, settingsConfigResponse{
-			Server: SettingsServerConfig{
-				Port:        ts.Server.Port,
-				NoAuth:      ts.Server.NoAuth,
-				NoBrowser:   ts.NoBrowser,
-				ShowMenubar: ts.ShowMenubar,
-			},
+			Server:   NewSettingsServerConfig(ts.Server.Port(), ts.Server.NoAuth, ts.NoBrowser, ts.ShowMenubar),
 			Terminal: terminal,
 		}, "settings")
 		return
@@ -155,11 +144,7 @@ func (ts *TerminalServer) settingsHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	ts.StateMu.Lock()
-	ts.Client.FontFamily = req.Terminal.FontFamily
-	ts.Client.FontSize = req.Terminal.FontSize
-	ts.Client.AutoResize = req.Terminal.AutoResize
-	ts.Client.Rows = req.Terminal.Rows
-	ts.Client.Columns = req.Terminal.Columns
+	*ts.Client = req.Terminal
 	ts.StateMu.Unlock()
 
 	ts.broadcastSettings(req.Terminal)
@@ -174,12 +159,7 @@ func (ts *TerminalServer) settingsHandler(w http.ResponseWriter, r *http.Request
 		req.Server.Port, req.Server.NoAuth, req.Server.NoBrowser, req.Server.ShowMenubar, req.Terminal.FontSize)
 
 	writeJSON(w, settingsConfigResponse{
-		Server: SettingsServerConfig{
-			Port:        ts.Server.Port,
-			NoAuth:      ts.Server.NoAuth,
-			NoBrowser:   ts.NoBrowser,
-			ShowMenubar: ts.ShowMenubar,
-		},
+		Server: NewSettingsServerConfig(ts.Server.Port(), ts.Server.NoAuth, ts.NoBrowser, ts.ShowMenubar),
 		// Echo back req.Terminal directly rather than re-reading ts.Client: we
 		// just wrote these exact values under StateMu above, and re-reading
 		// would need another lock acquisition for values we already have.

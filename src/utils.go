@@ -12,9 +12,6 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
-
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 )
 
 var (
@@ -22,15 +19,16 @@ var (
 	reNamedColor = regexp.MustCompile(`^[a-zA-Z]+$`)
 )
 
-// mustUnmarshalTheme decodes a JSON theme file into a map[string]any.
-// It panics on error since theme files are embedded at compile time and
-// must always be valid.
-func mustUnmarshalTheme(data []byte) map[string]any {
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
+// mustUnmarshalTheme decodes an embedded JSON theme file into a Theme. The
+// files use the camelCase key names from Theme's own json tags, so they decode
+// directly with no intermediate map or key translation. It panics on error
+// since theme files are embedded at compile time and must always be valid.
+func mustUnmarshalTheme(data []byte) Theme {
+	var t Theme
+	if err := json.Unmarshal(data, &t); err != nil {
 		panic("failed to parse embedded theme JSON: " + err.Error())
 	}
-	return m
+	return t
 }
 
 // validateThemeColor reports whether s is a valid theme color value. Valid
@@ -91,18 +89,6 @@ func ValidateShowMenubar(v string) bool {
 		return true
 	}
 	return false
-}
-
-// convertToFieldName converts a hyphenated string to a PascalCase (UpperCamelCase)
-// Go field name by splitting on hyphens and capitalising the first letter of each
-// part (e.g. "user-first-name" → "UserFirstName").
-func convertToFieldName(key string) string {
-	caser := cases.Title(language.English)
-	parts := strings.Split(key, "-")
-	for i, part := range parts {
-		parts[i] = caser.String(part)
-	}
-	return strings.Join(parts, "")
 }
 
 // OpenBrowser attempts to open url in the system default browser using the

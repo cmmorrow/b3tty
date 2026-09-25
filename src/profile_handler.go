@@ -28,21 +28,14 @@ func (ts *TerminalServer) profileConfigHandler(w http.ResponseWriter, r *http.Re
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	resp := profileConfigResponse{
-		Shell:            p.Shell,
-		WorkingDirectory: p.WorkingDirectory,
-		Title:            p.Title,
-		Root:             p.Root,
-		Commands:         p.Commands,
+	if p.Commands == nil {
+		p.Commands = []string{}
 	}
-	if resp.Commands == nil {
-		resp.Commands = []string{}
-	}
-	writeJSON(w, resp, "profile-config")
+	writeJSON(w, p, "profile-config")
 }
 
 // editProfileHandler creates or overwrites a user-defined profile and persists it.
-// POST /edit-profile  body: {"name":"<name>","profile":{...profileConfigResponse fields...}}
+// POST /edit-profile  body: {"name":"<name>","profile":{...Profile fields...}}
 // The profile is saved to config but NOT activated.
 func (ts *TerminalServer) editProfileHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
@@ -56,8 +49,8 @@ func (ts *TerminalServer) editProfileHandler(w http.ResponseWriter, r *http.Requ
 
 	r.Body = http.MaxBytesReader(w, r.Body, MAX_REQUEST_BODY_SIZE)
 	var req struct {
-		Name    string                `json:"name"`
-		Profile profileConfigResponse `json:"profile"`
+		Name    string  `json:"name"`
+		Profile Profile `json:"profile"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		Warnf("%s %s: bad request: %v", r.Method, r.URL.Path, err)

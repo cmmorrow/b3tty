@@ -24,7 +24,16 @@ func writeTempConfig(t *testing.T, content string) string {
 	return f.Name()
 }
 
-func TestValidateConfig(t *testing.T) {
+// loadConfigErr runs LoadConfig against a throwaway Config and returns only
+// the error, which is all the structural/type validation cases below care about.
+func loadConfigErr(t *testing.T, path string) error {
+	t.Helper()
+	var cfg Config
+	_, err := LoadConfig(path, &cfg)
+	return err
+}
+
+func TestLoadConfigValidation(t *testing.T) {
 	t.Run("valid full config passes", func(t *testing.T) {
 		path := writeTempConfig(t, `
 server:
@@ -56,12 +65,12 @@ profiles:
     commands:
       - "echo hello"
 `)
-		assert.NoError(t, ValidateConfig(path))
+		assert.NoError(t, loadConfigErr(t, path))
 	})
 
 	t.Run("empty config passes", func(t *testing.T) {
 		path := writeTempConfig(t, "")
-		assert.NoError(t, ValidateConfig(path))
+		assert.NoError(t, loadConfigErr(t, path))
 	})
 
 	t.Run("partial config with only terminal section passes", func(t *testing.T) {
@@ -70,7 +79,7 @@ terminal:
   font-size: 16
   rows: 30
 `)
-		assert.NoError(t, ValidateConfig(path))
+		assert.NoError(t, loadConfigErr(t, path))
 	})
 
 	t.Run("partial config with only server section passes", func(t *testing.T) {
@@ -79,14 +88,14 @@ server:
   no-auth: true
   port: 9000
 `)
-		assert.NoError(t, ValidateConfig(path))
+		assert.NoError(t, loadConfigErr(t, path))
 	})
 
 	t.Run("unknown top-level key is rejected", func(t *testing.T) {
 		path := writeTempConfig(t, `
 unknown-key: true
 `)
-		err := ValidateConfig(path)
+		err := loadConfigErr(t, path)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "unknown-key")
 	})
@@ -96,7 +105,7 @@ unknown-key: true
 server:
   tls-enabled: true
 `)
-		err := ValidateConfig(path)
+		err := loadConfigErr(t, path)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "tls-enabled")
 	})
@@ -106,7 +115,7 @@ server:
 terminal:
   fontsize: 14
 `)
-		err := ValidateConfig(path)
+		err := loadConfigErr(t, path)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "fontsize")
 	})
@@ -117,7 +126,7 @@ themes:
   my-theme:
     colour: "#ffffff"
 `)
-		err := ValidateConfig(path)
+		err := loadConfigErr(t, path)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "colour")
 	})
@@ -128,7 +137,7 @@ profiles:
   work:
     workingdirectory: "~/projects"
 `)
-		err := ValidateConfig(path)
+		err := loadConfigErr(t, path)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "workingdirectory")
 	})
@@ -138,7 +147,7 @@ profiles:
 terminal:
   font-size: "big"
 `)
-		err := ValidateConfig(path)
+		err := loadConfigErr(t, path)
 		assert.Error(t, err)
 	})
 
@@ -149,7 +158,7 @@ server:
   tls:
     enabled: true
 `)
-		err := ValidateConfig(path)
+		err := loadConfigErr(t, path)
 		assert.Error(t, err)
 	})
 
@@ -160,7 +169,7 @@ terminal:
   rows:
     count: 24
 `)
-		err := ValidateConfig(path)
+		err := loadConfigErr(t, path)
 		assert.Error(t, err)
 	})
 
@@ -170,7 +179,7 @@ profiles:
   work:
     commands: "not-a-list"
 `)
-		err := ValidateConfig(path)
+		err := loadConfigErr(t, path)
 		assert.Error(t, err)
 	})
 
@@ -178,14 +187,148 @@ profiles:
 		path := writeTempConfig(t, `
 unknown-key: true
 `)
-		err := ValidateConfig(path)
+		err := loadConfigErr(t, path)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), path)
 	})
 
 	t.Run("file not found returns error", func(t *testing.T) {
-		err := ValidateConfig("/nonexistent/path/b3tty.yaml")
+		err := loadConfigErr(t, "/nonexistent/path/b3tty.yaml")
 		assert.Error(t, err)
+	})
+}
+
+func TestLoadConfigDecoding(t *testing.T) {
+	t.Run("file values overwrite the seeded values", func(t *testing.T) {
+		path := writeTempConfig(t, `
+server:
+  port: 9000
+  no-auth: true
+terminal:
+  rows: 30
+`)
+		cfg := Config{
+			Server:   ServerConfig{SettingsServerConfig: SettingsServerConfig{Port: 8080, ShowMenubar: "hover"}},
+			Terminal: TerminalClient{Rows: 24, Columns: 80, AutoResize: true},
+		}
+		_, err := LoadConfig(path, &cfg)
+		require.NoError(t, err)
+
+		assert.Equal(t, 9000, cfg.Server.Port)
+		assert.True(t, cfg.Server.NoAuth)
+		assert.Equal(t, 30, cfg.Terminal.Rows)
+	})
+
+	t.Run("seeded values survive keys the file omits", func(t *testing.T) {
+		// This is what makes the CLI > config > default precedence in
+		// cmd/root.go work without a per-field is-this-key-set lookup.
+		path := writeTempConfig(t, `
+server:
+  port: 9000
+`)
+		cfg := Config{
+			Server:   ServerConfig{SettingsServerConfig: SettingsServerConfig{Port: 8080, ShowMenubar: "hover"}},
+			Terminal: TerminalClient{Rows: 24, Columns: 80, AutoResize: true, FontFamily: "monospace"},
+		}
+		_, err := LoadConfig(path, &cfg)
+		require.NoError(t, err)
+
+		assert.Equal(t, "hover", cfg.Server.ShowMenubar)
+		assert.Equal(t, 24, cfg.Terminal.Rows)
+		assert.Equal(t, 80, cfg.Terminal.Columns)
+		assert.True(t, cfg.Terminal.AutoResize)
+		assert.Equal(t, "monospace", cfg.Terminal.FontFamily)
+	})
+
+	t.Run("an explicit false in the file overrides a true seed", func(t *testing.T) {
+		path := writeTempConfig(t, `
+terminal:
+  auto-resize: false
+`)
+		cfg := Config{Terminal: TerminalClient{AutoResize: true}}
+		_, err := LoadConfig(path, &cfg)
+		require.NoError(t, err)
+		assert.False(t, cfg.Terminal.AutoResize)
+	})
+
+	t.Run("theme and profile name case is preserved", func(t *testing.T) {
+		path := writeTempConfig(t, `
+themes:
+  MyTheme:
+    foreground: "#dbdbdb"
+profiles:
+  WorkProfile:
+    shell: "/bin/zsh"
+`)
+		var cfg Config
+		_, err := LoadConfig(path, &cfg)
+		require.NoError(t, err)
+
+		assert.Contains(t, cfg.Themes, "MyTheme")
+		assert.Equal(t, "#dbdbdb", cfg.Themes["MyTheme"].Foreground)
+		assert.Contains(t, cfg.Profiles, "WorkProfile")
+		assert.Equal(t, "/bin/zsh", cfg.Profiles["WorkProfile"].Shell)
+	})
+
+	t.Run("hyphenated theme keys map to struct fields", func(t *testing.T) {
+		path := writeTempConfig(t, `
+themes:
+  my-theme:
+    bright-red: "#ee837b"
+    selection-background: "#404040"
+`)
+		var cfg Config
+		_, err := LoadConfig(path, &cfg)
+		require.NoError(t, err)
+
+		assert.Equal(t, "#ee837b", cfg.Themes["my-theme"].BrightRed)
+		assert.Equal(t, "#404040", cfg.Themes["my-theme"].SelectionBackground)
+	})
+}
+
+func TestLoadConfigKeys(t *testing.T) {
+	t.Run("records nested dotted key paths", func(t *testing.T) {
+		path := writeTempConfig(t, `
+server:
+  port: 9000
+terminal:
+  rows: 30
+`)
+		var cfg Config
+		keys, err := LoadConfig(path, &cfg)
+		require.NoError(t, err)
+
+		assert.True(t, keys.Has("server"))
+		assert.True(t, keys.Has("server.port"))
+		assert.True(t, keys.Has("terminal.rows"))
+		assert.False(t, keys.Has("terminal.columns"))
+		assert.False(t, keys.Has("server.no-auth"))
+	})
+
+	t.Run("distinguishes an explicit zero value from an absent key", func(t *testing.T) {
+		path := writeTempConfig(t, `
+server:
+  no-auth: false
+`)
+		var cfg Config
+		keys, err := LoadConfig(path, &cfg)
+		require.NoError(t, err)
+
+		assert.False(t, cfg.Server.NoAuth)
+		assert.True(t, keys.Has("server.no-auth"))
+	})
+
+	t.Run("empty file yields an empty key set", func(t *testing.T) {
+		path := writeTempConfig(t, "")
+		var cfg Config
+		keys, err := LoadConfig(path, &cfg)
+		require.NoError(t, err)
+		assert.False(t, keys.Has("terminal.rows"))
+	})
+
+	t.Run("zero value reports every key as absent", func(t *testing.T) {
+		var keys ConfigKeys
+		assert.False(t, keys.Has("terminal.rows"))
 	})
 }
 
@@ -334,7 +477,7 @@ server:
 		assert.NotContains(t, palette, "background")
 	})
 
-	t.Run("output passes ValidateConfig", func(t *testing.T) {
+	t.Run("output passes LoadConfig", func(t *testing.T) {
 		readConfig, cfgPath := setupUpdateThemeTest(t)
 		require.NoError(t, UpdateThemeInConfig(cfgPath, "dracula", map[string]any{
 			"foreground": "#f8f8f2",
@@ -344,7 +487,7 @@ server:
 			"bright-red": "#ff6e6e",
 		}))
 		_ = readConfig() // ensure file exists
-		assert.NoError(t, ValidateConfig(cfgPath))
+		assert.NoError(t, loadConfigErr(t, cfgPath))
 	})
 }
 
@@ -420,7 +563,7 @@ server:
 		assert.NotContains(t, palette, "background")
 	})
 
-	t.Run("output passes ValidateConfig", func(t *testing.T) {
+	t.Run("output passes LoadConfig", func(t *testing.T) {
 		readConfig, cfgPath := setupUpdateThemeTest(t)
 		require.NoError(t, SaveThemeToConfig(cfgPath, "dracula", map[string]any{
 			"foreground": "#f8f8f2",
@@ -430,7 +573,7 @@ server:
 			"bright-red": "#ff6e6e",
 		}))
 		_ = readConfig()
-		assert.NoError(t, ValidateConfig(cfgPath))
+		assert.NoError(t, loadConfigErr(t, cfgPath))
 	})
 
 	t.Run("preserves background-image from existing theme entry", func(t *testing.T) {
@@ -527,10 +670,10 @@ theme: b3tty-dark
 		assert.Equal(t, "b3tty-dark", out["theme"])
 	})
 
-	t.Run("output passes ValidateConfig", func(t *testing.T) {
+	t.Run("output passes LoadConfig", func(t *testing.T) {
 		path := writeTempConfig(t, "")
 		require.NoError(t, SaveProfileToConfig(path, "dev", profile("/bin/zsh", "Dev", "~/dev", "/", []string{"echo hello"})))
-		assert.NoError(t, ValidateConfig(path))
+		assert.NoError(t, loadConfigErr(t, path))
 	})
 }
 
@@ -877,7 +1020,7 @@ func TestSaveDefaultThemeConfig(t *testing.T) {
 		assert.NotContains(t, palette, "background")
 	})
 
-	t.Run("output passes ValidateConfig", func(t *testing.T) {
+	t.Run("output passes LoadConfig", func(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("HOME", home)
 
@@ -887,7 +1030,7 @@ func TestSaveDefaultThemeConfig(t *testing.T) {
 			"red":        "#ff5555",
 		}))
 
-		assert.NoError(t, ValidateConfig(filepath.Join(home, DOT_CONFIG_PATH, B3TTY_CONFIG_PATH, CONFIG_FILE_NAME)))
+		assert.NoError(t, loadConfigErr(t, filepath.Join(home, DOT_CONFIG_PATH, B3TTY_CONFIG_PATH, CONFIG_FILE_NAME)))
 	})
 
 	t.Run("overwrites an existing config file at the same path", func(t *testing.T) {

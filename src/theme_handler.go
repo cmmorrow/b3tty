@@ -37,16 +37,16 @@ var oneLightThemeJSON []byte
 //go:embed default_themes/gruvbox-light.json
 var gruvboxLightThemeJSON []byte
 
-// defaultDarkTheme and defaultLightTheme are the color maps used both to
-// update ts.client.Theme in memory (via MapToTheme) and to write the YAML
-// config file. Keys use the hyphenated form expected by MapToTheme.
+// defaultDarkTheme and defaultLightTheme are the themes offered by the
+// first-run setup page; they are also entries in builtinThemes below.
 var defaultDarkTheme = mustUnmarshalTheme(defaultDarkThemeJSON)
 var defaultLightTheme = mustUnmarshalTheme(defaultLightThemeJSON)
 
-// builtinThemes maps each built-in theme name to its color map. All entries
-// are available via themePaletteHandler and are registered into ts.Themes at
-// startup so the menu bar can switch between them without any conf.yaml entry.
-var builtinThemes = map[string]map[string]any{
+// builtinThemes maps each built-in theme name to its decoded Theme. All
+// entries are available via themePaletteHandler and are registered into
+// ts.Themes at startup so the menu bar can switch between them without any
+// conf.yaml entry.
+var builtinThemes = map[string]Theme{
 	"b3tty-dark":       defaultDarkTheme,
 	"b3tty-light":      defaultLightTheme,
 	"catppuccin-mocha": mustUnmarshalTheme(catppuccinMochaThemeJSON),
@@ -69,11 +69,17 @@ func GetBuiltinThemeNames() []string {
 	return names
 }
 
-// GetBuiltinTheme returns the color map for the named built-in theme.
-// The second return value is false when no such theme exists.
+// GetBuiltinTheme returns the color map for the named built-in theme, in the
+// hyphenated form the config-writing functions expect. The second return value
+// is false when no such theme exists, in which case the map is nil — which
+// UpdateThemeInConfig reads as "set the active theme name but leave any
+// existing color entries alone".
 func GetBuiltinTheme(name string) (map[string]any, bool) {
-	colors, ok := builtinThemes[name]
-	return colors, ok
+	t, ok := builtinThemes[name]
+	if !ok {
+		return nil, false
+	}
+	return t.toColorMap(), true
 }
 
 // sortedThemeNames returns the names of all user-defined themes in ts.Themes,
@@ -102,40 +108,23 @@ func (ts *TerminalServer) themePaletteHandler(w http.ResponseWriter, r *http.Req
 	t, ok := ts.Themes[name]
 	ts.StateMu.RUnlock()
 
-	var colors map[string]any
-	if ok {
-		colors = t.toColorMap()
-	} else if builtinColors, ok := builtinThemes[name]; ok {
-		colors = builtinColors
-	} else {
-		Warnf("unknown theme name: %q", name)
-		w.WriteHeader(http.StatusBadRequest)
-		return
+	if !ok {
+		if t, ok = builtinThemes[name]; !ok {
+			Warnf("unknown theme name: %q", name)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 	}
 
-	normalOrder := []string{"black", "red", "yellow", "green", "cyan", "blue", "magenta", "white"}
-	brightOrder := []string{"bright-black", "bright-red", "bright-yellow", "bright-green", "bright-cyan", "bright-blue", "bright-magenta", "bright-white"}
-
-	str := func(key string) string {
-		v, _ := colors[key].(string)
-		return v
-	}
-	normal := make([]string, len(normalOrder))
-	for i, key := range normalOrder {
-		normal[i] = str(key)
-	}
-	bright := make([]string, len(brightOrder))
-	for i, key := range brightOrder {
-		bright[i] = str(key)
-	}
-
+	// ANSI display order (black, red, yellow, green, cyan, blue, magenta,
+	// white) rather than struct order.
 	resp := themePaletteResponse{
-		Bg:     str("background"),
-		Fg:     str("foreground"),
-		SelBg:  str("selection-background"),
-		Cursor: str("cursor"),
-		Normal: normal,
-		Bright: bright,
+		Bg:     t.Background,
+		Fg:     t.Foreground,
+		SelBg:  t.SelectionBackground,
+		Cursor: t.Cursor,
+		Normal: []string{t.Black, t.Red, t.Yellow, t.Green, t.Cyan, t.Blue, t.Magenta, t.White},
+		Bright: []string{t.BrightBlack, t.BrightRed, t.BrightYellow, t.BrightGreen, t.BrightCyan, t.BrightBlue, t.BrightMagenta, t.BrightWhite},
 	}
 	writeJSON(w, resp, "theme")
 }
@@ -172,10 +161,8 @@ func (ts *TerminalServer) themeConfigHandler(w http.ResponseWriter, r *http.Requ
 	theme, ok := ts.Themes[name]
 	ts.StateMu.RUnlock()
 	if !ok {
-		if builtinColors, ok := builtinThemes[name]; ok {
-			var t Theme
-			t.MapToTheme(builtinColors)
-			theme = t
+		if builtinTheme, ok := builtinThemes[name]; ok {
+			theme = builtinTheme
 		} else {
 			http.NotFound(w, r)
 			return
@@ -183,12 +170,14 @@ func (ts *TerminalServer) themeConfigHandler(w http.ResponseWriter, r *http.Requ
 	}
 	if r.Method == "POST" {
 		ts.StateMu.Lock()
-		ts.Client.Theme = theme
+		ts.Theme = theme
 		ts.ActiveTheme = name
 		ts.StateMu.Unlock()
+		// A built-in name persists the built-in's own colors rather than the
+		// in-memory theme, which may carry user edits under the same name.
 		var colors map[string]any
-		if builtinColors, ok := builtinThemes[name]; ok {
-			colors = builtinColors
+		if builtinTheme, ok := builtinThemes[name]; ok {
+			colors = builtinTheme.toColorMap()
 		} else {
 			colors = theme.toColorMap()
 		}
@@ -235,12 +224,10 @@ func (ts *TerminalServer) addThemeHandler(w http.ResponseWriter, r *http.Request
 	// concurrent add-theme requests for the same new theme name can't race.
 	ts.StateMu.Lock()
 	var colors map[string]any
-	if builtinColors, ok := builtinThemes[req.Theme]; ok {
-		colors = builtinColors
+	if builtinTheme, ok := builtinThemes[req.Theme]; ok {
+		colors = builtinTheme.toColorMap()
 		if _, exists := ts.Themes[req.Theme]; !exists {
-			var t Theme
-			t.MapToTheme(colors)
-			ts.Themes[req.Theme] = t
+			ts.Themes[req.Theme] = builtinTheme
 		}
 	} else if theme, ok := ts.Themes[req.Theme]; ok {
 		colors = theme.toColorMap()
@@ -251,9 +238,9 @@ func (ts *TerminalServer) addThemeHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ts.Client.Theme = ts.Themes[req.Theme]
+	ts.Theme = ts.Themes[req.Theme]
 	ts.ActiveTheme = req.Theme
-	activeTheme := ts.Client.Theme
+	activeTheme := ts.Theme
 	themeNames := ts.sortedThemeNames()
 	ts.StateMu.Unlock()
 
@@ -310,7 +297,7 @@ func (ts *TerminalServer) editThemeHandler(w http.ResponseWriter, r *http.Reques
 		req.Theme.BackgroundImage = existing.BackgroundImage
 	}
 	ts.Themes[req.Name] = req.Theme
-	ts.Client.Theme = req.Theme
+	ts.Theme = req.Theme
 	ts.ActiveTheme = req.Name
 	themeNames := ts.sortedThemeNames()
 	ts.StateMu.Unlock()

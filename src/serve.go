@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"sort"
@@ -32,7 +33,8 @@ var dist embed.FS
 // TerminalServer bundles all mutable per-session state used by the HTTP handlers,
 // making them independent of package-level globals and straightforward to test.
 type TerminalServer struct {
-	Client         *Client
+	Client         *TerminalClient
+	Theme          Theme
 	Server         *Server
 	Profiles       map[string]Profile
 	Themes         map[string]Theme
@@ -49,8 +51,8 @@ type TerminalServer struct {
 	WSClients      map[*websocket.Conn]*wsClient
 	WSClientsMu    sync.Mutex
 	// StateMu guards every field above that is read or written by more than one
-	// HTTP handler after startup: Client, Profiles, Themes, ActiveTheme, and
-	// ProfileName. Server, ConfigFile, StartupProfile, NoBrowser, and
+	// HTTP handler after startup: Client, Theme, Profiles, Themes, ActiveTheme,
+	// and ProfileName. Server, ConfigFile, StartupProfile, NoBrowser, and
 	// ShowMenubar are set once before Serve() starts accepting requests and
 	// never mutated afterward, so they do not need to be guarded. Callers
 	// should hold StateMu only long enough to read or mutate state into local
@@ -119,19 +121,11 @@ func GetCSPHeaders() CSPHeaders {
 }
 
 // logProfileURLs prints a header and one line per non-default profile, showing its
-// URL, shell, and working directory. The query separator is derived from uiUrl itself:
-// "&profile=" when uiUrl already contains a "?", "?profile=" otherwise. This correctly
-// handles the case where uiUrl already carries a ?profile= from a --profile startup flag.
-func logProfileURLs(profiles map[string]Profile, uiUrl string) {
+// URL, shell, and working directory. Each profile's URL is built fresh via
+// srv.buildUIUrl so it always carries exactly that profile's query parameter,
+// regardless of what ts.StartupProfile was at server startup.
+func logProfileURLs(srv *Server, profiles map[string]Profile, token string) {
 	Info("Configured profiles:")
-	var prfQuery string
-	if strings.Contains(uiUrl, "?") && !strings.Contains(uiUrl, "?profile") && !strings.Contains(uiUrl, "&profile") {
-		prfQuery = "&profile="
-	} else if !strings.Contains(uiUrl, "?") {
-		prfQuery = "?profile="
-	} else {
-		prfQuery = ""
-	}
 
 	// Collect and sort non-default profile names for consistent output.
 	names := make([]string, 0, len(profiles)-1)
@@ -150,12 +144,7 @@ func logProfileURLs(profiles map[string]Profile, uiUrl string) {
 	}
 	for _, prf := range names {
 		profile := profiles[prf]
-		var url string
-		if len(prfQuery) > 0 {
-			url = uiUrl + prfQuery + prf
-		} else {
-			url = uiUrl
-		}
+		url := srv.buildUIUrl(token, prf)
 
 		// Pad using the plain name length so ANSI codes in BoldGreen don't
 		// inflate the width and break column alignment.
@@ -165,19 +154,20 @@ func logProfileURLs(profiles map[string]Profile, uiUrl string) {
 }
 
 // buildUIUrl assembles the URL printed at startup and optionally opened in the browser.
-// tokenQuery is either "?token=<tok>" (auth enabled) or "" (no-auth mode).
-// When startupProfile differs from DEFAULT_PROFILE_NAME the profile query parameter is
-// appended using "&" when a token is already present, or "?" otherwise.
-func buildUIUrl(protocol, addr, tokenQuery, startupProfile string) string {
-	url := protocol + "://" + addr + "/" + tokenQuery
-	if startupProfile != DEFAULT_PROFILE_NAME {
-		if tokenQuery != "" {
-			url += "&profile=" + startupProfile
-		} else {
-			url += "?profile=" + startupProfile
-		}
+// token is the auth token, or "" in no-auth mode. When startupProfile differs from
+// DEFAULT_PROFILE_NAME the profile query parameter is also included.
+func (s *Server) buildUIUrl(token, startupProfile string) string {
+	u := s.URL
+	u.Path = "/"
+	q := url.Values{}
+	if token != "" {
+		q.Set("token", token)
 	}
-	return url
+	if startupProfile != DEFAULT_PROFILE_NAME {
+		q.Set("profile", startupProfile)
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // Serve wires up the HTTP mux and starts the server.
@@ -189,34 +179,26 @@ func Serve(ts *TerminalServer, shouldOpenBrowser bool, useTLS bool) {
 		Warnf("lock file found: another b3tty instance may already be running on port %d (pid %d)", existing.Port, existing.PID)
 	}
 
-	var err error
-	var tokenQuery = ""
-	var protocol = "http"
-
-	if useTLS {
-		protocol = "https"
-	}
+	protocol := ts.Server.URL.Scheme
 
 	Debugf("no-auth mode: %v", ts.Server.NoAuth)
 	if !ts.Server.NoAuth {
+		var err error
 		ts.Token, err = generateToken(TOKEN_LENGTH)
 		if err != nil {
 			Fatalf("error generating token: %v", err)
 		}
-		tokenQuery = "?token=" + ts.Token
 	}
 
-	if err := WriteLockFile(ts.Server.Port, os.Getpid(), ts.Token, protocol); err != nil {
+	if err := WriteLockFile(ts.Server.Port(), os.Getpid(), ts.Token, protocol); err != nil {
 		Warnf("could not write lock file: %v", err)
 	}
 
-	addr := ts.Server.Addr().Host
-	uiUrl := buildUIUrl(protocol, addr, tokenQuery, ts.StartupProfile)
+	uiUrl := ts.Server.buildUIUrl(ts.Token, ts.StartupProfile)
 
 	Debugf("open-browser on start up: %v", shouldOpenBrowser)
 	if shouldOpenBrowser {
-		err = OpenBrowser(uiUrl)
-		if err != nil {
+		if err := OpenBrowser(uiUrl); err != nil {
 			Fatal("failed to open default browser")
 		}
 	}
@@ -226,7 +208,7 @@ func Serve(ts *TerminalServer, shouldOpenBrowser bool, useTLS bool) {
 
 	// Display the available profiles in the config file
 	if len(ts.Profiles) > 1 {
-		logProfileURLs(ts.Profiles, uiUrl)
+		logProfileURLs(ts.Server, ts.Profiles, ts.Token)
 	}
 
 	mux.HandleFunc("/", ts.displayTermHandler)
@@ -244,7 +226,7 @@ func Serve(ts *TerminalServer, shouldOpenBrowser bool, useTLS bool) {
 	mux.HandleFunc("/delete-profile", ts.deleteProfileHandler)
 	mux.HandleFunc("/settings", ts.settingsHandler)
 	httpServer := &http.Server{
-		Addr:         addr,
+		Addr:         ts.Server.URL.Host,
 		Handler:      mux,
 		ErrorLog:     NewWarnLogger(),
 		ReadTimeout:  10 * time.Second,
@@ -254,6 +236,7 @@ func Serve(ts *TerminalServer, shouldOpenBrowser bool, useTLS bool) {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
+	var err error
 	serverErr := make(chan error, 1)
 	go func() {
 		Debugf("use TLS: %v", useTLS)

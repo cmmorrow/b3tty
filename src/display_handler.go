@@ -74,7 +74,7 @@ func resolveProfileName(q url.Values, profiles map[string]Profile) string {
 // buildConfigJSON serialises a TermConfig derived from the given server, client, theme,
 // and available theme/profile name lists into JSON. The returned bytes are ready to
 // embed in the HTML template.
-func buildConfigJSON(srv *Server, clnt *Client, thm *Theme, themeNames []string, allThemeNames []string, builtinThemeNames []string, profileNames []string, activeTheme string, showMenubar string) ([]byte, error) {
+func buildConfigJSON(srv *Server, clnt *TerminalClient, thm *Theme, themeNames []string, allThemeNames []string, builtinThemeNames []string, profileNames []string, activeTheme string, showMenubar string) ([]byte, error) {
 	cfg := NewTermConfig(srv, clnt, thm, themeNames, allThemeNames, builtinThemeNames, profileNames, activeTheme, showMenubar)
 	return json.Marshal(cfg)
 }
@@ -208,7 +208,7 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	}
 	sort.Strings(profileNames)
 
-	thm := ts.Client.Theme
+	thm := ts.Theme
 	clientCopy := *ts.Client
 	activeTheme := ts.ActiveTheme
 	ts.StateMu.Unlock()
@@ -251,7 +251,7 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 // Returns 404 when no background image is configured or the file cannot be found.
 func (ts *TerminalServer) backgroundHandler(w http.ResponseWriter, r *http.Request) {
 	ts.StateMu.RLock()
-	imagePath := ts.Client.Theme.BackgroundImage
+	imagePath := ts.Theme.BackgroundImage
 	ts.StateMu.RUnlock()
 	if imagePath == "" {
 		http.NotFound(w, r)

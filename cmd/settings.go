@@ -50,10 +50,10 @@ var settingsGetCmd = &cobra.Command{
 		fmt.Fprintf(w, "  font-family:\t%s\n", fontFamily)
 		fmt.Fprintf(w, "  font-size:\t%d\n", fontSize)
 		fmt.Fprintf(w, "  auto-resize:\t%v\n", autoResize)
-		if viper.IsSet("terminal.rows") {
+		if configKeys.Has("terminal.rows") {
 			fmt.Fprintf(w, "  rows:\t%d\n", rows)
 		}
-		if viper.IsSet("terminal.columns") {
+		if configKeys.Has("terminal.columns") {
 			fmt.Fprintf(w, "  columns:\t%d\n", columns)
 		}
 		w.Flush()
@@ -129,13 +129,8 @@ font-size apply to live sessions immediately.`,
 		if !src.ValidateShowMenubar(currentShowMenubar) {
 			cmdLog.Fatalf("invalid show-menubar %q: must be one of hover, visible, disable", currentShowMenubar)
 		}
-		serverCfg := src.SettingsServerConfig{
-			Port:        currentPort,
-			NoAuth:      currentNoAuth,
-			NoBrowser:   currentNoBrowser,
-			ShowMenubar: currentShowMenubar,
-		}
-		terminalCfg := src.SettingsTerminalConfig{
+		serverCfg := src.NewSettingsServerConfig(currentPort, currentNoAuth, currentNoBrowser, currentShowMenubar)
+		terminalCfg := src.TerminalClient{
 			FontFamily: currentFontFamily,
 			FontSize:   currentFontSize,
 			AutoResize: currentAutoResize,
@@ -226,10 +221,10 @@ func postToRunningServer(serverPort int, path string, body any) {
 // notifyRunningServer attempts to POST the new settings to the running b3tty
 // server so it can update its in-memory state and push the change to any open
 // browser sessions. Errors are ignored — the server may simply not be running.
-func notifyRunningServer(serverPort int, serverCfg src.SettingsServerConfig, terminalCfg src.SettingsTerminalConfig) {
+func notifyRunningServer(serverPort int, serverCfg src.SettingsServerConfig, terminalCfg src.TerminalClient) {
 	payload := struct {
-		Server   src.SettingsServerConfig   `json:"server"`
-		Terminal src.SettingsTerminalConfig `json:"terminal"`
+		Server   src.SettingsServerConfig `json:"server"`
+		Terminal src.TerminalClient       `json:"terminal"`
 	}{Server: serverCfg, Terminal: terminalCfg}
 	postToRunningServer(serverPort, "/settings", payload)
 }

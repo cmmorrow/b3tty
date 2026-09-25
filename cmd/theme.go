@@ -7,7 +7,6 @@ import (
 
 	"github.com/cmmorrow/b3tty/src"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 var themeCmd = &cobra.Command{
@@ -20,7 +19,7 @@ var themeListCmd = &cobra.Command{
 	Short: "List available themes",
 	Long:  "Lists all themes: built-in themes and any user-defined themes in the config file. The active theme is marked with *.",
 	Run: func(cmd *cobra.Command, args []string) {
-		activeTheme := viper.GetString("theme")
+		activeTheme := activeThemeName
 
 		fmt.Println("Built-in themes:")
 		for _, name := range src.GetBuiltinThemeNames() {

@@ -7,45 +7,71 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
-func TestServerAddr(t *testing.T) {
+func TestNewServer(t *testing.T) {
 	testCases := []struct {
-		name     string
-		server   Server
-		expected string
+		name           string
+		uri            string
+		port           int
+		tls            bool
+		expectedHost   string
+		expectedScheme string
 	}{
 		{
-			name:     "Standard case",
-			server:   Server{Uri: "example.com", Port: 8080},
-			expected: "example.com:8080",
+			name:           "Standard case",
+			uri:            "example.com",
+			port:           8080,
+			expectedHost:   "example.com:8080",
+			expectedScheme: "http",
 		},
 		{
-			name:     "Localhost",
-			server:   Server{Uri: "localhost", Port: 3000},
-			expected: "localhost:3000",
+			name:           "Localhost",
+			uri:            "localhost",
+			port:           3000,
+			expectedHost:   "localhost:3000",
+			expectedScheme: "http",
 		},
 		{
-			name:     "IP address",
-			server:   Server{Uri: "192.168.1.1", Port: 443},
-			expected: "192.168.1.1:443",
+			name:           "IP address",
+			uri:            "192.168.1.1",
+			port:           443,
+			expectedHost:   "192.168.1.1:443",
+			expectedScheme: "http",
 		},
 		{
-			name:     "No port",
-			server:   Server{Uri: "localhost"},
-			expected: "localhost:0", // TODO: Handle this case
+			name:           "TLS enabled uses https scheme",
+			uri:            "example.com",
+			port:           8443,
+			tls:            true,
+			expectedHost:   "example.com:8443",
+			expectedScheme: "https",
 		},
 		{
-			name:     "No Uri",
-			server:   Server{Port: 8080},
-			expected: ":8080",
+			name:           "No port",
+			uri:            "localhost",
+			port:           0,
+			expectedHost:   "localhost:0", // TODO: Handle this case
+			expectedScheme: "http",
+		},
+		{
+			name:           "No Uri",
+			uri:            "",
+			port:           8080,
+			expectedHost:   ":8080",
+			expectedScheme: "http",
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := tc.server.Addr()
-			assert.Equal(t, tc.expected, result.Host)
+			noAuth := false
+			server := NewServer(&tc.uri, &tc.port, &noAuth, &TLS{Enabled: tc.tls})
+			assert.Equal(t, tc.expectedHost, server.URL.Host)
+			assert.Equal(t, tc.expectedScheme, server.URL.Scheme)
+			assert.Equal(t, tc.port, server.Port())
 		})
 	}
 }
@@ -374,62 +400,21 @@ func TestGetCSPHeadersMutationViaGet(t *testing.T) {
 	assert.Contains(t, result, "'nonce-abc123'")
 }
 
-func TestMapToTheme(t *testing.T) {
-	assert := assert.New(t)
+func TestThemeHasBackgroundImage(t *testing.T) {
+	t.Run("returns false when BackgroundImage is empty", func(t *testing.T) {
+		theme := &Theme{}
+		assert.False(t, theme.HasBackgroundImage())
+	})
 
-	// Test case 1: Empty map
-	theme := &Theme{}
-	emptyMap := map[string]any{}
-	theme.MapToTheme(emptyMap)
-	assert.Equal(Theme{}, *theme)
+	t.Run("returns true when BackgroundImage is set", func(t *testing.T) {
+		theme := &Theme{BackgroundImage: "/path/to/image.png"}
+		assert.True(t, theme.HasBackgroundImage())
+	})
 
-	// Test case 2: Map with valid keys
-	theme = &Theme{}
-	validMap := map[string]any{
-		"foreground":           "white",
-		"background":           "black",
-		"selection-foreground": "yellow",
-		"selection-background": "blue",
-	}
-	theme.MapToTheme(validMap)
-	assert.Equal("white", theme.Foreground)
-	assert.Equal("black", theme.Background)
-	assert.Equal("yellow", theme.SelectionForeground)
-	assert.Equal("blue", theme.SelectionBackground)
-
-	// Test case 3: Map with invalid keys
-	theme = &Theme{Foreground: "red"}
-	invalidMap := map[string]any{
-		"invalid_key":     "value",
-		"another_invalid": 123,
-	}
-	theme.MapToTheme(invalidMap)
-	assert.Equal("red", theme.Foreground)
-	assert.Empty(theme.Background)
-
-	// Test case 4: Map with mixed valid and invalid keys
-	theme = &Theme{}
-	mixedMap := map[string]any{
-		"foreground":      "white",
-		"invalid_key":     "value",
-		"background":      "black",
-		"another_invalid": 123,
-	}
-	theme.MapToTheme(mixedMap)
-	assert.Equal("white", theme.Foreground)
-	assert.Equal("black", theme.Background)
-	assert.Empty(theme.SelectionForeground)
-	assert.Empty(theme.SelectionBackground)
-
-	// Test case 5: Valid field name with a non-string value does not panic
-	theme = &Theme{Foreground: "red"}
-	nonStringMap := map[string]any{
-		"foreground": 42,
-		"background": true,
-	}
-	assert.NotPanics(func() { theme.MapToTheme(nonStringMap) })
-	assert.Equal("red", theme.Foreground)
-	assert.Empty(theme.Background)
+	t.Run("other fields being populated does not affect the result", func(t *testing.T) {
+		theme := &Theme{Foreground: "#ffffff", Background: "#000000"}
+		assert.False(t, theme.HasBackgroundImage())
+	})
 }
 
 func TestThemeToColorMap(t *testing.T) {
@@ -488,7 +473,10 @@ func TestThemeToColorMap(t *testing.T) {
 		assert.NotContains(t, m, "BackgroundImage")
 	})
 
-	t.Run("round-trips correctly through MapToTheme", func(t *testing.T) {
+	t.Run("round-trips through the YAML config form", func(t *testing.T) {
+		// toColorMap's hyphenated keys are what the config writers splice into
+		// themes:, and Theme's yaml tags are what LoadConfig reads back out —
+		// so this is the exact round trip production performs.
 		original := Theme{
 			Foreground: "#f8f8f2",
 			Background: "#282a36",
@@ -496,12 +484,10 @@ func TestThemeToColorMap(t *testing.T) {
 			BrightRed:  "#ff6e6e",
 			Cursor:     "#f8f8f2",
 		}
+		data, err := yaml.Marshal(original.toColorMap())
+		require.NoError(t, err)
 		var restored Theme
-		restored.MapToTheme(original.toColorMap())
-		assert.Equal(t, original.Foreground, restored.Foreground)
-		assert.Equal(t, original.Background, restored.Background)
-		assert.Equal(t, original.Red, restored.Red)
-		assert.Equal(t, original.BrightRed, restored.BrightRed)
-		assert.Equal(t, original.Cursor, restored.Cursor)
+		require.NoError(t, yaml.Unmarshal(data, &restored))
+		assert.Equal(t, original, restored)
 	})
 }

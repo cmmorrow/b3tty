@@ -64,20 +64,19 @@ func captureLog(f func()) string {
 // newTestTerminalServer returns a TerminalServer with a fully populated default
 // profile and a known token, suitable for use in handler tests.
 func newTestTerminalServer() *TerminalServer {
-	client := &Client{
+	client := &TerminalClient{
 		Rows:       24,
 		Columns:    80,
 		FontFamily: "monospace",
 		FontSize:   14,
-		Theme:      Theme{},
 	}
 	server := &Server{
-		Uri:  "localhost",
-		Port: 8080,
-		TLS:  TLS{Enabled: false},
+		URL: url.URL{Scheme: "http", Host: "localhost:8080"},
+		TLS: TLS{Enabled: false},
 	}
 	return &TerminalServer{
 		Client: client,
+		Theme:  Theme{},
 		Server: server,
 		Profiles: map[string]Profile{
 			"default": {Title: "b3tty", Shell: "/bin/bash"},
@@ -234,53 +233,34 @@ func TestLogProfileURLs(t *testing.T) {
 		"work":               {Shell: "/bin/zsh", WorkingDirectory: "/home/user/work"},
 		"dev":                {Shell: "/bin/fish", WorkingDirectory: "/home/user/dev"},
 	}
+	srv := &Server{URL: url.URL{Scheme: "http", Host: "localhost:8080"}}
 
-	t.Run("no-auth no startup profile uses ? separator", func(t *testing.T) {
+	t.Run("no-auth: each profile URL carries only its own ?profile= query", func(t *testing.T) {
 		logged := captureLog(func() {
-			logProfileURLs(profiles, "http://localhost:8080/")
+			logProfileURLs(srv, profiles, "")
 		})
-		assert.Contains(t, logged, "?profile=dev")
-		assert.Contains(t, logged, "?profile=work")
-		assert.NotContains(t, logged, "&profile=")
+		assert.Contains(t, logged, "http://localhost:8080/?profile=dev")
+		assert.Contains(t, logged, "http://localhost:8080/?profile=work")
 	})
 
-	t.Run("token present no startup profile uses & separator", func(t *testing.T) {
+	t.Run("token present: each profile URL carries both token and profile", func(t *testing.T) {
 		logged := captureLog(func() {
-			logProfileURLs(profiles, "http://localhost:8080/?token=abc")
+			logProfileURLs(srv, profiles, "abc")
 		})
-		assert.Contains(t, logged, "?token=abc&profile=dev")
-		assert.Contains(t, logged, "?token=abc&profile=work")
-	})
-
-	t.Run("token and startup profile present uses URL as-is without duplicate profile param", func(t *testing.T) {
-		// When uiUrl already contains &profile=, prfQuery is empty and the URL is used
-		// verbatim — this prevents a duplicate &profile=work&profile=work in the output.
-		logged := captureLog(func() {
-			logProfileURLs(profiles, "http://localhost:8080/?token=abc&profile=work")
-		})
-		assert.NotContains(t, logged, "&profile=work&profile=work")
-	})
-
-	t.Run("no-auth startup profile as first query param does not append &profile=", func(t *testing.T) {
-		// When uiUrl starts with ?profile= (no token), the profile param is already the
-		// first query param. prfQuery must be "" so no &profile= is appended, which would
-		// otherwise produce malformed URLs like ?profile=work&profile=dev.
-		logged := captureLog(func() {
-			logProfileURLs(profiles, "http://localhost:8080/?profile=work")
-		})
-		assert.NotContains(t, logged, "?profile=work&profile=")
+		assert.Contains(t, logged, "http://localhost:8080/?profile=dev&token=abc")
+		assert.Contains(t, logged, "http://localhost:8080/?profile=work&token=abc")
 	})
 
 	t.Run("default profile is excluded from output", func(t *testing.T) {
 		logged := captureLog(func() {
-			logProfileURLs(profiles, "http://localhost:8080/")
+			logProfileURLs(srv, profiles, "")
 		})
 		assert.NotContains(t, logged, "?profile="+DEFAULT_PROFILE_NAME)
 	})
 
 	t.Run("non-default profiles are printed in sorted order", func(t *testing.T) {
 		logged := captureLog(func() {
-			logProfileURLs(profiles, "http://localhost:8080/")
+			logProfileURLs(srv, profiles, "")
 		})
 		devIdx := strings.Index(logged, "dev")
 		workIdx := strings.Index(logged, "work")
@@ -289,7 +269,7 @@ func TestLogProfileURLs(t *testing.T) {
 
 	t.Run("shell and working directory are included in output", func(t *testing.T) {
 		logged := captureLog(func() {
-			logProfileURLs(profiles, "http://localhost:8080/")
+			logProfileURLs(srv, profiles, "")
 		})
 		assert.Contains(t, logged, "/bin/zsh")
 		assert.Contains(t, logged, "/home/user/work")
@@ -299,7 +279,7 @@ func TestLogProfileURLs(t *testing.T) {
 
 	t.Run("configured profiles header is logged", func(t *testing.T) {
 		logged := captureLog(func() {
-			logProfileURLs(profiles, "http://localhost:8080/")
+			logProfileURLs(srv, profiles, "")
 		})
 		assert.Contains(t, logged, "Configured profiles:")
 	})
@@ -374,73 +354,65 @@ func TestResolveProfileName(t *testing.T) {
 func TestBuildUIUrl(t *testing.T) {
 	tests := []struct {
 		name           string
-		protocol       string
-		addr           string
-		tokenQuery     string
+		server         Server
+		token          string
 		startupProfile string
 		expected       string
 	}{
 		{
 			name:           "http with token, default profile",
-			protocol:       "http",
-			addr:           "localhost:8080",
-			tokenQuery:     "?token=abc123",
+			server:         Server{URL: url.URL{Scheme: "http", Host: "localhost:8080"}},
+			token:          "abc123",
 			startupProfile: DEFAULT_PROFILE_NAME,
 			expected:       "http://localhost:8080/?token=abc123",
 		},
 		{
 			name:           "http no-auth, default profile",
-			protocol:       "http",
-			addr:           "localhost:8080",
-			tokenQuery:     "",
+			server:         Server{URL: url.URL{Scheme: "http", Host: "localhost:8080"}},
+			token:          "",
 			startupProfile: DEFAULT_PROFILE_NAME,
 			expected:       "http://localhost:8080/",
 		},
 		{
 			name:           "https with token, default profile",
-			protocol:       "https",
-			addr:           "localhost:8443",
-			tokenQuery:     "?token=abc123",
+			server:         Server{URL: url.URL{Scheme: "https", Host: "localhost:8443"}},
+			token:          "abc123",
 			startupProfile: DEFAULT_PROFILE_NAME,
 			expected:       "https://localhost:8443/?token=abc123",
 		},
 		{
-			name:           "http with token, non-default profile appends &profile=",
-			protocol:       "http",
-			addr:           "localhost:8080",
-			tokenQuery:     "?token=abc123",
+			name:           "http with token, non-default profile",
+			server:         Server{URL: url.URL{Scheme: "http", Host: "localhost:8080"}},
+			token:          "abc123",
 			startupProfile: "work",
-			expected:       "http://localhost:8080/?token=abc123&profile=work",
+			expected:       "http://localhost:8080/?profile=work&token=abc123",
 		},
 		{
-			name:           "http no-auth, non-default profile appends ?profile=",
-			protocol:       "http",
-			addr:           "localhost:8080",
-			tokenQuery:     "",
+			name:           "http no-auth, non-default profile",
+			server:         Server{URL: url.URL{Scheme: "http", Host: "localhost:8080"}},
+			token:          "",
 			startupProfile: "work",
 			expected:       "http://localhost:8080/?profile=work",
 		},
 		{
-			name:           "https no-auth, non-default profile appends ?profile=",
-			protocol:       "https",
-			addr:           "localhost:8443",
-			tokenQuery:     "",
+			name:           "https no-auth, non-default profile",
+			server:         Server{URL: url.URL{Scheme: "https", Host: "localhost:8443"}},
+			token:          "",
 			startupProfile: "dev",
 			expected:       "https://localhost:8443/?profile=dev",
 		},
 		{
 			name:           "profile name with hyphens",
-			protocol:       "http",
-			addr:           "localhost:8080",
-			tokenQuery:     "?token=xyz",
+			server:         Server{URL: url.URL{Scheme: "http", Host: "localhost:8080"}},
+			token:          "xyz",
 			startupProfile: "my-profile",
-			expected:       "http://localhost:8080/?token=xyz&profile=my-profile",
+			expected:       "http://localhost:8080/?profile=my-profile&token=xyz",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, buildUIUrl(tt.protocol, tt.addr, tt.tokenQuery, tt.startupProfile))
+			assert.Equal(t, tt.expected, tt.server.buildUIUrl(tt.token, tt.startupProfile))
 		})
 	}
 }
@@ -451,11 +423,10 @@ func TestBuildUIUrl(t *testing.T) {
 
 func TestBuildConfigJSON(t *testing.T) {
 	srv := &Server{
-		Uri:  "localhost",
-		Port: 8080,
-		TLS:  TLS{Enabled: false},
+		URL: url.URL{Scheme: "http", Host: "localhost:8080"},
+		TLS: TLS{Enabled: false},
 	}
-	clnt := &Client{
+	clnt := &TerminalClient{
 		Rows:       24,
 		Columns:    80,
 		FontFamily: "monospace",
@@ -499,7 +470,7 @@ func TestBuildConfigJSON(t *testing.T) {
 	})
 
 	t.Run("TLS enabled is reflected in JSON", func(t *testing.T) {
-		tlsSrv := &Server{Uri: "example.com", Port: 8443, TLS: TLS{Enabled: true}}
+		tlsSrv := &Server{URL: url.URL{Scheme: "https", Host: "example.com:8443"}, TLS: TLS{Enabled: true}}
 		data, err := buildConfigJSON(tlsSrv, clnt, thm, nil, nil, nil, nil, "", "")
 		require.NoError(t, err)
 
@@ -1292,13 +1263,13 @@ func TestThemeConfigHandler(t *testing.T) {
 		assert.True(t, resp.HasBackgroundImage)
 	})
 
-	t.Run("GET does not mutate ts.client.Theme", func(t *testing.T) {
+	t.Run("GET does not mutate ts.Theme", func(t *testing.T) {
 		ts := newTS()
-		original := ts.Client.Theme
+		original := ts.Theme
 		req := httptest.NewRequest(http.MethodGet, "/theme-config?name=solarized", nil)
 		w := httptest.NewRecorder()
 		ts.themeConfigHandler(w, req)
-		assert.Equal(t, original, ts.Client.Theme)
+		assert.Equal(t, original, ts.Theme)
 	})
 
 	t.Run("POST with valid name returns 200 and activates theme", func(t *testing.T) {
@@ -1308,7 +1279,7 @@ func TestThemeConfigHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		ts.themeConfigHandler(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, solarizedTheme, ts.Client.Theme)
+		assert.Equal(t, solarizedTheme, ts.Theme)
 	})
 
 	t.Run("POST with same-origin Sec-Fetch-Site is allowed", func(t *testing.T) {
@@ -1319,31 +1290,31 @@ func TestThemeConfigHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		ts.themeConfigHandler(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, solarizedTheme, ts.Client.Theme)
+		assert.Equal(t, solarizedTheme, ts.Theme)
 	})
 
 	t.Run("POST with cross-site Sec-Fetch-Site returns 403 and does not mutate theme", func(t *testing.T) {
 		ts := newTS()
-		original := ts.Client.Theme
+		original := ts.Theme
 		req := httptest.NewRequest(http.MethodPost, "/theme-config?name=solarized", nil)
 		req.Header.Set("Sec-Fetch-Site", "cross-site")
 		w := httptest.NewRecorder()
 		logged := captureLog(func() { ts.themeConfigHandler(w, req) })
 		assert.Equal(t, http.StatusForbidden, w.Code)
 		assert.Contains(t, logged, "forbidden")
-		assert.Equal(t, original, ts.Client.Theme)
+		assert.Equal(t, original, ts.Theme)
 	})
 
 	t.Run("POST with same-site Sec-Fetch-Site returns 403 and does not mutate theme", func(t *testing.T) {
 		ts := newTS()
-		original := ts.Client.Theme
+		original := ts.Theme
 		req := httptest.NewRequest(http.MethodPost, "/theme-config?name=solarized", nil)
 		req.Header.Set("Sec-Fetch-Site", "same-site")
 		w := httptest.NewRecorder()
 		logged := captureLog(func() { ts.themeConfigHandler(w, req) })
 		assert.Equal(t, http.StatusForbidden, w.Code)
 		assert.Contains(t, logged, "forbidden")
-		assert.Equal(t, original, ts.Client.Theme)
+		assert.Equal(t, original, ts.Theme)
 	})
 
 	t.Run("POST without Sec-Fetch-Site (non-browser client) is allowed", func(t *testing.T) {
@@ -1353,28 +1324,28 @@ func TestThemeConfigHandler(t *testing.T) {
 		w := httptest.NewRecorder()
 		ts.themeConfigHandler(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, solarizedTheme, ts.Client.Theme)
+		assert.Equal(t, solarizedTheme, ts.Theme)
 	})
 
 	t.Run("POST with missing name returns 400 and does not mutate theme", func(t *testing.T) {
 		ts := newTS()
-		original := ts.Client.Theme
+		original := ts.Theme
 		req := httptest.NewRequest(http.MethodPost, "/theme-config", nil)
 		w := httptest.NewRecorder()
 		logged := captureLog(func() { ts.themeConfigHandler(w, req) })
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Contains(t, logged, "missing name")
-		assert.Equal(t, original, ts.Client.Theme)
+		assert.Equal(t, original, ts.Theme)
 	})
 
 	t.Run("POST with unknown name returns 404 and does not mutate theme", func(t *testing.T) {
 		ts := newTS()
-		original := ts.Client.Theme
+		original := ts.Theme
 		req := httptest.NewRequest(http.MethodPost, "/theme-config?name=nonexistent", nil)
 		w := httptest.NewRecorder()
 		ts.themeConfigHandler(w, req)
 		assert.Equal(t, http.StatusNotFound, w.Code)
-		assert.Equal(t, original, ts.Client.Theme)
+		assert.Equal(t, original, ts.Theme)
 	})
 
 	t.Run("POST response contains activated theme colors", func(t *testing.T) {
@@ -1495,7 +1466,7 @@ func TestEditThemeHandler(t *testing.T) {
 		require.Contains(t, ts.Themes, "my-theme")
 		assert.Equal(t, "#ffffff", ts.Themes["my-theme"].Foreground)
 		assert.Equal(t, "my-theme", ts.ActiveTheme)
-		assert.Equal(t, "#ffffff", ts.Client.Theme.Foreground)
+		assert.Equal(t, "#ffffff", ts.Theme.Foreground)
 	})
 
 	t.Run("POST overwrites existing theme colors in ts.Themes", func(t *testing.T) {
@@ -1642,8 +1613,8 @@ func TestSortedThemeNames(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestConcurrentStateAccess drives the handlers that read and write shared
-// TerminalServer state (Client, Profiles, Themes, ActiveTheme, ProfileName,
-// FirstRun) from many goroutines at once. Before StateMu was
+// TerminalServer state (Client, Theme, Profiles, Themes, ActiveTheme,
+// ProfileName, FirstRun) from many goroutines at once. Before StateMu was
 // added to guard these fields, running this test with `go test -race` (or
 // often even without it) reliably reproduced "fatal error: concurrent map
 // writes" within a handful of iterations. Several of the handlers below also
@@ -1667,13 +1638,13 @@ func TestConcurrentStateAccess(t *testing.T) {
 			})
 		}
 
-		// Page loads: read Profiles/Themes/Client/ActiveTheme, write ProfileName.
+		// Page loads: read Profiles/Themes/Client/Theme/ActiveTheme, write ProfileName.
 		run(func() {
 			req := httptest.NewRequest(http.MethodGet, "/?token=test-token-1234&profile=work", nil)
 			ts.displayTermHandler(httptest.NewRecorder(), req)
 		})
 
-		// Theme edits: read+write Themes, write Client.Theme/ActiveTheme.
+		// Theme edits: read+write Themes, write Theme/ActiveTheme.
 		run(func() {
 			body := strings.NewReader(`{"name":"concurrent-theme","theme":{"foreground":"#fff","background":"#000"}}`)
 			req := httptest.NewRequest(http.MethodPost, "/edit-theme", body)
@@ -1681,7 +1652,7 @@ func TestConcurrentStateAccess(t *testing.T) {
 			ts.editThemeHandler(httptest.NewRecorder(), req)
 		})
 
-		// Adding a built-in theme: read+write Themes, write Client.Theme/ActiveTheme.
+		// Adding a built-in theme: read+write Themes, write Theme/ActiveTheme.
 		run(func() {
 			body := strings.NewReader(`{"theme":"b3tty-dark"}`)
 			req := httptest.NewRequest(http.MethodPost, "/add-theme", body)
