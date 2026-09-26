@@ -245,7 +245,7 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 	}()
 
 	if len(profile.Commands) > 0 {
-		time.Sleep(time.Second * 1)
+		ts.CommandSleep(time.Second * 1)
 		for _, command := range profile.Commands {
 			_, err = ptmx.Write(formatCommand(command))
 			if err != nil {
@@ -257,7 +257,7 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 				terminateSession()
 				return
 			}
-			time.Sleep(time.Millisecond * 200)
+			ts.CommandSleep(time.Millisecond * 200)
 		}
 	}
 

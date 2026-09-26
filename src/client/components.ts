@@ -12,6 +12,8 @@ import type { Palette, ProfileConfig, SettingsConfig } from "./types.ts";
 import { isValidThemeColor } from "./validators.ts";
 import {
     DESIGN_TOKENS,
+    BASE_STYLES,
+    TEXT_STYLES,
     BUTTON_STYLES,
     PALETTE_CARD_VARS,
     OVERLAY_STYLES,
@@ -84,14 +86,14 @@ export interface B3ttyThemeEditor {
  *
  * Style the card from a parent shadow DOM by setting CSS custom properties
  * on b3tty-palette-card elements:
- *   --palette-card-padding         (default: 12px)
- *   --palette-card-gap             (default: 10px)
+ *   --palette-card-padding         (default: var(--space-lg))
+ *   --palette-card-gap             (default: var(--space-md))
  *   --palette-card-overflow        (default: visible)
  *   --palette-card-header-bg       (default: transparent)
  *   --palette-card-header-padding  (default: 0)
- *   --palette-card-header-font-size (default: 13px)
- *   --palette-card-terminal-gap    (default: 7px)
- *   --palette-card-terminal-shadow (default: 0 2px 10px rgba(0,0,0,0.35))
+ *   --palette-card-header-font-size (default: var(--font-size-md))
+ *   --palette-card-terminal-gap    (default: var(--space-xs))
+ *   --palette-card-terminal-shadow (default: var(--shadow-card))
  *   --palette-card-terminal-min-width (default: 196px)
  */
 export interface B3ttyPaletteCard {
@@ -248,14 +250,15 @@ if (typeof HTMLElement !== "undefined") {
             const style = document.createElement("style");
             style.textContent = `
                 ${DESIGN_TOKENS}
+                ${BASE_STYLES}
                 :host {
                     display: flex;
                     flex-direction: column;
-                    gap: var(--palette-card-gap, 10px);
-                    padding: var(--palette-card-padding, 12px);
-                    border-radius: 8px;
+                    gap: var(--palette-card-gap, var(--space-md));
+                    padding: var(--palette-card-padding, var(--space-lg));
+                    border-radius: var(--radius-lg);
                     border: 2px solid transparent;
-                    background: #cecece;
+                    background: var(--color-surface-card);
                     cursor: pointer;
                     transition: border-color var(--transition);
                     user-select: none;
@@ -264,30 +267,28 @@ if (typeof HTMLElement !== "undefined") {
                 }
                 :host([selected]) { border-color: var(--color-accent); }
                 .card-header {
-                    display: flex; align-items: center; gap: 7px;
+                    display: flex; align-items: center; gap: var(--space-xs);
                     padding: var(--palette-card-header-padding, 0);
-                    font-family: sans-serif;
-                    font-size: var(--palette-card-header-font-size, var(--font-md));
-                    font-weight: 600; color: var(--color-text);
+                    font-size: var(--palette-card-header-font-size, var(--font-size-md));
+                    font-weight: var(--font-weight-semibold);
                     background: var(--palette-card-header-bg, transparent);
                 }
-                input[type=radio] { cursor: pointer; accent-color: var(--color-accent); }
                 .terminal {
-                    border-radius: 6px;
-                    padding: 10px 10px 8px;
+                    border-radius: var(--radius-md);
+                    padding: var(--space-md) var(--space-md) var(--space-sm);
                     display: flex; flex-direction: column;
-                    gap: var(--palette-card-terminal-gap, 7px);
-                    font-family: monospace; font-size: var(--font-sm);
-                    box-shadow: var(--palette-card-terminal-shadow, 0 2px 10px rgba(0,0,0,0.35));
+                    gap: var(--palette-card-terminal-gap, var(--space-xs));
+                    font-family: var(--font-family-mono); font-size: var(--font-size-xs);
+                    box-shadow: var(--palette-card-terminal-shadow, var(--shadow-card));
                     min-width: var(--palette-card-terminal-min-width, 196px);
                 }
                 .titlebar { display: flex; gap: 5px; margin-bottom: 1px; }
-                .dot { width: 9px; height: 9px; border-radius: 50%; }
-                .preview-text { padding: 1px 2px; line-height: 1.5; letter-spacing: 0.01em; }
+                .dot { width: 9px; height: 9px; border-radius: var(--radius-full); }
+                .preview-text { padding: 1px 2px; line-height: var(--line-height-body); letter-spacing: 0.01em; }
                 .sel { padding: 0 2px; border-radius: 2px; }
                 .swatch-row { display: flex; gap: 3px; }
                 .swatch {
-                    width: 20px; height: 20px; border-radius: 4px;
+                    width: 20px; height: 20px; border-radius: var(--radius-sm);
                     box-shadow: inset 0 0 0 1px rgba(128,128,128,0.25);
                 }
             `;
@@ -387,49 +388,25 @@ if (typeof HTMLElement !== "undefined") {
             shadow.innerHTML = `
                 <style>
                     ${DESIGN_TOKENS}
-                    :host { display: none; }
-                    :host([open]) { display: block; }
-                    .backdrop {
-                        position: fixed;
-                        inset: 0;
-                        background: rgba(0, 0, 0, 0.5);
-                        z-index: 10000;
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                    }
+                    ${BASE_STYLES}
+                    ${OVERLAY_STYLES}
+                    ${BUTTON_STYLES}
                     .modal {
-                        background: #d0d0d0;
-                        border-radius: 8px;
-                        padding: 28px 36px;
+                        padding: var(--space-3xl);
                         display: flex;
                         flex-direction: column;
                         align-items: center;
-                        gap: 20px;
+                        gap: var(--space-2xl);
                     }
                     p {
                         margin: 0;
-                        color: #111;
-                        font-family: sans-serif;
-                        font-size: var(--font-lg);
-                    }
-                    button {
-                        padding: 5px 20px;
-                        border-radius: 4px;
-                        border: 1px solid #999;
-                        background: #bbb;
-                        cursor: pointer;
-                        font-size: var(--font-lg);
-                        font-family: sans-serif;
-                    }
-                    button:hover {
-                        background: #a8a8a8;
+                        font-size: var(--font-size-lg);
                     }
                 </style>
-                <div class="backdrop">
+                <div class="overlay">
                     <div class="modal" role="dialog" aria-modal="true">
                         <p></p>
-                        <button>OK</button>
+                        <button class="ok-btn">OK</button>
                     </div>
                 </div>
             `;
@@ -478,55 +455,41 @@ if (typeof HTMLElement !== "undefined") {
             const style = document.createElement("style");
             style.textContent = `
                 ${DESIGN_TOKENS}
+                ${BASE_STYLES}
+                ${OVERLAY_STYLES}
+                ${BUTTON_STYLES}
+                /* Always shown on the first-run setup page, never toggled via [open]. */
                 :host { display: block; }
-                .backdrop {
-                    position: fixed; inset: 0;
-                    background: var(--color-overlay);
-                    z-index: 10000;
-                    display: flex; align-items: center; justify-content: center;
-                }
                 .modal {
-                    background: var(--color-surface-1);
-                    border-radius: var(--radius-lg);
-                    padding: 28px 32px;
+                    padding: var(--space-3xl);
                     display: flex; flex-direction: column; align-items: center;
-                    gap: 20px;
-                    box-shadow: 0 8px 40px var(--color-shadow);
+                    gap: var(--space-2xl);
                 }
-                .subtitle { margin: 0; font-size: var(--font-md); font-family: sans-serif; color: var(--color-text-subtle); text-align: center; }
-                .options { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
+                .subtitle { margin: 0; font-size: var(--font-size-md); color: var(--color-text-subtle); text-align: center; }
+                .options { display: flex; gap: var(--space-lg); flex-wrap: wrap; justify-content: center; }
                 .card {
-                    display: flex; flex-direction: column; gap: 10px;
-                    padding: 12px; border-radius: 8px;
+                    display: flex; flex-direction: column; gap: var(--space-md);
+                    padding: var(--space-lg); border-radius: var(--radius-lg);
                     border: 2px solid transparent;
-                    background: #cecece;
+                    background: var(--color-surface-card);
                     cursor: pointer;
                     transition: border-color var(--transition);
                     user-select: none;
                 }
                 .card:has(input:checked) { border-color: var(--color-accent); }
                 .card-header {
-                    display: flex; align-items: center; gap: 7px;
-                    font-family: sans-serif; font-size: var(--font-md); font-weight: 600; color: var(--color-text);
+                    display: flex; align-items: center; gap: var(--space-xs);
+                    font-size: var(--font-size-md); font-weight: var(--font-weight-semibold);
                 }
-                input[type=radio] { cursor: pointer; accent-color: var(--color-accent); }
                 .skip-card { justify-content: center; min-width: 196px; }
                 .skip-note {
-                    margin: 0; font-family: sans-serif; font-size: 12px; color: var(--color-muted);
-                    max-width: 180px; line-height: 1.5;
+                    margin: 0; font-size: var(--font-size-sm); color: var(--color-muted);
+                    max-width: 180px; line-height: var(--line-height-body);
                 }
-                .ok-btn {
-                    padding: 9px 36px; border-radius: var(--radius-md); border: none;
-                    background: var(--color-accent); color: #fff;
-                    font-size: var(--font-lg); font-family: sans-serif;
-                    cursor: pointer; transition: background var(--transition);
-                }
-                .ok-btn:disabled { background: var(--color-border); cursor: not-allowed; }
-                .ok-btn:not(:disabled):hover { background: var(--color-accent-hover); }
             `;
 
-            const backdrop = document.createElement("div");
-            backdrop.className = "backdrop";
+            const overlay = document.createElement("div");
+            overlay.className = "overlay";
             const modal = document.createElement("div");
             modal.className = "modal";
             modal.setAttribute("role", "dialog");
@@ -549,9 +512,9 @@ if (typeof HTMLElement !== "undefined") {
             modal.appendChild(subtitle);
             modal.appendChild(options);
             modal.appendChild(okBtn);
-            backdrop.appendChild(modal);
+            overlay.appendChild(modal);
             shadow.appendChild(style);
-            shadow.appendChild(backdrop);
+            shadow.appendChild(overlay);
 
             let selectedValue: string | null = null;
 
@@ -624,6 +587,7 @@ if (typeof HTMLElement !== "undefined") {
             const style = document.createElement("style");
             style.textContent = `
                 ${DESIGN_TOKENS}
+                ${BASE_STYLES}
                 :host {
                     display: block;
                     height: 0;
@@ -631,7 +595,7 @@ if (typeof HTMLElement !== "undefined") {
                     flex-shrink: 0;
                 }
                 :host([open]) {
-                    height: 32px;
+                    height: var(--menubar-height);
                 }
                 .trigger {
                     position: fixed;
@@ -640,10 +604,10 @@ if (typeof HTMLElement !== "undefined") {
                     transform: translateX(-50%);
                     width: 100px;
                     height: 6px;
-                    background: #808080;
-                    border-radius: 0 0 4px 4px;
+                    background: var(--color-handle);
+                    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
                     cursor: pointer;
-                    z-index: 1000;
+                    z-index: var(--z-menubar);
                     opacity: 0.5;
                     transition: opacity var(--transition);
                 }
@@ -659,14 +623,13 @@ if (typeof HTMLElement !== "undefined") {
                 .menubar {
                     display: none;
                     width: 100%;
-                    height: 32px;
+                    height: var(--menubar-height);
                     box-sizing: border-box;
                     flex-direction: row;
                     align-items: stretch;
                     background: var(--menu-bg, #fff);
                     color: var(--menu-fg, #000);
-                    font-family: sans-serif;
-                    font-size: var(--font-md);
+                    font-size: var(--font-size-md);
                     user-select: none;
                     position: relative;
                 }
@@ -679,8 +642,8 @@ if (typeof HTMLElement !== "undefined") {
                 .section-label {
                     display: flex;
                     align-items: center;
-                    padding: 0 14px;
-                    height: 32px;
+                    padding: 0 var(--space-lg);
+                    height: var(--menubar-height);
                     cursor: pointer;
                     box-sizing: border-box;
                     color: var(--menu-fg, #000);
@@ -693,20 +656,20 @@ if (typeof HTMLElement !== "undefined") {
                 .dropdown {
                     display: none;
                     position: absolute;
-                    top: 32px;
+                    top: var(--menubar-height);
                     left: 0;
                     min-width: 140px;
                     background: var(--menu-bg, #fff);
                     color: var(--menu-fg, #000);
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                    box-shadow: var(--shadow-dropdown);
                     flex-direction: column;
-                    z-index: 1001;
+                    z-index: var(--z-dropdown);
                 }
                 .section.active .dropdown {
                     display: flex;
                 }
                 .menu-item {
-                    padding: 7px 16px;
+                    padding: var(--space-xs) var(--space-xl);
                     cursor: pointer;
                     white-space: nowrap;
                     color: var(--menu-fg, #000);
@@ -719,7 +682,7 @@ if (typeof HTMLElement !== "undefined") {
                     height: 1px;
                     background: var(--menu-fg, #000);
                     opacity: 0.2;
-                    margin: 2px 8px;
+                    margin: var(--space-3xs) var(--space-sm);
                 }
             `;
 
@@ -903,7 +866,7 @@ if (typeof HTMLElement !== "undefined") {
         }
 
         #open(): void {
-            this.style.height = "32px";
+            this.style.height = "var(--menubar-height)";
             this.setAttribute("open", "");
             this.dispatchEvent(new CustomEvent("b3tty-menubar-open", { bubbles: true, composed: true }));
             this.#resetTimer();
@@ -964,27 +927,27 @@ if (typeof HTMLElement !== "undefined") {
             const style = document.createElement("style");
             style.textContent = `
                 ${DESIGN_TOKENS}
+                ${BASE_STYLES}
                 ${OVERLAY_STYLES}
+                ${TEXT_STYLES}
                 .modal {
-                    padding: 24px 28px 20px;
-                    display: flex; flex-direction: column; gap: 16px;
+                    padding: var(--space-3xl) var(--space-3xl) var(--space-2xl);
+                    display: flex; flex-direction: column; gap: var(--space-xl);
                     max-height: 85vh; max-width: 1000px; width: 100%;
                     overflow: hidden;
                 }
-                h2 { margin: 0; font-family: sans-serif; font-size: 16px; font-weight: 600; color: #111; }
                 .cards {
                     display: grid;
                     grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-                    gap: 12px;
+                    gap: var(--space-lg);
                     overflow-y: auto; flex: 1; min-height: 0;
-                    padding: 4px 2px;
+                    padding: var(--space-2xs) var(--space-3xs);
                 }
                 ${PALETTE_CARD_VARS}
                 .loading {
-                    font-family: sans-serif; font-size: var(--font-md); color: var(--color-text-subtle);
-                    text-align: center; padding: 20px; grid-column: 1 / -1;
+                    font-size: var(--font-size-md); color: var(--color-text-subtle);
+                    text-align: center; padding: var(--space-2xl); grid-column: 1 / -1;
                 }
-                .actions { display: flex; justify-content: flex-end; gap: 10px; }
                 ${BUTTON_STYLES}
             `;
 
@@ -996,6 +959,7 @@ if (typeof HTMLElement !== "undefined") {
             modal.setAttribute("aria-modal", "true");
 
             const title = document.createElement("h2");
+            title.className = "modal-title";
             title.textContent = "Select a Theme";
 
             this.#cards = document.createElement("div");
@@ -1095,9 +1059,11 @@ if (typeof HTMLElement !== "undefined") {
             const style = document.createElement("style");
             style.textContent = `
                 ${DESIGN_TOKENS}
+                ${BASE_STYLES}
                 ${OVERLAY_STYLES}
+                ${TEXT_STYLES}
                 .modal {
-                    padding: 20px;
+                    padding: var(--space-2xl);
                     display: flex; flex-direction: row;
                     width: min(780px, 100%); height: min(560px, 90vh);
                     overflow: hidden;
@@ -1108,59 +1074,35 @@ if (typeof HTMLElement !== "undefined") {
                 ${PALETTE_CARD_VARS}
                 b3tty-palette-card { flex-shrink: 0; }
                 .name-section {
-                    display: flex; flex-direction: column; gap: 4px;
-                    flex-shrink: 0; padding-bottom: 10px;
+                    display: flex; flex-direction: column; gap: var(--space-2xs);
+                    flex-shrink: 0; padding-bottom: var(--space-md);
                     border-bottom: 1px solid var(--color-border-inner);
-                    margin-bottom: 8px;
+                    margin-bottom: var(--space-sm);
                 }
                 .name-row {
-                    display: flex; align-items: center; gap: 8px;
+                    display: flex; align-items: center; gap: var(--space-sm);
                 }
-                .name-section label {
-                    font-family: sans-serif; font-size: 12px; color: var(--color-accent);
-                    white-space: nowrap; min-width: 80px;
-                }
-                .name-error {
-                    font-family: sans-serif; font-size: var(--font-sm); color: var(--color-destructive);
-                    display: none;
-                }
-                .name-error.visible { display: block; }
+                .name-section label { white-space: nowrap; min-width: 80px; }
                 .color-form {
                     flex: 1; overflow-y: auto; min-height: 0;
-                    display: flex; flex-direction: column; gap: 4px;
+                    display: flex; flex-direction: column; gap: var(--space-2xs);
                 }
-                .section-title {
-                    font-family: sans-serif; font-size: var(--font-sm); font-weight: 600;
-                    text-transform: uppercase; letter-spacing: 0.05em;
-                    color: var(--color-muted); padding: 6px 0 2px;
-                }
+                .color-form .section-title { padding: var(--space-xs) 0 var(--space-3xs); }
                 .field-row {
                     display: grid;
                     grid-template-columns: 140px 1fr 22px;
-                    gap: 4px; align-items: center;
+                    gap: var(--space-2xs); align-items: center;
                 }
-                .field-row label {
-                    font-family: sans-serif; font-size: 12px; color: var(--color-accent);
-                }
-                .ansi-header {
+                .ansi-header, .ansi-row {
                     display: grid;
                     grid-template-columns: 68px 1fr 22px 1fr 22px;
-                    gap: 4px;
-                    font-family: sans-serif; font-size: var(--font-sm); font-weight: 600;
-                    color: var(--color-muted); padding-bottom: 2px;
+                    gap: var(--space-2xs); align-items: center;
                 }
-                .ansi-row {
-                    display: grid;
-                    grid-template-columns: 68px 1fr 22px 1fr 22px;
-                    gap: 4px; align-items: center;
-                }
-                .ansi-row .color-label {
-                    font-family: sans-serif; font-size: 12px; color: var(--color-accent);
-                }
+                .color-form .ansi-header { padding: 0 0 var(--space-3xs); }
                 ${FORM_INPUT_STYLES}
                 .swatch {
                     width: 18px; height: 18px;
-                    border-radius: var(--radius-sm); border: 1px solid rgba(0,0,0,0.2);
+                    border-radius: var(--radius-sm); border: 1px solid var(--color-border-subtle);
                     visibility: hidden;
                 }
                 .swatch.visible { visibility: visible; }
@@ -1200,13 +1142,14 @@ if (typeof HTMLElement !== "undefined") {
             const nameRow = document.createElement("div");
             nameRow.className = "name-row";
             const nameLabel = document.createElement("label");
+            nameLabel.className = "field-label";
             nameLabel.textContent = "Theme Name";
             this.#nameInput = document.createElement("input");
             this.#nameInput.type = "text";
             this.#nameInput.className = "name-input";
             this.#nameInput.placeholder = "Enter theme name";
             this.#nameError = document.createElement("span");
-            this.#nameError.className = "name-error";
+            this.#nameError.className = "name-error field-error";
             this.#nameError.textContent = "Cannot use a built-in theme name";
             nameRow.appendChild(nameLabel);
             nameRow.appendChild(this.#nameInput);
@@ -1241,7 +1184,7 @@ if (typeof HTMLElement !== "undefined") {
             colorForm.appendChild(ansiTitle);
 
             const ansiHeader = document.createElement("div");
-            ansiHeader.className = "ansi-header";
+            ansiHeader.className = "ansi-header section-title";
             ansiHeader.appendChild(document.createElement("span")); // color name column
             const hNormal = document.createElement("span");
             hNormal.textContent = "Normal";
@@ -1266,7 +1209,7 @@ if (typeof HTMLElement !== "undefined") {
                 const ansiRow = document.createElement("div");
                 ansiRow.className = "ansi-row";
                 const colorLabel = document.createElement("span");
-                colorLabel.className = "color-label";
+                colorLabel.className = "color-label field-label";
                 colorLabel.textContent = colorName;
                 ansiRow.appendChild(colorLabel);
                 for (const key of [normalKey, brightKey]) {
@@ -1357,6 +1300,7 @@ if (typeof HTMLElement !== "undefined") {
             const row = document.createElement("div");
             row.className = "field-row";
             const lbl = document.createElement("label");
+            lbl.className = "field-label";
             lbl.textContent = label;
             const input = document.createElement("input");
             input.type = "text";
@@ -1585,9 +1529,11 @@ if (typeof HTMLElement !== "undefined") {
             const style = document.createElement("style");
             style.textContent = `
                 ${DESIGN_TOKENS}
+                ${BASE_STYLES}
                 ${OVERLAY_STYLES}
+                ${TEXT_STYLES}
                 .modal {
-                    padding: 20px;
+                    padding: var(--space-2xl);
                     display: flex; flex-direction: row;
                     width: min(680px, 100%); height: min(500px, 90vh);
                     overflow: hidden;
@@ -1597,37 +1543,24 @@ if (typeof HTMLElement !== "undefined") {
                 .actions { align-items: center; }
                 ${EDITOR_CARD_STYLES}
                 .fields-section {
-                    display: flex; flex-direction: column; gap: 6px;
-                    flex-shrink: 0; padding-bottom: 10px;
+                    display: flex; flex-direction: column; gap: var(--space-xs);
+                    flex-shrink: 0; padding-bottom: var(--space-md);
                     border-bottom: 1px solid var(--color-border-inner);
-                    margin-bottom: 8px;
+                    margin-bottom: var(--space-sm);
                 }
                 .field-row {
                     display: grid;
                     grid-template-columns: 120px 1fr;
-                    gap: 6px; align-items: center;
+                    gap: var(--space-xs); align-items: center;
                 }
-                .field-row label {
-                    font-family: sans-serif; font-size: 12px; color: var(--color-accent);
-                    white-space: nowrap;
-                }
-                .field-row label .required {
-                    color: var(--color-destructive);
-                }
-                .name-error {
-                    grid-column: 2;
-                    font-family: sans-serif; font-size: var(--font-sm); color: var(--color-destructive);
-                    display: none;
-                }
-                .name-error.visible { display: block; }
+                .field-row label { white-space: nowrap; }
+                .field-row label .required { color: var(--color-destructive); }
+                .name-error { grid-column: 2; }
                 .commands-section {
-                    flex: 1; display: flex; flex-direction: column; gap: 4px;
+                    flex: 1; display: flex; flex-direction: column; gap: var(--space-2xs);
                     min-height: 0;
                 }
-                .commands-label {
-                    font-family: sans-serif; font-size: 12px; color: var(--color-accent);
-                    flex-shrink: 0;
-                }
+                .commands-label { flex-shrink: 0; }
                 .commands-wrapper {
                     display: flex;
                     border: 1px solid var(--color-border);
@@ -1635,15 +1568,15 @@ if (typeof HTMLElement !== "undefined") {
                     overflow: hidden;
                     flex: 1; min-height: 0;
                     background: var(--color-surface-3);
-                    font-family: monospace;
-                    font-size: 12px;
-                    line-height: 1.5em;
+                    font-family: var(--font-family-mono);
+                    font-size: var(--font-size-sm);
+                    line-height: var(--line-height-body);
                 }
                 .line-numbers {
                     width: 32px;
-                    padding: 4px 4px;
-                    background: #ddd;
-                    color: #888;
+                    padding: var(--space-2xs);
+                    background: var(--color-surface-1);
+                    color: var(--color-text-faint);
                     text-align: right;
                     user-select: none;
                     overflow: hidden;
@@ -1654,11 +1587,12 @@ if (typeof HTMLElement !== "undefined") {
                 }
                 .commands-area {
                     flex: 1;
-                    padding: 4px 6px;
+                    padding: var(--space-2xs) var(--space-xs);
                     border: none;
                     outline: none;
                     resize: none;
                     background: transparent;
+                    color: var(--color-text);
                     font-family: inherit;
                     font-size: inherit;
                     line-height: inherit;
@@ -1714,6 +1648,7 @@ if (typeof HTMLElement !== "undefined") {
                 const row = document.createElement("div");
                 row.className = "field-row";
                 const lbl = document.createElement("label");
+                lbl.className = "field-label";
                 if (required) {
                     lbl.innerHTML = `${labelText} <span class="required">*</span>`;
                 } else {
@@ -1731,7 +1666,7 @@ if (typeof HTMLElement !== "undefined") {
             const [nameRow, nameInput] = makeFieldRow("Profile Name", true, "Enter profile name");
             this.#nameInput = nameInput;
             this.#nameError = document.createElement("span");
-            this.#nameError.className = "name-error";
+            this.#nameError.className = "name-error field-error";
             this.#nameError.textContent = "Cannot use 'default' as a profile name";
             nameRow.appendChild(this.#nameError);
             fieldsSection.appendChild(nameRow);
@@ -1757,7 +1692,7 @@ if (typeof HTMLElement !== "undefined") {
             commandsSection.className = "commands-section";
 
             const commandsLabel = document.createElement("div");
-            commandsLabel.className = "commands-label";
+            commandsLabel.className = "commands-label field-label";
             commandsLabel.textContent = "Commands (one per line, run on startup):";
             commandsSection.appendChild(commandsLabel);
 
@@ -2069,7 +2004,9 @@ if (typeof HTMLElement !== "undefined") {
             const style = document.createElement("style");
             style.textContent = `
                 ${DESIGN_TOKENS}
+                ${BASE_STYLES}
                 ${OVERLAY_STYLES}
+                ${TEXT_STYLES}
                 .modal {
                     display: flex; flex-direction: column;
                     width: min(820px, 100%); height: min(580px, 90vh);
@@ -2078,75 +2015,61 @@ if (typeof HTMLElement !== "undefined") {
                 .tab-bar {
                     display: flex; flex-direction: row;
                     background: var(--color-surface-2);
-                    border-bottom: 1px solid #b0b0b0;
+                    border-bottom: 1px solid var(--color-border-panel);
                     flex-shrink: 0;
                 }
                 .tab-btn {
-                    padding: 10px 20px;
+                    padding: var(--space-md) var(--space-2xl);
                     border: none; background: transparent;
-                    font-family: sans-serif; font-size: var(--font-md); font-weight: 500;
+                    font-size: var(--font-size-md); font-weight: var(--font-weight-medium);
                     cursor: pointer; color: var(--color-text-subtle);
                     border-bottom: 2px solid transparent;
+                    transition: background var(--transition);
                 }
-                .tab-btn:hover { color: var(--color-text); background: #bbb; }
-                .tab-btn.active { color: #111; border-bottom-color: var(--color-accent); background: var(--color-surface-1); }
+                .tab-btn:hover { color: var(--color-text); background: var(--color-surface-hover); }
+                .tab-btn.active { color: var(--color-text); border-bottom-color: var(--color-accent); background: var(--color-surface-1); }
                 .tab-content {
                     flex: 1; overflow: hidden; min-height: 0;
                     display: flex; flex-direction: column;
                 }
                 .panel {
                     display: none; flex: 1; overflow-y: auto;
-                    padding: 20px; flex-direction: column; gap: 12px;
+                    padding: var(--space-2xl); flex-direction: column; gap: var(--space-lg);
                     min-height: 0;
                 }
                 .panel.active { display: flex; }
                 .field-group {
-                    display: flex; flex-direction: column; gap: 4px;
-                }
-                .field-label {
-                    font-family: sans-serif; font-size: 12px;
-                    font-weight: 600; color: #333;
-                }
-                .field-desc {
-                    font-family: sans-serif; font-size: var(--font-sm); color: var(--color-muted);
-                    line-height: 1.4;
+                    display: flex; flex-direction: column; gap: var(--space-2xs);
                 }
                 .field-row {
-                    display: flex; align-items: center; gap: 10px;
+                    display: flex; align-items: center; gap: var(--space-md);
                 }
                 ${FORM_INPUT_STYLES}
-                .text-input { padding: 5px 8px; }
-                .number-input { padding: 5px 8px; }
                 .toggle {
                     width: 36px; height: 20px;
                     appearance: none; -webkit-appearance: none;
-                    background: #bbb; border-radius: 10px;
+                    background: var(--color-surface-hover); border-radius: var(--radius-full);
                     cursor: pointer; position: relative;
-                    transition: background 0.2s;
+                    transition: background var(--transition);
                     flex-shrink: 0;
                 }
                 .toggle:checked { background: var(--color-accent); }
                 .toggle::after {
                     content: ""; position: absolute;
                     width: 16px; height: 16px;
-                    background: #fff; border-radius: 50%;
+                    background: var(--color-on-accent); border-radius: var(--radius-full);
                     top: 2px; left: 2px;
-                    transition: left 0.2s;
-                    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+                    transition: left var(--transition);
+                    box-shadow: var(--shadow-knob);
                 }
                 .toggle:checked::after { left: 18px; }
-                .restart-note {
-                    font-family: sans-serif; font-size: 12px; color: var(--color-destructive);
-                    padding: 4px 0; margin-top: 4px;
-                    display: none;
-                }
-                .restart-note.visible { display: block; }
+                .restart-note { padding: var(--space-2xs) 0; margin-top: var(--space-2xs); }
                 .section-divider {
-                    height: 1px; background: var(--color-border-panel); margin: 4px 0;
+                    height: 1px; background: var(--color-border-panel); margin: var(--space-2xs) 0;
                 }
                 .footer {
-                    display: flex; justify-content: flex-end; gap: 10px;
-                    padding: 12px 20px; border-top: 1px solid var(--color-border-panel);
+                    display: flex; justify-content: flex-end; gap: var(--space-md);
+                    padding: var(--space-lg) var(--space-2xl); border-top: 1px solid var(--color-border-panel);
                     flex-shrink: 0; background: var(--color-surface-1);
                 }
                 ${BUTTON_STYLES}
@@ -2234,7 +2157,7 @@ if (typeof HTMLElement !== "undefined") {
             );
 
             this.#serverRestartNote = document.createElement("div");
-            this.#serverRestartNote.className = "restart-note";
+            this.#serverRestartNote.className = "restart-note field-error";
             this.#serverRestartNote.textContent = "⚠ Server settings will not take effect until b3tty is restarted.";
             serverPanel.appendChild(this.#serverRestartNote);
 
@@ -2308,7 +2231,7 @@ if (typeof HTMLElement !== "undefined") {
             );
 
             this.#termRestartNote = document.createElement("div");
-            this.#termRestartNote.className = "restart-note";
+            this.#termRestartNote.className = "restart-note field-error";
             this.#termRestartNote.textContent = "⚠ Changing Auto-Resize requires a restart to take effect.";
             terminalPanel.appendChild(this.#termRestartNote);
 
@@ -2362,7 +2285,7 @@ if (typeof HTMLElement !== "undefined") {
             const group = document.createElement("div");
             group.className = "field-group";
             const lbl = document.createElement("div");
-            lbl.className = "field-label";
+            lbl.className = "field-label strong";
             lbl.textContent = label;
             const row = document.createElement("div");
             row.className = "field-row";
@@ -2522,26 +2445,25 @@ if (typeof HTMLElement !== "undefined") {
             const style = document.createElement("style");
             style.textContent = `
                 ${DESIGN_TOKENS}
+                ${BASE_STYLES}
                 ${OVERLAY_STYLES}
+                ${TEXT_STYLES}
                 .modal {
-                    padding: 28px 32px 20px;
-                    display: flex; flex-direction: column; align-items: center; gap: 6px;
+                    padding: var(--space-3xl) var(--space-3xl) var(--space-2xl);
+                    display: flex; flex-direction: column; align-items: center; gap: var(--space-xs);
                     max-width: 420px; width: 100%;
                     text-align: center;
                 }
-                .title {
-                    margin: 0; font-family: sans-serif; font-size: 16px; font-weight: 700;
-                    color: var(--color-text);
-                }
+                .title { font-weight: var(--font-weight-bold); }
                 .byline {
-                    margin: 0; font-family: sans-serif; font-size: var(--font-md); font-weight: 400;
+                    margin: 0; font-size: var(--font-size-md); font-weight: var(--font-weight-regular);
                     color: var(--color-text-subtle);
                 }
                 .version {
-                    margin: 0; font-family: sans-serif; font-size: var(--font-sm);
+                    margin: 0; font-size: var(--font-size-xs);
                     color: var(--color-muted);
                 }
-                .actions { display: flex; justify-content: center; margin-top: 14px; }
+                .actions { justify-content: center; margin-top: var(--space-lg); }
                 ${BUTTON_STYLES}
             `;
 
@@ -2553,7 +2475,7 @@ if (typeof HTMLElement !== "undefined") {
             modal.setAttribute("aria-modal", "true");
 
             const title = document.createElement("p");
-            title.className = "title";
+            title.className = "title modal-title";
             title.textContent = "b3tty - A better, browser-based terminal emulator";
 
             const byline = document.createElement("p");

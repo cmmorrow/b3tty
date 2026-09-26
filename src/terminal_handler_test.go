@@ -117,15 +117,15 @@ func TestTerminalHandler(t *testing.T) {
 
 		resizeMsg := `{"type":"resize","cols":100,"rows":40}`
 		require.NoError(t, conn.WriteMessage(websocket.TextMessage, []byte(resizeMsg)))
-		// A successful resize writes nothing to the pty, so a short read
-		// window should come back empty.
-		out := readUntilContains(ch, "unreachable-sentinel", 300*time.Millisecond)
-		assert.Empty(t, out, "resize message must not be echoed as literal pty input")
-
-		// The connection must still be usable afterward.
+		// terminalHandler processes messages in order and cat echoes in
+		// order, so had the resize leaked into the pty it would be echoed
+		// before "marco". Reading up to "marco" therefore proves the resize
+		// was not written, without waiting out a fixed silence window — and
+		// also that the connection is still usable afterward.
 		require.NoError(t, conn.WriteMessage(websocket.TextMessage, []byte("marco\n")))
-		out = readUntilContains(ch, "marco", 2*time.Second)
+		out := readUntilContains(ch, "marco", 2*time.Second)
 		assert.Contains(t, out, "marco")
+		assert.NotContains(t, out, `"type":"resize"`, "resize message must not be echoed as literal pty input")
 	})
 
 	t.Run("resize to a zero dimension is ignored but the connection stays usable", func(t *testing.T) {
@@ -142,12 +142,12 @@ func TestTerminalHandler(t *testing.T) {
 		require.NoError(t, err)
 
 		require.NoError(t, conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"resize","cols":0,"rows":24}`)))
-		out := readUntilContains(ch, "unreachable-sentinel", 300*time.Millisecond)
-		assert.Empty(t, out, "an ignored resize must not be echoed as literal pty input")
-
+		// Same ordering argument as the test above: a leaked resize would be
+		// echoed before "marco".
 		require.NoError(t, conn.WriteMessage(websocket.TextMessage, []byte("marco\n")))
-		out = readUntilContains(ch, "marco", 2*time.Second)
+		out := readUntilContains(ch, "marco", 2*time.Second)
 		assert.Contains(t, out, "marco", "connection must still accept input after an ignored resize")
+		assert.NotContains(t, out, `"type":"resize"`, "an ignored resize must not be echoed as literal pty input")
 	})
 
 	t.Run("a non-resize JSON text message is written directly to the pty", func(t *testing.T) {
@@ -207,8 +207,9 @@ func TestTerminalHandler(t *testing.T) {
 		_, ch, _, err := dialAndRead(t, wsURL, nil)
 		require.NoError(t, err)
 
-		// terminalHandler sleeps 1s before writing the first queued command.
-		out := readUntilContains(ch, "readymarker", 3*time.Second)
+		// newTestTerminalServer stubs CommandSleep with a no-op, so the
+		// command is written without terminalHandler's real startup delay.
+		out := readUntilContains(ch, "readymarker", 2*time.Second)
 		assert.Contains(t, out, "echo readymarker")
 	})
 
