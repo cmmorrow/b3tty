@@ -88,6 +88,7 @@ configuration. For additional security, b3tty supports TLS over https and wss.`,
 			NoBrowser:      noBrowser,
 			ShowMenubar:    showMenubar,
 			AuthSleep:      time.Sleep,
+			CommandSleep:   time.Sleep,
 			StartTime:      startTime,
 		}
 		src.Serve(&ts, !noBrowser, tls)

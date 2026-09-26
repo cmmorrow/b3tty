@@ -87,6 +87,7 @@ func newTestTerminalServer() *TerminalServer {
 		ProfileName:    DEFAULT_PROFILE_NAME,
 		StartupProfile: DEFAULT_PROFILE_NAME,
 		AuthSleep:      func(time.Duration) {}, // no-op: avoid real delays in tests
+		CommandSleep:   func(time.Duration) {}, // no-op: avoid real delays in tests
 		StartTime:      time.Now(),
 		// WSClients mirrors what Serve() initializes before registering
 		// routes; without it, any handler that registers a WebSocket

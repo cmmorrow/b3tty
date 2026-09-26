@@ -62,6 +62,10 @@ type TerminalServer struct {
 	// AuthSleep is the function used to pause on auth failures. It defaults to
 	// time.Sleep and can be replaced in tests with a no-op to avoid real delays.
 	AuthSleep func(time.Duration)
+	// CommandSleep is the function used to pause before and between writing a
+	// profile's startup commands to the pty. It defaults to time.Sleep and can
+	// be replaced in tests with a no-op to avoid real delays.
+	CommandSleep func(time.Duration)
 	// StartTime is captured as close to process start as achievable (see the
 	// package-level startTime var in cmd/root.go) and set once before Serve()
 	// starts accepting requests; never mutated afterward.
