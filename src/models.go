@@ -164,9 +164,15 @@ type Theme struct {
 	BrightCyan          string `yaml:"bright-cyan" json:"brightCyan,omitempty"`
 	White               string `yaml:"white" json:"white,omitempty"`
 	BrightWhite         string `yaml:"bright-white" json:"brightWhite,omitempty"`
-	// BackgroundImage is a server-side file path and is intentionally excluded
-	// from JSON serialization to avoid exposing local paths to the browser.
-	BackgroundImage string `yaml:"background-image" json:"-"`
+	// BackgroundImage is a server-side file path. It is sent to the browser so
+	// the theme editor can show and edit it; anyone who can load the page
+	// already holds the token and a shell, so the path reveals nothing new.
+	BackgroundImage string `yaml:"background-image" json:"backgroundImage,omitempty"`
+	// BackgroundImageTransparency (0–100) sets how strongly the theme's
+	// background color tints the background image: the tint's alpha is
+	// value/100, so higher values make the image fainter. It is a pointer so an
+	// absent key (the client falls back to 50) stays distinct from an explicit 0.
+	BackgroundImageTransparency *int `yaml:"background-image-transparency,omitempty" json:"backgroundImageTransparency,omitempty"`
 }
 
 // HasBackgroundImage reports whether the theme has a background image
@@ -266,9 +272,8 @@ type themePaletteResponse struct {
 }
 
 // themeConfigResponse is the JSON shape returned by themeConfigHandler. It embeds
-// all Theme color fields (BackgroundImage is excluded via json:"-") and adds a
-// HasBackgroundImage boolean so the client knows whether to enable background-image
-// mode without receiving the server-side file path.
+// all Theme fields and adds a HasBackgroundImage boolean so the client knows
+// whether to enable background-image mode.
 type themeConfigResponse struct {
 	Theme
 	HasBackgroundImage bool     `json:"hasBackgroundImage"`

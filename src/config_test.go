@@ -496,16 +496,18 @@ server:
 // ---------------------------------------------------------------------------
 
 func TestSaveThemeToConfig(t *testing.T) {
+	intPtr := func(v int) *int { return &v }
+
 	t.Run("creates config file when none exists", func(t *testing.T) {
 		readConfig, cfgPath := setupUpdateThemeTest(t)
-		require.NoError(t, SaveThemeToConfig(cfgPath, "dracula", map[string]any{"foreground": "#f8f8f2"}))
+		require.NoError(t, SaveThemeToConfig(cfgPath, "dracula", Theme{Foreground: "#f8f8f2"}))
 		out := readConfig()
 		assert.Equal(t, "dracula", out["theme"])
 	})
 
 	t.Run("sets the theme key at the top level", func(t *testing.T) {
 		readConfig, cfgPath := setupUpdateThemeTest(t)
-		require.NoError(t, SaveThemeToConfig(cfgPath, "catppuccin-mocha", map[string]any{"foreground": "#cdd6f4"}))
+		require.NoError(t, SaveThemeToConfig(cfgPath, "catppuccin-mocha", Theme{Foreground: "#cdd6f4"}))
 		assert.Equal(t, "catppuccin-mocha", readConfig()["theme"])
 	})
 
@@ -517,7 +519,7 @@ themes:
   dracula:
     foreground: "#aaaaaa"
 `)
-		require.NoError(t, SaveThemeToConfig(cfgPath, "dracula", map[string]any{"foreground": "#ffffff"}))
+		require.NoError(t, SaveThemeToConfig(cfgPath, "dracula", Theme{Foreground: "#ffffff"}))
 		out := readConfig()
 		palette := out["themes"].(map[string]any)["dracula"].(map[string]any)
 		assert.Equal(t, "#ffffff", palette["foreground"])
@@ -531,7 +533,7 @@ themes:
   b3tty-dark:
     foreground: "#dbdbdb"
 `)
-		require.NoError(t, SaveThemeToConfig(cfgPath, "dracula", map[string]any{"foreground": "#f8f8f2"}))
+		require.NoError(t, SaveThemeToConfig(cfgPath, "dracula", Theme{Foreground: "#f8f8f2"}))
 		out := readConfig()
 		themes := out["themes"].(map[string]any)
 		assert.Contains(t, themes, "b3tty-dark")
@@ -545,7 +547,7 @@ server:
   no-auth: true
   port: 9000
 `)
-		require.NoError(t, SaveThemeToConfig(cfgPath, "dracula", map[string]any{"foreground": "#f8f8f2"}))
+		require.NoError(t, SaveThemeToConfig(cfgPath, "dracula", Theme{Foreground: "#f8f8f2"}))
 		out := readConfig()
 		server := out["server"].(map[string]any)
 		assert.Equal(t, true, server["no-auth"])
@@ -554,9 +556,9 @@ server:
 
 	t.Run("silently drops invalid color strings", func(t *testing.T) {
 		readConfig, cfgPath := setupUpdateThemeTest(t)
-		require.NoError(t, SaveThemeToConfig(cfgPath, "dracula", map[string]any{
-			"foreground": "#f8f8f2",
-			"background": "rgb(40,42,54)",
+		require.NoError(t, SaveThemeToConfig(cfgPath, "dracula", Theme{
+			Foreground: "#f8f8f2",
+			Background: "rgb(40,42,54)",
 		}))
 		palette := readConfig()["themes"].(map[string]any)["dracula"].(map[string]any)
 		assert.Equal(t, "#f8f8f2", palette["foreground"])
@@ -565,18 +567,37 @@ server:
 
 	t.Run("output passes LoadConfig", func(t *testing.T) {
 		readConfig, cfgPath := setupUpdateThemeTest(t)
-		require.NoError(t, SaveThemeToConfig(cfgPath, "dracula", map[string]any{
-			"foreground": "#f8f8f2",
-			"background": "#282a36",
-			"cursor":     "#f8f8f2",
-			"red":        "#ff5555",
-			"bright-red": "#ff6e6e",
+		require.NoError(t, SaveThemeToConfig(cfgPath, "dracula", Theme{
+			Foreground: "#f8f8f2",
+			Background: "#282a36",
+			Cursor:     "#f8f8f2",
+			Red:        "#ff5555",
+			BrightRed:  "#ff6e6e",
 		}))
 		_ = readConfig()
 		assert.NoError(t, loadConfigErr(t, cfgPath))
 	})
 
-	t.Run("preserves background-image from existing theme entry", func(t *testing.T) {
+	t.Run("writes background-image and background-image-transparency", func(t *testing.T) {
+		readConfig, cfgPath := setupUpdateThemeTest(t)
+		require.NoError(t, SaveThemeToConfig(cfgPath, "my-theme", Theme{
+			Foreground:                  "#ffffff",
+			BackgroundImage:             "~/pics/bg.png",
+			BackgroundImageTransparency: intPtr(20),
+		}))
+		palette := readConfig()["themes"].(map[string]any)["my-theme"].(map[string]any)
+		assert.Equal(t, "~/pics/bg.png", palette["background-image"], "the path is stored as given, not expanded")
+		assert.Equal(t, 20, palette["background-image-transparency"])
+	})
+
+	t.Run("writes an explicit zero transparency", func(t *testing.T) {
+		readConfig, cfgPath := setupUpdateThemeTest(t)
+		require.NoError(t, SaveThemeToConfig(cfgPath, "my-theme", Theme{BackgroundImageTransparency: intPtr(0)}))
+		palette := readConfig()["themes"].(map[string]any)["my-theme"].(map[string]any)
+		assert.Equal(t, 0, palette["background-image-transparency"])
+	})
+
+	t.Run("clears background-image and transparency when the theme no longer sets them", func(t *testing.T) {
 		readConfig, cfgPath := setupUpdateThemeTest(t)
 		writeInitialConfig(t, `
 theme: my-theme
@@ -584,12 +605,28 @@ themes:
   my-theme:
     foreground: "#aaaaaa"
     background-image: "/home/user/bg.png"
+    background-image-transparency: 30
 `)
-		require.NoError(t, SaveThemeToConfig(cfgPath, "my-theme", map[string]any{"foreground": "#ffffff"}))
-		out := readConfig()
-		palette := out["themes"].(map[string]any)["my-theme"].(map[string]any)
+		require.NoError(t, SaveThemeToConfig(cfgPath, "my-theme", Theme{Foreground: "#ffffff"}))
+		palette := readConfig()["themes"].(map[string]any)["my-theme"].(map[string]any)
 		assert.Equal(t, "#ffffff", palette["foreground"])
-		assert.Equal(t, "/home/user/bg.png", palette["background-image"])
+		assert.NotContains(t, palette, "background-image")
+		assert.NotContains(t, palette, "background-image-transparency")
+	})
+
+	t.Run("background image fields round-trip through LoadConfig", func(t *testing.T) {
+		_, cfgPath := setupUpdateThemeTest(t)
+		require.NoError(t, SaveThemeToConfig(cfgPath, "my-theme", Theme{
+			BackgroundImage:             "/srv/bg.png",
+			BackgroundImageTransparency: intPtr(0),
+		}))
+		var cfg Config
+		_, err := LoadConfig(cfgPath, &cfg)
+		require.NoError(t, err)
+		loaded := cfg.Themes["my-theme"]
+		assert.Equal(t, "/srv/bg.png", loaded.BackgroundImage)
+		require.NotNil(t, loaded.BackgroundImageTransparency, "an explicit 0 must not decode as absent")
+		assert.Equal(t, 0, *loaded.BackgroundImageTransparency)
 	})
 }
 

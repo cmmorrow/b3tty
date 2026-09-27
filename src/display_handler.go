@@ -3,9 +3,15 @@ package src
 import (
 	_ "embed"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"hash/fnv"
 	"html/template"
+	"io/fs"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -247,16 +253,95 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	}
 }
 
-// backgroundHandler serves the configured background image file, if any.
-// Returns 404 when no background image is configured or the file cannot be found.
+// backgroundHandler serves the background image of the theme named by the
+// "theme" query parameter, or of the active theme when it is absent. Naming the
+// theme gives each one its own URL: browsers reuse an image already loaded by
+// the page for the same URL without making a request at all, whatever the cache
+// headers say, so a single shared URL made every theme show whichever image the
+// page loaded first. Like the page itself, the request must carry the server token. The configured path has a
+// leading "~" expanded and must then be absolute; it is re-checked on every
+// request, since the file can change while the server runs. Every non-200
+// response is logged at warning level so a misconfigured image is never silent:
+//   - 403 when the token is missing or wrong
+//   - 404 when no image is configured, or the path is relative, missing, a
+//     directory, or unreadable
+//   - 415 when the file is not an allowed image type (see validateBackgroundImage)
+//
+// A served image is sent with "Cache-Control: no-cache" and an ETag identifying
+// the exact file (see backgroundImageETag), so the browser revalidates on every
+// load and reuses its cached copy only while the same file is configured.
+// Changing the path, switching to a theme with a different image, or editing the
+// file changes the ETag; a path that has since gone bad gets its 404/415 instead
+// of the stale cached image.
 func (ts *TerminalServer) backgroundHandler(w http.ResponseWriter, r *http.Request) {
-	ts.StateMu.RLock()
-	imagePath := ts.Theme.BackgroundImage
-	ts.StateMu.RUnlock()
-	if imagePath == "" {
-		http.NotFound(w, r)
+	if !validateToken(r.URL.Query().Get("token"), ts.Token) {
+		rejectBackground(w, r, http.StatusForbidden, "invalid or missing token")
 		return
 	}
+
+	themeName := r.URL.Query().Get("theme")
+	ts.StateMu.RLock()
+	configured := ts.Theme.BackgroundImage
+	if themeName != "" {
+		// Built-in themes never carry a background image, so a theme missing
+		// from ts.Themes has none either.
+		configured = ts.Themes[themeName].BackgroundImage
+	}
+	ts.StateMu.RUnlock()
+	if configured == "" {
+		reason := "the active theme has no background image configured"
+		if themeName != "" {
+			reason = fmt.Sprintf("theme %q has no background image configured", themeName)
+		}
+		rejectBackground(w, r, http.StatusNotFound, reason)
+		return
+	}
+
+	imagePath, err := resolveBackgroundImage(configured)
+	if err != nil {
+		status := http.StatusNotFound
+		if errors.Is(err, errUnsupportedBackgroundImage) {
+			status = http.StatusUnsupportedMediaType
+		}
+		rejectBackground(w, r, status, err.Error())
+		return
+	}
+
+	f, err := os.Open(imagePath)
+	if err != nil {
+		rejectBackground(w, r, http.StatusNotFound, fmt.Sprintf("background image: %v", err))
+		return
+	}
+	defer f.Close()
+	// The ETag describes the opened file itself, so it matches the bytes served.
+	info, err := f.Stat()
+	if err != nil {
+		rejectBackground(w, r, http.StatusNotFound, fmt.Sprintf("background image: %v", err))
+		return
+	}
+
 	Debugf("Serving background image %s", imagePath)
-	http.ServeFile(w, r, imagePath)
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("ETag", backgroundImageETag(imagePath, info))
+	// A zero modtime keeps ServeContent from sending Last-Modified, leaving the
+	// ETag as the only validator. Otherwise a browser's If-Modified-Since for a
+	// previously configured, newer file could draw a 304 for a different image.
+	http.ServeContent(w, r, filepath.Base(imagePath), time.Time{}, f)
+}
+
+// backgroundImageETag returns a strong ETag identifying the file at path by its
+// resolved path, size, and modification time, so it changes whenever a different
+// file is configured or the configured file is rewritten.
+func backgroundImageETag(path string, info fs.FileInfo) string {
+	h := fnv.New64a()
+	fmt.Fprintf(h, "%s|%d|%d", path, info.Size(), info.ModTime().UnixNano())
+	return fmt.Sprintf(`"%x"`, h.Sum64())
+}
+
+// rejectBackground logs why a /background request failed at warning level and
+// writes status in place of the image. r.URL.Path excludes the query string, so
+// the token is never logged.
+func rejectBackground(w http.ResponseWriter, r *http.Request, status int, reason string) {
+	Warnf("%s %s: %d %s: %s", r.Method, r.URL.Path, status, http.StatusText(status), reason)
+	http.Error(w, http.StatusText(status), status)
 }

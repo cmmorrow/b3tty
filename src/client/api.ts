@@ -159,13 +159,21 @@ export async function postSettings(settings: SettingsConfig): Promise<SettingsCo
  * Returns the activated theme config so the caller can apply it to the terminal.
  * Throws if the request fails or the response fails the type guard.
  */
-export async function postEditTheme(name: string, theme: Record<string, string>): Promise<ThemeActivateResponse> {
+export async function postEditTheme(
+    name: string,
+    theme: Record<string, string | number>
+): Promise<ThemeActivateResponse> {
     const res = await fetch("/edit-theme", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, theme }),
     });
-    if (!res.ok) throw new Error(`Failed to edit theme "${name}": ${res.status}`);
+    if (!res.ok) {
+        // A 400 carries the validation failure (e.g. a bad background image path)
+        // as plain text, which the theme editor shows to the user as-is.
+        const reason = (await res.text().catch(() => "")).trim();
+        throw new Error(reason || `Failed to edit theme "${name}": ${res.status}`);
+    }
     const parsed: unknown = await res.json();
     if (!isThemeActivateResponse(parsed)) throw new Error(`Unexpected edit-theme response shape`);
     return parsed;

@@ -3,11 +3,13 @@ package src
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -1362,12 +1364,14 @@ func TestThemeConfigHandler(t *testing.T) {
 		assert.Equal(t, "#002b36", resp.Background)
 	})
 
-	t.Run("BackgroundImage path is not exposed in JSON response", func(t *testing.T) {
+	t.Run("GET returns the backgroundImage path so the theme editor can edit it", func(t *testing.T) {
 		ts := newTS()
 		req := httptest.NewRequest(http.MethodGet, "/theme-config?name=image", nil)
 		w := httptest.NewRecorder()
 		ts.themeConfigHandler(w, req)
-		assert.NotContains(t, w.Body.String(), "/path/to/bg.jpg")
+		var resp themeConfigResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "/path/to/bg.jpg", resp.BackgroundImage)
 	})
 
 	t.Run("GET for builtin theme not in ts.Themes returns 200 with builtin colors", func(t *testing.T) {
@@ -1519,7 +1523,7 @@ func TestEditThemeHandler(t *testing.T) {
 		assert.Equal(t, "#112233", resp.Background)
 	})
 
-	t.Run("POST hasBackgroundImage is always false", func(t *testing.T) {
+	t.Run("POST hasBackgroundImage is false when the request sets no background image", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		ts := newTestTerminalServer()
 		body := strings.NewReader(editBody("my-theme", "#fff", "#000"))
@@ -1556,20 +1560,95 @@ func TestEditThemeHandler(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
-	t.Run("BackgroundImage path cannot be sent via JSON (json:\"-\" tag)", func(t *testing.T) {
-		t.Setenv("HOME", t.TempDir())
-		ts := newTestTerminalServer()
-		// Even if a caller tries to set backgroundImage, json:"-" ensures it is ignored
-		body := strings.NewReader(`{"name":"my-theme","theme":{"foreground":"#fff","backgroundImage":"/etc/passwd"}}`)
-		req := httptest.NewRequest(http.MethodPost, "/edit-theme", body)
+	// postEditTheme sends body to editThemeHandler with HOME pointed at a fresh
+	// temp dir, returning the server, the response, and the path the handler
+	// writes conf.yaml to.
+	postEditTheme := func(t *testing.T, ts *TerminalServer, body string) (*httptest.ResponseRecorder, string) {
+		t.Helper()
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		req := httptest.NewRequest(http.MethodPost, "/edit-theme", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		ts.editThemeHandler(w, req)
+		captureLog(func() { ts.editThemeHandler(w, req) })
+		return w, filepath.Join(home, ".config", "b3tty", "conf.yaml")
+	}
 
-		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Empty(t, ts.Themes["my-theme"].BackgroundImage)
-		assert.NotContains(t, w.Body.String(), "/etc/passwd")
+	t.Run("POST with a valid background image saves it in memory, on disk, and in the response", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		imagePath := writeTempFile(t, "bg.png", pngMagic)
+		w, cfgPath := postEditTheme(t, ts, fmt.Sprintf(
+			`{"name":"my-theme","theme":{"foreground":"#fff","backgroundImage":%q,"backgroundImageTransparency":20}}`, imagePath))
+		require.Equal(t, http.StatusOK, w.Code)
+
+		assert.Equal(t, imagePath, ts.Themes["my-theme"].BackgroundImage)
+		require.NotNil(t, ts.Themes["my-theme"].BackgroundImageTransparency)
+		assert.Equal(t, 20, *ts.Themes["my-theme"].BackgroundImageTransparency)
+
+		var resp themeConfigResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.True(t, resp.HasBackgroundImage)
+		assert.Equal(t, imagePath, resp.BackgroundImage)
+
+		data, err := os.ReadFile(cfgPath)
+		require.NoError(t, err)
+		assert.Contains(t, string(data), "background-image: "+imagePath)
+		assert.Contains(t, string(data), "background-image-transparency: 20")
 	})
+
+	t.Run("POST stores a ~/ background image path as typed", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		home := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(home, "bg.png"), pngMagic, 0o600))
+		t.Setenv("HOME", home)
+		req := httptest.NewRequest(http.MethodPost, "/edit-theme",
+			strings.NewReader(`{"name":"my-theme","theme":{"backgroundImage":"~/bg.png"}}`))
+		w := httptest.NewRecorder()
+		ts.editThemeHandler(w, req)
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "~/bg.png", ts.Themes["my-theme"].BackgroundImage)
+	})
+
+	invalidImages := []struct {
+		name   string
+		path   func(t *testing.T) string
+		reason string
+	}{
+		{"relative path", func(t *testing.T) string { return "pics/bg.png" }, "must be an absolute path"},
+		{"missing file", func(t *testing.T) string { return filepath.Join(t.TempDir(), "missing.png") }, "no such file or directory"},
+		{"directory", func(t *testing.T) string { return t.TempDir() }, "is a directory"},
+		{"text file", func(t *testing.T) string { return writeTempFile(t, "notes.txt", []byte("hi")) }, "unsupported background image type"},
+		{"non-image system file", func(t *testing.T) string { return "/etc/hosts" }, "unsupported background image type"},
+	}
+	for _, tt := range invalidImages {
+		t.Run("POST with an invalid background image ("+tt.name+") returns 400 with the reason and saves nothing", func(t *testing.T) {
+			ts := newTestTerminalServer()
+			w, cfgPath := postEditTheme(t, ts, fmt.Sprintf(
+				`{"name":"my-theme","theme":{"foreground":"#fff","backgroundImage":%q}}`, tt.path(t)))
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Contains(t, w.Body.String(), tt.reason)
+			assert.NotContains(t, ts.Themes, "my-theme")
+			assert.NoFileExists(t, cfgPath)
+		})
+	}
+
+	t.Run("POST with an empty background image clears an existing one", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		ts.Themes["my-theme"] = Theme{Foreground: "#aaa", BackgroundImage: "/srv/bg.png"}
+		w, _ := postEditTheme(t, ts, `{"name":"my-theme","theme":{"foreground":"#fff","backgroundImage":""}}`)
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Empty(t, ts.Themes["my-theme"].BackgroundImage)
+		assert.Empty(t, ts.Theme.BackgroundImage)
+	})
+
+	for _, v := range []int{-1, 101} {
+		t.Run(fmt.Sprintf("POST with transparency %d returns 400 with the reason", v), func(t *testing.T) {
+			ts := newTestTerminalServer()
+			w, _ := postEditTheme(t, ts, fmt.Sprintf(`{"name":"my-theme","theme":{"backgroundImageTransparency":%d}}`, v))
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Contains(t, w.Body.String(), "between 0 and 100")
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1694,4 +1773,194 @@ func TestConcurrentStateAccess(t *testing.T) {
 
 	assert.NotContains(t, logged, "parse existing config",
 		"concurrent config-file writes raced; configFileMu should serialize them")
+}
+
+// ---------------------------------------------------------------------------
+// backgroundHandler
+// ---------------------------------------------------------------------------
+
+func TestBackgroundHandler(t *testing.T) {
+	// serveBackground points the active theme at imagePath and requests
+	// /background with the given query string, returning the response and
+	// everything logged while handling it.
+	serveBackground := func(ts *TerminalServer, imagePath, query string) (*httptest.ResponseRecorder, string) {
+		ts.Theme.BackgroundImage = imagePath
+		req := httptest.NewRequest(http.MethodGet, "/background"+query, nil)
+		w := httptest.NewRecorder()
+		logged := captureLog(func() { ts.backgroundHandler(w, req) })
+		return w, logged
+	}
+	const authQuery = "?token=test-token-1234"
+
+	t.Run("valid image with correct token returns 200 and the file", func(t *testing.T) {
+		path := writeTempFile(t, "bg.png", pngMagic)
+		w, logged := serveBackground(newTestTerminalServer(), path, authQuery)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "image/png", w.Header().Get("Content-Type"))
+		assert.Equal(t, pngMagic, w.Body.Bytes())
+		assert.NotContains(t, logged, "WARN")
+	})
+
+	t.Run("missing token returns 403 and logs a warning", func(t *testing.T) {
+		path := writeTempFile(t, "bg.png", pngMagic)
+		w, logged := serveBackground(newTestTerminalServer(), path, "")
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, logged, "WARN")
+		assert.Contains(t, logged, "invalid or missing token")
+	})
+
+	t.Run("wrong token returns 403", func(t *testing.T) {
+		path := writeTempFile(t, "bg.png", pngMagic)
+		w, _ := serveBackground(newTestTerminalServer(), path, "?token=wrong")
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+
+	t.Run("token is never written to the log", func(t *testing.T) {
+		_, logged := serveBackground(newTestTerminalServer(), "", "?token=wrong-secret")
+		assert.NotContains(t, logged, "wrong-secret")
+	})
+
+	t.Run("no-auth mode serves the image without a token", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		ts.Token = ""
+		w, _ := serveBackground(ts, writeTempFile(t, "bg.png", pngMagic), "")
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("no configured image returns 404 and logs a warning", func(t *testing.T) {
+		w, logged := serveBackground(newTestTerminalServer(), "", authQuery)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Contains(t, logged, "WARN")
+		assert.Contains(t, logged, "no background image configured")
+	})
+
+	t.Run("nonexistent file returns 404 and logs a warning", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "missing.png")
+		w, logged := serveBackground(newTestTerminalServer(), path, authQuery)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Contains(t, logged, "WARN")
+		assert.Contains(t, logged, "no such file or directory")
+	})
+
+	t.Run("relative path returns 404 even when the file exists relative to the working directory", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "bg.png"), pngMagic, 0o600))
+		t.Chdir(dir)
+		w, logged := serveBackground(newTestTerminalServer(), "bg.png", authQuery)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Contains(t, logged, "must be an absolute path")
+	})
+
+	t.Run("directory returns 404 and logs a warning", func(t *testing.T) {
+		w, logged := serveBackground(newTestTerminalServer(), t.TempDir(), authQuery)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Contains(t, logged, "is a directory")
+	})
+
+	t.Run("leading tilde is expanded to the home directory", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		require.NoError(t, os.WriteFile(filepath.Join(home, "bg.png"), pngMagic, 0o600))
+		w, _ := serveBackground(newTestTerminalServer(), "~/bg.png", authQuery)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("disallowed extension returns 415 and logs a warning", func(t *testing.T) {
+		path := writeTempFile(t, "notes.txt", []byte("hello"))
+		w, logged := serveBackground(newTestTerminalServer(), path, authQuery)
+		assert.Equal(t, http.StatusUnsupportedMediaType, w.Code)
+		assert.Contains(t, logged, "WARN")
+		assert.Contains(t, logged, "unsupported background image type")
+		assert.NotContains(t, w.Body.String(), "hello", "the file's contents must not be served")
+	})
+
+	t.Run("theme param serves that theme's image rather than the active theme's", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		ts.Themes["iTerm"] = Theme{BackgroundImage: writeTempFile(t, "iterm.gif", gifMagic)}
+		w, _ := serveBackground(ts, writeTempFile(t, "active.png", pngMagic), authQuery+"&theme=iTerm")
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, gifMagic, w.Body.Bytes())
+	})
+
+	t.Run("theme param naming a theme with a bad image returns its error, not the active theme's image", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		ts.Themes["iTerm"] = Theme{BackgroundImage: filepath.Join(t.TempDir(), "missing.png")}
+		w, logged := serveBackground(ts, writeTempFile(t, "active.png", pngMagic), authQuery+"&theme=iTerm")
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Contains(t, logged, "no such file or directory")
+	})
+
+	t.Run("theme param naming a theme without an image returns 404 naming the theme", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		ts.Themes["plain"] = Theme{Background: "#000000"}
+		w, logged := serveBackground(ts, writeTempFile(t, "active.png", pngMagic), authQuery+"&theme=plain")
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Contains(t, logged, `theme "plain" has no background image configured`)
+	})
+
+	t.Run("theme param naming an unknown theme returns 404", func(t *testing.T) {
+		w, _ := serveBackground(newTestTerminalServer(), writeTempFile(t, "active.png", pngMagic), authQuery+"&theme=dracula")
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("served image is sent with no-cache, an ETag, and no Last-Modified", func(t *testing.T) {
+		w, _ := serveBackground(newTestTerminalServer(), writeTempFile(t, "bg.png", pngMagic), authQuery)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "no-cache", w.Header().Get("Cache-Control"))
+		assert.NotEmpty(t, w.Header().Get("ETag"))
+		assert.Empty(t, w.Header().Get("Last-Modified"))
+	})
+
+	// revalidate re-requests /background as a browser would when it holds a
+	// cached copy with the given ETag.
+	revalidate := func(ts *TerminalServer, imagePath, etag string) *httptest.ResponseRecorder {
+		ts.Theme.BackgroundImage = imagePath
+		req := httptest.NewRequest(http.MethodGet, "/background"+authQuery, nil)
+		req.Header.Set("If-None-Match", etag)
+		req.Header.Set("If-Modified-Since", time.Now().Add(time.Hour).UTC().Format(http.TimeFormat))
+		w := httptest.NewRecorder()
+		captureLog(func() { ts.backgroundHandler(w, req) })
+		return w
+	}
+
+	t.Run("revalidating the same unchanged file returns 304", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		path := writeTempFile(t, "bg.png", pngMagic)
+		first, _ := serveBackground(ts, path, authQuery)
+		w := revalidate(ts, path, first.Header().Get("ETag"))
+		assert.Equal(t, http.StatusNotModified, w.Code)
+	})
+
+	t.Run("a different configured image is served in full despite a cached ETag", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		first, _ := serveBackground(ts, writeTempFile(t, "bg.png", pngMagic), authQuery)
+		other := writeTempFile(t, "other.gif", gifMagic)
+		w := revalidate(ts, other, first.Header().Get("ETag"))
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, gifMagic, w.Body.Bytes())
+		assert.NotEqual(t, first.Header().Get("ETag"), w.Header().Get("ETag"))
+	})
+
+	t.Run("rewriting the configured file changes its ETag", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		path := writeTempFile(t, "bg.png", pngMagic)
+		first, _ := serveBackground(ts, path, authQuery)
+		require.NoError(t, os.WriteFile(path, append(pngMagic, 0), 0o600))
+		w := revalidate(ts, path, first.Header().Get("ETag"))
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("a path that has gone bad returns its error, not 304, despite a cached ETag", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		first, _ := serveBackground(ts, writeTempFile(t, "bg.png", pngMagic), authQuery)
+		etag := first.Header().Get("ETag")
+		assert.Equal(t, http.StatusNotFound, revalidate(ts, filepath.Join(t.TempDir(), "missing.png"), etag).Code)
+		assert.Equal(t, http.StatusUnsupportedMediaType, revalidate(ts, writeTempFile(t, "notes.txt", []byte("hi")), etag).Code)
+	})
+
+	t.Run("non-image contents behind an image extension return 415", func(t *testing.T) {
+		path := writeTempFile(t, "bg.png", []byte("not really a png"))
+		w, _ := serveBackground(newTestTerminalServer(), path, authQuery)
+		assert.Equal(t, http.StatusUnsupportedMediaType, w.Code)
+	})
 }

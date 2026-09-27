@@ -219,7 +219,10 @@ export const OVERLAY_STYLES = `
         box-sizing: border-box;
         box-shadow: var(--shadow-modal);
     }
-    .actions { display: flex; justify-content: flex-end; gap: var(--space-md); }
+    /* align-items: center keeps the buttons at their natural height when a
+       wrapped .save-error message makes the row taller; the default stretch
+       would grow them to match it. */
+    .actions { display: flex; justify-content: flex-end; align-items: center; gap: var(--space-md); }
 `;
 
 /**
@@ -285,6 +288,8 @@ export const SAVE_ERROR_STYLES = `
         display: none;
         font-size: var(--font-size-xs); color: var(--color-destructive);
         max-width: 60%;
+        /* Messages can quote file paths, which have no spaces to wrap at. */
+        overflow-wrap: anywhere;
     }
     .save-error.visible { display: block; }
 `;

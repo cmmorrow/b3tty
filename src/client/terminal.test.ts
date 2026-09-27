@@ -33,6 +33,10 @@ import {
     handleThemeEdited,
     applyResolvedTheme,
     applyThemeBroadcast,
+    applyThemeWithBackground,
+    backgroundImageUrl,
+    backgroundImageAlpha,
+    loadBackgroundImage,
 } from "./terminal.ts";
 import {
     isValidHttpProtocol,
@@ -40,6 +44,7 @@ import {
     isValidPort,
     isValidUri,
     isValidThemeColor,
+    isValidBackgroundImageTransparency,
     MAX_UINT16,
 } from "./validators.ts";
 import { isB3ttyDialog, isB3ttyMenuBar } from "./components.ts";
@@ -759,6 +764,205 @@ describe("handleSocketMessage", () => {
 });
 
 // ---------------------------------------------------------------------------
+// backgroundImageUrl
+// ---------------------------------------------------------------------------
+
+describe("backgroundImageUrl", () => {
+    it("carries the page's token over to /background", () => {
+        expect(backgroundImageUrl("?token=abc123", "")).toBe("/background?token=abc123");
+    });
+
+    it("drops other page query parameters", () => {
+        expect(backgroundImageUrl("?profile=work&token=abc123", "")).toBe("/background?token=abc123");
+    });
+
+    it("URL-encodes the token and theme name", () => {
+        expect(backgroundImageUrl("?token=a%26b", "my theme&x")).toBe("/background?token=a%26b&theme=my+theme%26x");
+    });
+
+    it("gives each theme its own URL", () => {
+        expect(backgroundImageUrl("?token=abc123", "one-light")).toBe("/background?token=abc123&theme=one-light");
+        expect(backgroundImageUrl("?token=abc123", "iTerm")).toBe("/background?token=abc123&theme=iTerm");
+    });
+
+    it("carries the theme name without a token (no-auth mode)", () => {
+        expect(backgroundImageUrl("", "iTerm")).toBe("/background?theme=iTerm");
+    });
+
+    it("adds a version derived from the image path, so an edited path gets a new URL", () => {
+        const a = backgroundImageUrl("?token=abc123", "iTerm", "/srv/a.png");
+        const b = backgroundImageUrl("?token=abc123", "iTerm", "/srv/b.png");
+        expect(a).toMatch(/^\/background\?token=abc123&theme=iTerm&v=[0-9a-f]+$/);
+        expect(b).not.toBe(a);
+        expect(backgroundImageUrl("?token=abc123", "iTerm", "/srv/a.png")).toBe(a);
+    });
+
+    it("omits the version when no image path is given", () => {
+        expect(backgroundImageUrl("?token=abc123", "iTerm")).toBe("/background?token=abc123&theme=iTerm");
+    });
+
+    it("omits the query string when there is neither a token nor a theme name", () => {
+        expect(backgroundImageUrl("", "")).toBe("/background");
+        expect(backgroundImageUrl("?profile=work", "")).toBe("/background");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// backgroundImageAlpha
+// ---------------------------------------------------------------------------
+
+describe("backgroundImageAlpha", () => {
+    it("defaults to 0.5 when the theme sets no transparency", () => {
+        expect(backgroundImageAlpha({})).toBe(0.5);
+    });
+
+    it("maps the 0–100 transparency to an alpha, so higher is fainter", () => {
+        expect(backgroundImageAlpha({ backgroundImageTransparency: 0 })).toBe(0);
+        expect(backgroundImageAlpha({ backgroundImageTransparency: 20 })).toBe(0.2);
+        expect(backgroundImageAlpha({ backgroundImageTransparency: 100 })).toBe(1);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// loadBackgroundImage
+// ---------------------------------------------------------------------------
+
+describe("loadBackgroundImage", () => {
+    it("resolves true when the image loads", async () => {
+        const image = stubImage(true);
+        try {
+            expect(await loadBackgroundImage("/background?token=abc")).toBe(true);
+            expect(image.srcs).toEqual(["/background?token=abc"]);
+        } finally {
+            image.restore();
+        }
+    });
+
+    it("resolves false when the image fails to load", async () => {
+        const image = stubImage(false);
+        try {
+            expect(await loadBackgroundImage("/background")).toBe(false);
+        } finally {
+            image.restore();
+        }
+    });
+
+    it("resolves false when Image is unavailable", async () => {
+        expect(typeof (globalThis as Record<string, unknown>)["Image"]).toBe("undefined");
+        expect(await loadBackgroundImage("/background")).toBe(false);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// applyThemeWithBackground
+// ---------------------------------------------------------------------------
+
+describe("applyThemeWithBackground", () => {
+    let savedDocument: unknown;
+    let savedWindow: unknown;
+
+    beforeEach(() => {
+        savedDocument = (globalThis as Record<string, unknown>)["document"];
+        savedWindow = (globalThis as Record<string, unknown>)["window"];
+    });
+
+    afterEach(() => {
+        (globalThis as Record<string, unknown>)["document"] = savedDocument;
+        (globalThis as Record<string, unknown>)["window"] = savedWindow;
+    });
+
+    const baseConfig = {
+        tls: false,
+        uri: "localhost",
+        port: 8080,
+        fontSize: 14,
+        fontFamily: "monospace",
+        rows: 24,
+        columns: 80,
+        theme: {},
+    };
+
+    it("renders synchronously without requesting an image when hasBackgroundImage is false", async () => {
+        const { doc, elements } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const image = stubImage(true);
+        try {
+            const term = terminalFactory(baseConfig);
+            const applied = applyThemeWithBackground({ background: "#282a36" }, term, false, "dracula");
+            expect(term.options.theme?.background).toBe("#282a36");
+            expect(elements["container"]!.style["background"]).toBe("#282a36");
+            expect(await applied).toBe(false);
+            expect(image.srcs).toEqual([]);
+        } finally {
+            image.restore();
+        }
+    });
+
+    it("resolves true and applies the image styles once the image loads", async () => {
+        const { doc, bodyStyle } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const image = stubImage(true);
+        try {
+            const term = terminalFactory(baseConfig);
+            expect(await applyThemeWithBackground({ background: "#282a36" }, term, true, "dracula")).toBe(true);
+            expect(term.options.theme?.background).toBe("rgba(40, 42, 54, 0)");
+            expect(bodyStyle["background"]).toContain("url('/background?theme=dracula')");
+        } finally {
+            image.restore();
+        }
+    });
+
+    it("requests the image, and references it in CSS, with the page's token and the theme name", async () => {
+        const { doc, bodyStyle } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        (globalThis as Record<string, unknown>)["window"] = { location: { search: "?token=abc123" } };
+        const image = stubImage(true);
+        try {
+            const term = terminalFactory(baseConfig);
+            await applyThemeWithBackground({ background: "#282a36" }, term, true, "dracula");
+            expect(image.srcs).toEqual(["/background?token=abc123&theme=dracula"]);
+            expect(bodyStyle["background"]).toContain("url('/background?token=abc123&theme=dracula')");
+        } finally {
+            image.restore();
+        }
+    });
+
+    it("resolves false and leaves the theme opaque when the image fails to load", async () => {
+        const { doc, bodyStyle, elements } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const image = stubImage(false);
+        const warn = spyOn(console, "warn").mockImplementation(() => {});
+        try {
+            const term = terminalFactory(baseConfig);
+            expect(await applyThemeWithBackground({ background: "#282a36" }, term, true, "dracula")).toBe(false);
+            expect(term.options.theme?.background).toBe("#282a36");
+            expect(bodyStyle["background"]).toBe("");
+            expect(elements["container"]!.style["background"]).toBe("#282a36");
+        } finally {
+            image.restore();
+            warn.mockRestore();
+        }
+    });
+
+    it("does not apply a stale image over a theme applied while it was loading", async () => {
+        const { doc, bodyStyle } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const image = stubImage(true);
+        try {
+            const term = terminalFactory(baseConfig);
+            const first = applyThemeWithBackground({ background: "#282a36" }, term, true, "dracula");
+            const second = applyThemeWithBackground({ background: "#fdf6e3" }, term, false, "solarized-light");
+            expect(await first).toBe(false);
+            expect(await second).toBe(false);
+            expect(term.options.theme?.background).toBe("#fdf6e3");
+            expect(bodyStyle["background"]).toBe("");
+        } finally {
+            image.restore();
+        }
+    });
+});
+
+// ---------------------------------------------------------------------------
 // applyResolvedTheme
 // ---------------------------------------------------------------------------
 
@@ -799,12 +1003,71 @@ describe("applyResolvedTheme", () => {
         expect(term.options.theme?.background).toBe("#fdf6e3");
     });
 
-    it("overrides theme background to transparent when hasBackgroundImage is true", () => {
+    it("keeps the theme background opaque until the background image loads, then makes it transparent", async () => {
         const { doc } = makeDomStub();
         (globalThis as Record<string, unknown>)["document"] = doc;
-        const term = terminalFactory(baseConfig);
-        applyResolvedTheme("my-theme", { hasBackgroundImage: true, background: "#282a36" }, term, { current: "" });
-        expect(term.options.theme?.background).toBe("rgba(40, 42, 54, 0)");
+        const image = stubImage(true);
+        try {
+            const term = terminalFactory(baseConfig);
+            applyResolvedTheme("my-theme", { hasBackgroundImage: true, background: "#282a36" }, term, { current: "" });
+            expect(term.options.theme?.background).toBe("#282a36");
+            await flushPromises();
+            expect(term.options.theme?.background).toBe("rgba(40, 42, 54, 0)");
+        } finally {
+            image.restore();
+        }
+    });
+
+    it("requests a different image URL for each theme, so one theme's loaded image is never reused for another", async () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const image = stubImage(true);
+        try {
+            const term = terminalFactory(baseConfig);
+            applyResolvedTheme("one-light", { hasBackgroundImage: true, background: "#fafafa" }, term, { current: "" });
+            await flushPromises();
+            applyResolvedTheme("iTerm", { hasBackgroundImage: true, background: "#15191e" }, term, { current: "" });
+            await flushPromises();
+            expect(image.srcs).toEqual(["/background?theme=one-light", "/background?theme=iTerm"]);
+        } finally {
+            image.restore();
+        }
+    });
+
+    it("requests a new image URL when a theme's image path is edited, so the old image is never reused", async () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const image = stubImage(true);
+        try {
+            const term = terminalFactory(baseConfig);
+            const theme = { hasBackgroundImage: true, background: "#15191e" };
+            applyResolvedTheme("iTerm", { ...theme, backgroundImage: "/srv/a.png" }, term, { current: "" });
+            await flushPromises();
+            applyResolvedTheme("iTerm", { ...theme, backgroundImage: "/srv/b.png" }, term, { current: "" });
+            await flushPromises();
+            expect(image.srcs).toHaveLength(2);
+            expect(image.srcs[0]).not.toBe(image.srcs[1]);
+        } finally {
+            image.restore();
+        }
+    });
+
+    it("renders the theme as if it had no background image when the image fails to load", async () => {
+        const { doc, bodyStyle } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const image = stubImage(false);
+        const warn = spyOn(console, "warn").mockImplementation(() => {});
+        try {
+            const term = terminalFactory(baseConfig);
+            applyResolvedTheme("my-theme", { hasBackgroundImage: true, background: "#282a36" }, term, { current: "" });
+            await flushPromises();
+            expect(term.options.theme?.background).toBe("#282a36");
+            expect(bodyStyle["background"]).toBe("");
+            expect(warn).toHaveBeenCalledTimes(1);
+        } finally {
+            image.restore();
+            warn.mockRestore();
+        }
     });
 
     it("updates activeTheme.current to the given name", () => {
@@ -884,14 +1147,20 @@ describe("applyThemeBroadcast", () => {
         expect(term.options.theme?.background).toBe("#fdf6e3");
     });
 
-    it("overrides theme background to transparent when hasBackgroundImage is true", () => {
+    it("makes the theme background transparent once the background image loads", async () => {
         const { doc } = makeDomStub();
         (globalThis as Record<string, unknown>)["document"] = doc;
-        const term = terminalFactory(baseConfig);
-        applyThemeBroadcast("my-theme", { hasBackgroundImage: true, background: "#282a36" }, term, null, {
-            current: "",
-        });
-        expect(term.options.theme?.background).toBe("rgba(40, 42, 54, 0)");
+        const image = stubImage(true);
+        try {
+            const term = terminalFactory(baseConfig);
+            applyThemeBroadcast("my-theme", { hasBackgroundImage: true, background: "#282a36" }, term, null, {
+                current: "",
+            });
+            await flushPromises();
+            expect(term.options.theme?.background).toBe("rgba(40, 42, 54, 0)");
+        } finally {
+            image.restore();
+        }
     });
 
     it("updates activeTheme.current to the broadcast name", () => {
@@ -1166,18 +1435,13 @@ describe("terminalFactory", () => {
         expect(term.options.theme?.background).toBe("#14181d");
     });
 
-    it("overrides theme background to transparent when backgroundImage is true", () => {
+    it("keeps the theme background opaque when backgroundImage is true (main applies the image once it loads)", () => {
         const term = terminalFactory({
             ...baseConfig,
             backgroundImage: true,
             theme: { background: "#14181d" },
         });
-        expect(term.options.theme?.background).toBe("rgba(0, 0, 0, 0)");
-    });
-
-    it("sets background to transparent even when no theme background is configured", () => {
-        const term = terminalFactory({ ...baseConfig, backgroundImage: true, theme: {} });
-        expect(term.options.theme?.background).toBe("rgba(0, 0, 0, 0)");
+        expect(term.options.theme?.background).toBe("#14181d");
     });
 
     it("preserves non-background theme colors when backgroundImage is true", () => {
@@ -1510,6 +1774,34 @@ function makeStyleObj(): { setProperty: ReturnType<typeof mock>; [key: string]: 
     };
 }
 
+/**
+ * Replaces globalThis.Image with a fake whose load succeeds (loads=true) or fails
+ * on the next microtask, standing in for the browser's handling of a 200 vs.
+ * non-200 /background response. Returns every src requested and a restore function.
+ */
+function stubImage(loads: boolean): { srcs: string[]; restore: () => void } {
+    const g = globalThis as Record<string, unknown>;
+    const saved = g["Image"];
+    const srcs: string[] = [];
+    g["Image"] = class {
+        onload: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        set src(url: string) {
+            srcs.push(url);
+            queueMicrotask(() => (loads ? this.onload?.() : this.onerror?.()));
+        }
+    };
+    return {
+        srcs,
+        restore: () => {
+            g["Image"] = saved;
+        },
+    };
+}
+
+/** Lets pending promise callbacks (such as a stubbed image load) run. */
+const flushPromises = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 function makeDomStub() {
     const elements: Record<string, { style: StyleMap; textContent: string | null }> = {
         container: { style: {} as StyleMap, textContent: null },
@@ -1532,7 +1824,16 @@ function makeDomStub() {
             if (id === "b3tty-bg-style") return head._children.find((c) => c.id === "b3tty-bg-style") ?? null;
             return elements[id] ?? null;
         }),
-        createElement: mock((_tag: string) => ({ id: "", textContent: "" })),
+        createElement: mock((_tag: string) => {
+            const el = {
+                id: "",
+                textContent: "",
+                remove: () => {
+                    head._children = head._children.filter((c) => c !== el);
+                },
+            };
+            return el;
+        }),
     };
     return { doc, elements, head, bodyStyle, documentElementStyle };
 }
@@ -1727,6 +2028,20 @@ describe("applyThemeStyles", () => {
         expect(bodyStyle["background"]).toContain("rgba(255, 255, 255, 0.5)");
     });
 
+    it("uses the theme's background image transparency as the tint's alpha", () => {
+        const { doc, bodyStyle } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        applyThemeStyles({ background: "#ffffff", backgroundImageTransparency: 20 }, true);
+        expect(bodyStyle["background"]).toContain("rgba(255, 255, 255, 0.2)");
+    });
+
+    it("references the image by a URL versioned with its path", () => {
+        const { doc, bodyStyle } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        applyThemeStyles({ background: "#ffffff", backgroundImage: "/srv/a.png" }, true, "iTerm");
+        expect(bodyStyle["background"]).toContain(`url('${backgroundImageUrl("", "iTerm", "/srv/a.png")}')`);
+    });
+
     it("injects a b3tty-bg-style element into the head when hasBackgroundImage is true", () => {
         const { doc, head } = makeDomStub();
         (globalThis as Record<string, unknown>)["document"] = doc;
@@ -1735,14 +2050,11 @@ describe("applyThemeStyles", () => {
         expect(head._children[0]?.textContent).toContain("xterm-viewport");
     });
 
-    it("styles the scrollbar track and thumb explicitly so both stay visible over the background image", () => {
+    it("makes the xterm viewport transparent so the background image shows through", () => {
         const { doc, head } = makeDomStub();
         (globalThis as Record<string, unknown>)["document"] = doc;
         applyThemeStyles({ background: "#14181d" }, true);
-        const injected = head._children[0]?.textContent ?? "";
-        expect(injected).toContain("scrollbar-color:");
-        expect(injected).toContain("::-webkit-scrollbar-track");
-        expect(injected).toContain("::-webkit-scrollbar-thumb");
+        expect(head._children[0]?.textContent).toContain("background-color: transparent !important");
     });
 
     it("clears the container background when hasBackgroundImage is true", () => {
@@ -1826,10 +2138,18 @@ describe("applyPageStyles", () => {
         expect(documentElementStyle.setProperty).toHaveBeenCalledWith("--b3tty-font-family", `"Fira Code", monospace`);
     });
 
-    it("delegates to applyThemeStyles with the config theme and backgroundImage flag", () => {
+    it("delegates to applyThemeStyles with the config theme", () => {
         const { doc, elements, bodyStyle } = makeDomStub();
         (globalThis as Record<string, unknown>)["document"] = doc;
         applyPageStyles({ ...baseConfig, backgroundImage: false });
+        expect(bodyStyle["background"]).toBe("");
+        expect(elements["container"]!.style["background"]).toBe("#14181d");
+    });
+
+    it("does not apply the background image even when backgroundImage is true", () => {
+        const { doc, elements, bodyStyle } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        applyPageStyles({ ...baseConfig, backgroundImage: true });
         expect(bodyStyle["background"]).toBe("");
         expect(elements["container"]!.style["background"]).toBe("#14181d");
     });
@@ -2000,10 +2320,11 @@ describe("handleThemeChange", () => {
         expect(term.options.theme?.background).toBe("#282a36");
     });
 
-    it("overrides theme background to transparent when hasBackgroundImage is true", async () => {
+    it("makes the theme background transparent once the background image loads", async () => {
         const { doc } = makeDomStub();
         (globalThis as Record<string, unknown>)["document"] = doc;
         stubFetchTheme({ hasBackgroundImage: true, background: "#282a36" });
+        const image = stubImage(true);
         const term = terminalFactory({
             tls: false,
             uri: "localhost",
@@ -2014,8 +2335,13 @@ describe("handleThemeChange", () => {
             columns: 80,
             theme: {},
         });
-        await handleThemeChange(makeEvent("dracula"), term, makeMenuBar(), { current: "b3tty-dark" });
-        expect(term.options.theme?.background).toBe("rgba(40, 42, 54, 0)");
+        try {
+            await handleThemeChange(makeEvent("dracula"), term, makeMenuBar(), { current: "b3tty-dark" });
+            await flushPromises();
+            expect(term.options.theme?.background).toBe("rgba(40, 42, 54, 0)");
+        } finally {
+            image.restore();
+        }
     });
 
     it("does not update activeTheme.current when the fetch throws", async () => {
@@ -2153,15 +2479,21 @@ describe("handleThemeSelected", () => {
         expect(term.options.theme?.background).toBe("#282a36");
     });
 
-    it("overrides theme background to transparent when hasBackgroundImage is true", async () => {
+    it("makes the theme background transparent once the background image loads", async () => {
         const { doc } = makeDomStub();
         (globalThis as Record<string, unknown>)["document"] = doc;
         stubFetchTheme({ hasBackgroundImage: true, background: "#282a36" });
-        const term = terminalFactory(makeConfig());
-        await handleThemeSelected(makeEvent("dracula"), term, makeMenuBar(), makePicker(), makeConfig(), {
-            current: "b3tty-dark",
-        });
-        expect(term.options.theme?.background).toBe("rgba(40, 42, 54, 0)");
+        const image = stubImage(true);
+        try {
+            const term = terminalFactory(makeConfig());
+            await handleThemeSelected(makeEvent("dracula"), term, makeMenuBar(), makePicker(), makeConfig(), {
+                current: "b3tty-dark",
+            });
+            await flushPromises();
+            expect(term.options.theme?.background).toBe("rgba(40, 42, 54, 0)");
+        } finally {
+            image.restore();
+        }
     });
 
     it("calls menuBar.setup with updated themeNames when the response includes them", async () => {
@@ -2215,6 +2547,22 @@ describe("handleThemeSelected", () => {
 // ---------------------------------------------------------------------------
 // isValidThemeColor
 // ---------------------------------------------------------------------------
+
+describe("isValidBackgroundImageTransparency", () => {
+    it("accepts empty (use the default)", () => {
+        expect(isValidBackgroundImageTransparency("")).toBe(true);
+    });
+
+    it("accepts whole numbers from 0 to 100", () => {
+        for (const v of ["0", "50", "100"]) expect(isValidBackgroundImageTransparency(v)).toBe(true);
+    });
+
+    it("rejects out-of-range, fractional, negative, and non-numeric values", () => {
+        for (const v of ["101", "1.5", "-1", "1e2", "abc", " 5"]) {
+            expect(isValidBackgroundImageTransparency(v)).toBe(false);
+        }
+    });
+});
 
 describe("isValidThemeColor", () => {
     it("returns true for empty string", () => {
@@ -2321,18 +2669,24 @@ describe("handleThemeEdited", () => {
         expect(term.options.theme?.background).toBe("#282a36");
     });
 
-    it("overrides theme background to transparent when hasBackgroundImage is true", async () => {
+    it("makes the theme background transparent once the background image loads", async () => {
         const { doc } = makeDomStub();
         (globalThis as Record<string, unknown>)["document"] = doc;
-        const term = terminalFactory(makeConfig());
-        await handleThemeEdited(
-            makeEditedEvent("my-theme", { hasBackgroundImage: true, background: "#282a36" }),
-            term,
-            makeMenuBar(),
-            makeConfig(),
-            { current: "b3tty-dark" }
-        );
-        expect(term.options.theme?.background).toBe("rgba(40, 42, 54, 0)");
+        const image = stubImage(true);
+        try {
+            const term = terminalFactory(makeConfig());
+            await handleThemeEdited(
+                makeEditedEvent("my-theme", { hasBackgroundImage: true, background: "#282a36" }),
+                term,
+                makeMenuBar(),
+                makeConfig(),
+                { current: "b3tty-dark" }
+            );
+            await flushPromises();
+            expect(term.options.theme?.background).toBe("rgba(40, 42, 54, 0)");
+        } finally {
+            image.restore();
+        }
     });
 
     it("updates activeTheme.current", async () => {

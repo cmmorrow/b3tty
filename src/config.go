@@ -179,9 +179,11 @@ func UpdateThemeInConfig(configPath string, themeName string, colors map[string]
 }
 
 // SaveThemeToConfig reads the existing config file at configPath (creating it if
-// absent), sets the active theme name, and writes the theme's color entries to the
-// themes section, overwriting any existing entry for that theme name.
-func SaveThemeToConfig(configPath string, themeName string, colors map[string]any) error {
+// absent), sets the active theme name, and writes theme to the themes section,
+// overwriting any existing entry for that theme name. The entry holds theme's
+// valid colors plus background-image and background-image-transparency when
+// set; an empty or nil value leaves that key out, clearing it.
+func SaveThemeToConfig(configPath string, themeName string, theme Theme) error {
 	configFileMu.Lock()
 	defer configFileMu.Unlock()
 
@@ -197,16 +199,14 @@ func SaveThemeToConfig(configPath string, themeName string, colors map[string]an
 	cfg["theme"] = themeName
 	themesSection := getOrCreateSection(cfg, "themes")
 
-	themeColors := filterValidThemeColors(colors)
-	// Preserve background-image from the existing entry: toColorMap() omits it
-	// because it is a file path, not a color, so it would be silently dropped
-	// by the ValidateThemeColor filter above.
-	if existing, ok := themesSection[themeName].(map[string]any); ok {
-		if bgImg, ok := existing["background-image"].(string); ok && bgImg != "" {
-			themeColors["background-image"] = bgImg
-		}
+	entry := filterValidThemeColors(theme.toColorMap())
+	if theme.BackgroundImage != "" {
+		entry["background-image"] = theme.BackgroundImage
 	}
-	themesSection[themeName] = themeColors
+	if theme.BackgroundImageTransparency != nil {
+		entry["background-image-transparency"] = *theme.BackgroundImageTransparency
+	}
+	themesSection[themeName] = entry
 
 	return writeConfigMap(configPath, cfg, "SaveThemeToConfig")
 }
