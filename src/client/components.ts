@@ -9,7 +9,8 @@ import {
     postSettings,
 } from "./api.ts";
 import type { Palette, ProfileConfig, SettingsConfig } from "./types.ts";
-import { isValidThemeColor } from "./validators.ts";
+import { DEFAULT_BACKGROUND_IMAGE_TRANSPARENCY } from "./types.ts";
+import { isValidBackgroundImageTransparency, isValidThemeColor } from "./validators.ts";
 import {
     DESIGN_TOKENS,
     BASE_STYLES,
@@ -1042,6 +1043,11 @@ if (typeof HTMLElement !== "undefined") {
         #saveError: HTMLSpanElement;
         #colorInputs: Map<string, HTMLInputElement> = new Map();
         #swatches: Map<string, HTMLSpanElement> = new Map();
+        // Kept out of #colorInputs so the color loops, swatches, and palette
+        // preview never see them; they take effect when the theme is saved.
+        #bgImageInput: HTMLInputElement;
+        #bgTransparencyInput: HTMLInputElement;
+        #bgTransparencyError: HTMLSpanElement;
         #okBtn: HTMLButtonElement;
         #selectedName: string | null = null;
         #selectedCard: HTMLElement | null = null;
@@ -1099,6 +1105,7 @@ if (typeof HTMLElement !== "undefined") {
                     gap: var(--space-2xs); align-items: center;
                 }
                 .color-form .ansi-header { padding: 0 0 var(--space-3xs); }
+                .field-row .field-desc, .field-row .field-error { grid-column: 2 / 4; }
                 ${FORM_INPUT_STYLES}
                 .swatch {
                     width: 18px; height: 18px;
@@ -1231,6 +1238,42 @@ if (typeof HTMLElement !== "undefined") {
                 colorForm.appendChild(ansiRow);
             }
 
+            const bgTitle = document.createElement("div");
+            bgTitle.className = "section-title";
+            bgTitle.textContent = "Background Image";
+            colorForm.appendChild(bgTitle);
+
+            this.#bgImageInput = document.createElement("input");
+            this.#bgImageInput.type = "text";
+            this.#bgImageInput.className = "field-input";
+            this.#bgImageInput.placeholder = "/path/to/image.png or ~/image.png";
+            colorForm.appendChild(this.#makeFieldRow("Image Path", this.#bgImageInput));
+            colorForm.appendChild(
+                this.#makeFieldNote(
+                    "field-desc",
+                    "Absolute path to a PNG, JPEG, GIF, or WebP file on the server. Leave blank for no image."
+                )
+            );
+
+            this.#bgTransparencyInput = document.createElement("input");
+            this.#bgTransparencyInput.type = "number";
+            this.#bgTransparencyInput.className = "number-input";
+            this.#bgTransparencyInput.min = "0";
+            this.#bgTransparencyInput.max = "100";
+            this.#bgTransparencyInput.step = "1";
+            this.#bgTransparencyInput.placeholder = String(DEFAULT_BACKGROUND_IMAGE_TRANSPARENCY);
+            this.#bgTransparencyInput.addEventListener("input", () => this.#validateForm());
+            colorForm.appendChild(this.#makeFieldRow("Transparency", this.#bgTransparencyInput));
+            const transparencyError = this.#makeFieldNote("field-error", "Must be a whole number from 0 to 100");
+            this.#bgTransparencyError = transparencyError.firstElementChild as HTMLSpanElement;
+            colorForm.appendChild(transparencyError);
+            colorForm.appendChild(
+                this.#makeFieldNote(
+                    "field-desc",
+                    `How strongly the theme background tints the image: 0 shows the image fully, 100 hides it. Default ${DEFAULT_BACKGROUND_IMAGE_TRANSPARENCY}.`
+                )
+            );
+
             const actions = document.createElement("div");
             actions.className = "actions";
             this.#saveError = document.createElement("span");
@@ -1318,6 +1361,29 @@ if (typeof HTMLElement !== "undefined") {
             return [row, input, swatch];
         }
 
+        /** A labeled .field-row holding a non-color control (no swatch). */
+        #makeFieldRow(label: string, control: HTMLInputElement): HTMLDivElement {
+            const row = document.createElement("div");
+            row.className = "field-row";
+            const lbl = document.createElement("label");
+            lbl.className = "field-label";
+            lbl.textContent = label;
+            row.appendChild(lbl);
+            row.appendChild(control);
+            return row;
+        }
+
+        /** A .field-row holding a note (help text or error) aligned under the controls. */
+        #makeFieldNote(className: string, text: string): HTMLDivElement {
+            const row = document.createElement("div");
+            row.className = "field-row";
+            const note = document.createElement("span");
+            note.className = className;
+            note.textContent = text;
+            row.appendChild(note);
+            return row;
+        }
+
         #updateSwatch(swatch: HTMLSpanElement, value: string): void {
             if (value && isValidThemeColor(value)) {
                 swatch.style.backgroundColor = value;
@@ -1331,9 +1397,12 @@ if (typeof HTMLElement !== "undefined") {
             if (this.#isLoading) {
                 this.#okBtn.disabled = true;
                 this.#nameError.classList.remove("visible");
+                this.#bgTransparencyError.classList.remove("visible");
                 return;
             }
             this.#updatePreview();
+            const transparencyValid = isValidBackgroundImageTransparency(this.#bgTransparencyInput.value);
+            this.#bgTransparencyError.classList.toggle("visible", !transparencyValid);
             const name = this.#nameInput.value.trim();
             if (!name) {
                 this.#okBtn.disabled = true;
@@ -1352,7 +1421,7 @@ if (typeof HTMLElement !== "undefined") {
                     return;
                 }
             }
-            this.#okBtn.disabled = false;
+            this.#okBtn.disabled = !transparencyValid;
         }
 
         #restoreSelectedCard(): void {
@@ -1414,6 +1483,9 @@ if (typeof HTMLElement !== "undefined") {
                 const swatch = this.#swatches.get(key);
                 if (swatch) swatch.classList.remove("visible");
             }
+            this.#bgImageInput.value = "";
+            this.#bgTransparencyInput.value = "";
+            this.#bgTransparencyError.classList.remove("visible");
         }
 
         async #loadThemeColors(name: string): Promise<void> {
@@ -1426,6 +1498,9 @@ if (typeof HTMLElement !== "undefined") {
                     const swatch = this.#swatches.get(key);
                     if (swatch) this.#updateSwatch(swatch, value);
                 }
+                this.#bgImageInput.value = config.backgroundImage ?? "";
+                // Left empty when unset so the placeholder shows the default.
+                this.#bgTransparencyInput.value = config.backgroundImageTransparency?.toString() ?? "";
             } catch {
                 // leave inputs as-is on failure
             } finally {
@@ -1437,9 +1512,15 @@ if (typeof HTMLElement !== "undefined") {
         async #handleOk(): Promise<void> {
             const name = this.#nameInput.value.trim();
             if (!name) return;
-            const themeData: Record<string, string> = {};
+            const themeData: Record<string, string | number> = {};
             for (const [key, input] of this.#colorInputs) {
                 if (input.value) themeData[key] = input.value;
+            }
+            // Always sent: an empty path clears the theme's background image.
+            themeData["backgroundImage"] = this.#bgImageInput.value.trim();
+            // Omitted when empty so the theme falls back to the default.
+            if (this.#bgTransparencyInput.value !== "") {
+                themeData["backgroundImageTransparency"] = Number(this.#bgTransparencyInput.value);
             }
             this.#saveError.classList.remove("visible");
             try {
@@ -1540,7 +1621,6 @@ if (typeof HTMLElement !== "undefined") {
                 }
                 ${SPLIT_PANEL_STYLES}
                 .left-panel { width: 200px; }
-                .actions { align-items: center; }
                 ${EDITOR_CARD_STYLES}
                 .fields-section {
                     display: flex; flex-direction: column; gap: var(--space-xs);
@@ -2068,7 +2148,8 @@ if (typeof HTMLElement !== "undefined") {
                     height: 1px; background: var(--color-border-panel); margin: var(--space-2xs) 0;
                 }
                 .footer {
-                    display: flex; justify-content: flex-end; gap: var(--space-md);
+                    /* align-items: center: see OVERLAY_STYLES' .actions. */
+                    display: flex; justify-content: flex-end; align-items: center; gap: var(--space-md);
                     padding: var(--space-lg) var(--space-2xl); border-top: 1px solid var(--color-border-panel);
                     flex-shrink: 0; background: var(--color-surface-1);
                 }

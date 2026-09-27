@@ -21,6 +21,23 @@ body {
     min-height: 0;
 }
 
+/*
+ * xterm.js 6 scrolls through its own scrollable element and draws its own
+ * scrollbar (.xterm-scrollable-element > .scrollbar); the native scrollbar that
+ * its stylesheet still forces onto .xterm-viewport (overflow-y: scroll) never
+ * scrolls anything. Hide it: where the browser shows classic scrollbars (e.g.
+ * Safari with a mouse attached) it paints an empty track over the strip where
+ * xterm draws its slider — opaque white once a background image makes the
+ * viewport transparent, hiding the slider entirely.
+ */
+#terminal .xterm-viewport {
+    scrollbar-width: none;
+}
+
+#terminal .xterm-viewport::-webkit-scrollbar {
+    display: none;
+}
+
 body > div:nth-of-type(2) {
     width: 100% !important;
 }

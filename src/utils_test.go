@@ -2,11 +2,15 @@ package src
 
 import (
 	"errors"
+	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestValidateThemeColor(t *testing.T) {
@@ -162,11 +166,11 @@ func TestMustUnmarshalTheme(t *testing.T) {
 		assert.Equal(t, Theme{}, th)
 	})
 
-	t.Run("background-image is never read from a theme file", func(t *testing.T) {
-		// Theme.BackgroundImage is json:"-", so a built-in theme cannot carry
-		// a background image path.
-		th := mustUnmarshalTheme([]byte(`{"backgroundImage":"/tmp/x.png","background-image":"/tmp/y.png"}`))
-		assert.Empty(t, th.BackgroundImage)
+	t.Run("background image fields decode through their camelCase json tags", func(t *testing.T) {
+		th := mustUnmarshalTheme([]byte(`{"backgroundImage":"/tmp/x.png","backgroundImageTransparency":30}`))
+		assert.Equal(t, "/tmp/x.png", th.BackgroundImage)
+		require.NotNil(t, th.BackgroundImageTransparency)
+		assert.Equal(t, 30, *th.BackgroundImageTransparency)
 	})
 
 	t.Run("invalid JSON panics with descriptive message", func(t *testing.T) {
@@ -249,6 +253,182 @@ func TestValidateToken(t *testing.T) {
 				q.Set("token", tt.queryToken)
 			}
 			assert.Equal(t, tt.expected, validateToken(q.Get("token"), tt.serverToken))
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// validateBackgroundImage
+// ---------------------------------------------------------------------------
+
+// Minimal leading bytes http.DetectContentType recognizes for each allowed
+// image type. They are not complete, decodable images — the validator only
+// sniffs the file's contents, it never decodes them.
+var (
+	pngMagic  = []byte("\x89PNG\r\n\x1a\n")
+	jpegMagic = []byte("\xff\xd8\xff\xe0")
+	gifMagic  = []byte("GIF89a")
+	webpMagic = []byte("RIFF\x00\x00\x00\x00WEBPVP8 ")
+)
+
+// writeTempFile writes data to name inside a fresh temp directory and returns
+// the file's absolute path.
+func writeTempFile(t *testing.T, name string, data []byte) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+	return path
+}
+
+func TestValidateBackgroundImage(t *testing.T) {
+	valid := []struct {
+		name string
+		file string
+		data []byte
+	}{
+		{"png", "bg.png", pngMagic},
+		{"jpg", "bg.jpg", jpegMagic},
+		{"jpeg", "bg.jpeg", jpegMagic},
+		{"gif", "bg.gif", gifMagic},
+		{"webp", "bg.webp", webpMagic},
+		{"extension is matched case-insensitively", "BG.PNG", pngMagic},
+		{"extension and contents need not name the same type", "bg.jpg", pngMagic},
+	}
+	for _, tt := range valid {
+		t.Run("accepts "+tt.name, func(t *testing.T) {
+			assert.NoError(t, validateBackgroundImage(writeTempFile(t, tt.file, tt.data)))
+		})
+	}
+
+	unsupported := []struct {
+		name string
+		file string
+		data []byte
+	}{
+		{"text file with a text extension", "notes.txt", []byte("hello")},
+		{"image contents with a disallowed extension", "bg.bmp", pngMagic},
+		{"no extension", "background", pngMagic},
+		{"svg", "bg.svg", []byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`)},
+		{"text contents with an image extension", "bg.png", []byte("not really a png")},
+		{"empty file with an image extension", "bg.png", nil},
+	}
+	for _, tt := range unsupported {
+		t.Run("rejects "+tt.name, func(t *testing.T) {
+			err := validateBackgroundImage(writeTempFile(t, tt.file, tt.data))
+			assert.ErrorIs(t, err, errUnsupportedBackgroundImage)
+		})
+	}
+
+	t.Run("missing file returns the open error, not a type error", func(t *testing.T) {
+		err := validateBackgroundImage(filepath.Join(t.TempDir(), "missing.png"))
+		assert.ErrorIs(t, err, os.ErrNotExist)
+		assert.NotErrorIs(t, err, errUnsupportedBackgroundImage)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// expandHomePath
+// ---------------------------------------------------------------------------
+
+func TestExpandHomePath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	tests := []struct {
+		name     string
+		path     string
+		expected string
+	}{
+		{"bare tilde expands to the home directory", "~", home},
+		{"tilde-slash prefix expands", "~/pics/bg.png", filepath.Join(home, "pics", "bg.png")},
+		{"absolute path is unchanged", "/srv/bg.png", "/srv/bg.png"},
+		{"relative path is unchanged", "pics/bg.png", "pics/bg.png"},
+		{"~user form is unchanged", "~alice/bg.png", "~alice/bg.png"},
+		{"tilde not at the start is unchanged", "/srv/~/bg.png", "/srv/~/bg.png"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := expandHomePath(tt.path)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ValidateTheme: background image transparency
+// ---------------------------------------------------------------------------
+
+func TestValidateThemeBackgroundImageTransparency(t *testing.T) {
+	intPtr := func(v int) *int { return &v }
+
+	t.Run("unset transparency is valid", func(t *testing.T) {
+		assert.NoError(t, ValidateTheme(&Theme{Foreground: "#fff"}))
+	})
+
+	for _, v := range []int{0, 50, 100} {
+		t.Run(fmt.Sprintf("accepts %d", v), func(t *testing.T) {
+			assert.NoError(t, ValidateTheme(&Theme{Foreground: "#fff", BackgroundImageTransparency: intPtr(v)}))
+		})
+	}
+
+	for _, v := range []int{-1, 101} {
+		t.Run(fmt.Sprintf("rejects %d", v), func(t *testing.T) {
+			err := ValidateTheme(&Theme{BackgroundImageTransparency: intPtr(v)})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "backgroundImageTransparency")
+		})
+	}
+
+	t.Run("still rejects an invalid color when transparency is set", func(t *testing.T) {
+		err := ValidateTheme(&Theme{Foreground: "rgb(1,2,3)", BackgroundImageTransparency: intPtr(50)})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "foreground")
+	})
+
+	t.Run("background image path is not validated as a color", func(t *testing.T) {
+		assert.NoError(t, ValidateTheme(&Theme{BackgroundImage: "/srv/my bg.png"}))
+	})
+}
+
+// ---------------------------------------------------------------------------
+// resolveBackgroundImage
+// ---------------------------------------------------------------------------
+
+func TestResolveBackgroundImage(t *testing.T) {
+	t.Run("valid absolute path resolves to itself", func(t *testing.T) {
+		path := writeTempFile(t, "bg.png", pngMagic)
+		got, err := resolveBackgroundImage(path)
+		require.NoError(t, err)
+		assert.Equal(t, path, got)
+	})
+
+	t.Run("leading ~/ is expanded", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		require.NoError(t, os.WriteFile(filepath.Join(home, "bg.png"), pngMagic, 0o600))
+		got, err := resolveBackgroundImage("~/bg.png")
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(home, "bg.png"), got)
+	})
+
+	failures := []struct {
+		name        string
+		path        func(t *testing.T) string
+		reason      string
+		unsupported bool
+	}{
+		{"relative path", func(t *testing.T) string { return "bg.png" }, "must be an absolute path", false},
+		{"missing file", func(t *testing.T) string { return filepath.Join(t.TempDir(), "missing.png") }, "no such file or directory", false},
+		{"directory", func(t *testing.T) string { return t.TempDir() }, "is a directory", false},
+		{"unsupported type", func(t *testing.T) string { return writeTempFile(t, "notes.txt", []byte("hi")) }, "unsupported background image type", true},
+	}
+	for _, tt := range failures {
+		t.Run("rejects "+tt.name, func(t *testing.T) {
+			_, err := resolveBackgroundImage(tt.path(t))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.reason)
+			assert.Equal(t, tt.unsupported, errors.Is(err, errUnsupportedBackgroundImage))
 		})
 	}
 }

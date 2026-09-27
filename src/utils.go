@@ -5,12 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"math/big"
+	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 )
 
@@ -18,6 +23,21 @@ var (
 	reHexColor   = regexp.MustCompile(`^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$`)
 	reNamedColor = regexp.MustCompile(`^[a-zA-Z]+$`)
 )
+
+// backgroundImageExts and backgroundImageTypes are the allowlists a theme's
+// background-image must pass: the file extension (compared case-insensitively)
+// and the MIME type http.DetectContentType reports for the file's contents.
+// SVG is deliberately absent: DetectContentType reports it as text, and SVG
+// documents can carry script.
+var (
+	backgroundImageExts  = []string{".png", ".jpg", ".jpeg", ".gif", ".webp"}
+	backgroundImageTypes = []string{"image/png", "image/jpeg", "image/gif", "image/webp"}
+)
+
+// errUnsupportedBackgroundImage is wrapped by validateBackgroundImage when a
+// file's extension or contents are not an allowed image type, so callers can
+// tell a bad file type apart from a failure to open or read the file.
+var errUnsupportedBackgroundImage = errors.New("unsupported background image type")
 
 // mustUnmarshalTheme decodes an embedded JSON theme file into a Theme. The
 // files use the camelCase key names from Theme's own json tags, so they decode
@@ -42,15 +62,21 @@ func ValidateThemeColor(s string) bool {
 	return reHexColor.MatchString(s) || reNamedColor.MatchString(s)
 }
 
-// ValidateTheme checks every color field in t against validateThemeColor.
-// It returns an error naming the first invalid field and value, or nil when
-// all fields are valid. Fields are identified by their JSON tag name.
+// ValidateTheme checks every color field in t against validateThemeColor, and
+// that BackgroundImageTransparency, when set, is within 0–100. It returns an
+// error naming the first invalid field and value, or nil when all fields are
+// valid. Fields are identified by their JSON tag name. The background image
+// path is not checked here: whether it resolves to a valid image depends on
+// the filesystem, not the config (see resolveBackgroundImage).
 func ValidateTheme(t *Theme) error {
+	if tr := t.BackgroundImageTransparency; tr != nil && (*tr < 0 || *tr > 100) {
+		return fmt.Errorf("invalid backgroundImageTransparency: %d (must be between 0 and 100)", *tr)
+	}
 	val := reflect.ValueOf(t).Elem()
 	typ := val.Type()
 	for i := 0; i < val.NumField(); i++ {
-		// BackgroundImage is a file path, not a color — skip it.
-		if typ.Field(i).Name == "BackgroundImage" {
+		// Only string fields hold colors; BackgroundImage is a file path, not a color.
+		if val.Field(i).Kind() != reflect.String || typ.Field(i).Name == "BackgroundImage" {
 			continue
 		}
 		color := val.Field(i).String()
@@ -61,6 +87,78 @@ func ValidateTheme(t *Theme) error {
 		}
 	}
 	return nil
+}
+
+// validateBackgroundImage checks that the file at path is an allowed background
+// image: its extension must be in backgroundImageExts, and http.DetectContentType
+// must identify its first 512 bytes as one of backgroundImageTypes. Type failures
+// wrap errUnsupportedBackgroundImage; failures to open or read the file are
+// returned as-is. It does not check that path is absolute or a regular file.
+func validateBackgroundImage(path string) error {
+	ext := strings.ToLower(filepath.Ext(path))
+	if !slices.Contains(backgroundImageExts, ext) {
+		return fmt.Errorf("%w: extension %q is not one of %s", errUnsupportedBackgroundImage, ext, strings.Join(backgroundImageExts, ", "))
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	// DetectContentType considers at most the first 512 bytes. A shorter file
+	// yields io.ErrUnexpectedEOF (or io.EOF when empty), which is not an error here.
+	buf := make([]byte, 512)
+	n, err := io.ReadFull(f, buf)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return err
+	}
+	contentType := http.DetectContentType(buf[:n])
+	if !slices.Contains(backgroundImageTypes, contentType) {
+		return fmt.Errorf("%w: contents detected as %q", errUnsupportedBackgroundImage, contentType)
+	}
+	return nil
+}
+
+// resolveBackgroundImage resolves a theme's configured background-image path to
+// the file it names and checks that the file is an allowed image: a leading "~"
+// is expanded, the result must be absolute, and it must be an existing regular
+// file that passes validateBackgroundImage. It returns the resolved path, or an
+// error whose text explains the problem; type failures wrap
+// errUnsupportedBackgroundImage so callers can tell them apart.
+func resolveBackgroundImage(configured string) (string, error) {
+	imagePath, err := expandHomePath(configured)
+	if err != nil {
+		return "", fmt.Errorf("background image %q: %w", configured, err)
+	}
+	if !filepath.IsAbs(imagePath) {
+		return "", fmt.Errorf("background image %q must be an absolute path", configured)
+	}
+	info, err := os.Stat(imagePath)
+	if err != nil {
+		return "", fmt.Errorf("background image: %w", err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("background image %q is a directory", imagePath)
+	}
+	if err := validateBackgroundImage(imagePath); err != nil {
+		return "", fmt.Errorf("background image %q: %w", imagePath, err)
+	}
+	return imagePath, nil
+}
+
+// expandHomePath replaces a leading "~" or "~/" in path with the current user's
+// home directory. Any other path, including the "~user/..." form, is returned
+// unchanged.
+func expandHomePath(path string) (string, error) {
+	if path != "~" && !strings.HasPrefix(path, "~/") {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, path[1:]), nil
 }
 
 // validateTerminalDimension reports whether dim is a valid terminal dimension.

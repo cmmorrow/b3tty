@@ -44,3 +44,13 @@ export function isValidThemeColor(value: string): boolean {
     if (/^[a-zA-Z]+$/.test(value)) return true;
     return false;
 }
+
+/**
+ * Returns true if value is a valid background image transparency as typed into
+ * the theme editor: empty (use the default) or a whole number from 0 to 100.
+ * Mirrors the range check on BackgroundImageTransparency in ValidateTheme (src/utils.go).
+ */
+export function isValidBackgroundImageTransparency(value: string): boolean {
+    if (value === "") return true;
+    return /^\d+$/.test(value) && Number(value) <= 100;
+}

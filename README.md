@@ -160,7 +160,7 @@ A string naming which entry under `themes` to activate, e.g. `theme: "my-theme"`
 
 #### `themes`
 
-A map of named theme objects. Each key is an arbitrary theme name; the value is an object whose fields set terminal colors. All fields are optional strings; omitting a field keeps the xterm.js default for that color.
+A map of named theme objects. Each key is an arbitrary theme name; the value is an object whose fields set terminal colors and an optional background image. All fields are optional; omitting a color keeps the xterm.js default for that color. Every field can also be edited from the menu bar's **Themes → Edit Theme…** dialog, which saves back to this file.
 
 Color values must be a 3- or 6-digit CSS hex color (e.g. `#fff` or `#14181d`) or a letters-only CSS named color (e.g. `red` or `cornflowerblue`). Invalid values are rejected at startup.
 
@@ -188,7 +188,8 @@ Color values must be a 3- or 6-digit CSS hex color (e.g. `#fff` or `#14181d`) or
 | `bright-cyan` | ANSI color 14 |
 | `white` | ANSI color 7 |
 | `bright-white` | ANSI color 15 |
-| `background-image` | Absolute path to a background image file on the server. When set, the container, terminal, and profile label backgrounds become 50% transparent so the image is visible behind the terminal text. |
+| `background-image` | Absolute path to a background image file on the server; a leading `~/` is expanded to your home directory. Must be a PNG, JPEG, GIF, or WebP image — both the file extension and the file's contents are checked. When set, the theme's background color is laid over the image as a tint (see `background-image-transparency`) so the image shows behind the terminal text. If the file is missing, isn't an absolute path, or isn't a supported image type, the server logs a warning and the theme is displayed as if no background image were set; the theme editor refuses to save such a path and shows the reason. |
+| `background-image-transparency` | Integer from 0 to 100 (default `50`) setting how strongly the theme's background color tints the background image — the tint's opacity is the value divided by 100, so higher values make the image fainter: `0` shows the image untinted, `100` hides it behind the solid background color. Values outside 0–100 are rejected at startup. Has no effect without `background-image`. |
 
 #### `profiles`
 

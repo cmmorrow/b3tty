@@ -21,11 +21,22 @@ interface ThemeConfigBase {
     brightWhite?: string;
     selectionForeground?: string;
     selectionBackground?: string;
+    /** Server-side file path of the theme's background image. */
+    backgroundImage?: string;
+    /**
+     * 0–100: how strongly the theme background tints the background image
+     * (alpha = value / 100, so higher is fainter). Absent means
+     * DEFAULT_BACKGROUND_IMAGE_TRANSPARENCY.
+     */
+    backgroundImageTransparency?: number;
 }
 
 export interface ThemeConfig extends ThemeConfigBase {
-    [key: string]: string | undefined;
+    [key: string]: string | number | undefined;
 }
+
+/** Background image transparency used when a theme doesn't set one (alpha 0.5). */
+export const DEFAULT_BACKGROUND_IMAGE_TRANSPARENCY = 50;
 
 export interface TermConfig {
     tls: boolean;

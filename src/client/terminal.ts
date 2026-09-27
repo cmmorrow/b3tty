@@ -16,6 +16,7 @@ import type {
     SettingsConfig,
     TerminalClient,
 } from "./types.ts";
+import { DEFAULT_BACKGROUND_IMAGE_TRANSPARENCY } from "./types.ts";
 import { isValidWsProtocol, isValidPort, isValidUri } from "./validators.ts";
 import { postThemeConfig, postAddTheme, getSettings } from "./api.ts";
 import type { B3ttyDialog, B3ttyMenuBar, B3ttyThemePicker, MenuBarColors } from "./components.ts";
@@ -217,12 +218,131 @@ export function handleSocketMessage(
     }
 }
 
+/** Returns the 32-bit FNV-1a hash of s as a hex string. */
+function fnv1a(s: string): string {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 0x01000193);
+    }
+    return (h >>> 0).toString(16);
+}
+
+/**
+ * Returns the URL of a theme's background image. The server requires the page's
+ * auth token on /background, so it is carried over from the page's own query string
+ * (`search`) when present. Browsers reuse an image the page already loaded for the
+ * same URL without making a request, so the URL must change whenever the image does:
+ * the theme name gives each theme its own URL, and `v` (a hash of imagePath, which the
+ * server ignores) changes it when a theme's image path is edited. An empty themeName
+ * omits the parameter, and the server falls back to the active theme.
+ */
+export function backgroundImageUrl(search: string, themeName: string, imagePath = ""): string {
+    const params = new URLSearchParams();
+    const token = new URLSearchParams(search).get("token");
+    if (token) params.set("token", token);
+    if (themeName) params.set("theme", themeName);
+    if (imagePath) params.set("v", fnv1a(imagePath));
+    const query = params.toString();
+    return query ? `/background?${query}` : "/background";
+}
+
+/**
+ * backgroundImageUrl for the current page. window is absent under bun test, which
+ * has no DOM, so that case falls back to the token-less URL.
+ */
+function pageBackgroundImageUrl(themeName: string, imagePath = ""): string {
+    return backgroundImageUrl(
+        typeof window !== "undefined" ? (window.location?.search ?? "") : "",
+        themeName,
+        imagePath
+    );
+}
+
+/**
+ * Returns the alpha of the theme-background tint over a theme's background image:
+ * its backgroundImageTransparency (0–100, default DEFAULT_BACKGROUND_IMAGE_TRANSPARENCY)
+ * divided by 100, so higher transparency means a fainter image.
+ */
+export function backgroundImageAlpha(theme: { backgroundImageTransparency?: number }): number {
+    return (theme.backgroundImageTransparency ?? DEFAULT_BACKGROUND_IMAGE_TRANSPARENCY) / 100;
+}
+
+/**
+ * Resolves true when the image at url loads and false when it fails, which includes
+ * any non-200 response from /background (the browser reports those as a load error).
+ * Also resolves false where Image is unavailable (bun test has no DOM). Never rejects.
+ */
+export function loadBackgroundImage(url: string): Promise<boolean> {
+    if (typeof Image === "undefined") return Promise.resolve(false);
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve(true);
+        img.onerror = () => resolve(false);
+        img.src = url;
+    });
+}
+
+/**
+ * Sets the xterm.js theme and page styles for a theme, with or without its
+ * background image. With the image, xterm.js cell backgrounds are made fully
+ * transparent, since the body-level tint over the image is the only color layer.
+ */
+function renderTheme(
+    theme: ThemeConfig | ThemeActivateResponse,
+    term: Terminal,
+    hasBackgroundImage: boolean,
+    themeName: string
+): void {
+    const builtTheme = buildTheme(theme);
+    if (hasBackgroundImage) {
+        builtTheme.background = withAlpha(theme.background || "#000", 0);
+    }
+    term.options.theme = builtTheme;
+    applyThemeStyles(theme, hasBackgroundImage, themeName);
+}
+
+// backgroundRequestId identifies the most recent applyThemeWithBackground call, so a
+// slow image load for a theme that has since been replaced can't apply its image
+// over the newer theme.
+let backgroundRequestId = 0;
+
+/**
+ * Applies a theme to the terminal and page, showing its background image only once
+ * the image is confirmed to load. The theme is rendered without the image
+ * immediately (synchronously, before this function first awaits); when
+ * hasBackgroundImage is true, /background is then loaded and the theme re-rendered
+ * with the image only if that succeeds. If the server rejects the request (bad
+ * token, missing file, unsupported type), the theme stays rendered as if it had no
+ * background image. themeName selects which theme's image /background serves (see
+ * backgroundImageUrl). Resolves to whether the image was applied.
+ */
+export async function applyThemeWithBackground(
+    theme: ThemeConfig | ThemeActivateResponse,
+    term: Terminal,
+    hasBackgroundImage: boolean,
+    themeName: string
+): Promise<boolean> {
+    const requestId = ++backgroundRequestId;
+    renderTheme(theme, term, false, themeName);
+    if (!hasBackgroundImage) return false;
+
+    const loaded = await loadBackgroundImage(pageBackgroundImageUrl(themeName, theme.backgroundImage));
+    if (requestId !== backgroundRequestId) return false;
+    if (!loaded) {
+        console.warn("[b3tty] background image could not be loaded (see the server log); showing the theme without it");
+        return false;
+    }
+    renderTheme(theme, term, true, themeName);
+    return true;
+}
+
 /**
  * Applies a resolved theme (from a fetch response or WebSocket broadcast) to the
  * live xterm.js Terminal and page styles, and updates activeTheme.current. Shared
- * by every runtime theme-apply path so the "zero out background when a background
- * image is configured" behavior stays in sync across all of them. Returns the
- * menu bar colors derived from the theme so callers can apply them as needed.
+ * by every runtime theme-apply path so background-image handling (see
+ * applyThemeWithBackground) stays in sync across all of them. Returns the menu bar
+ * colors derived from the theme so callers can apply them as needed.
  */
 export function applyResolvedTheme(
     name: string,
@@ -230,12 +350,7 @@ export function applyResolvedTheme(
     term: Terminal,
     activeTheme: { current: string }
 ): MenuBarColors {
-    const builtTheme = buildTheme(themeResp);
-    if (themeResp.hasBackgroundImage) {
-        builtTheme.background = withAlpha(themeResp.background || "#000", 0);
-    }
-    term.options.theme = builtTheme;
-    applyThemeStyles(themeResp, themeResp.hasBackgroundImage);
+    void applyThemeWithBackground(themeResp, term, themeResp.hasBackgroundImage, name);
     activeTheme.current = name;
     return menuBarColors(themeResp);
 }
@@ -335,21 +450,15 @@ function getOverlay<T>(id: string, guard: (el: Element) => el is HTMLElement & T
 /**
  * Constructs and returns a configured xterm.js Terminal from the given TermConfig.
  *
- * Builds the xterm.js theme from config.theme. When a background image is active,
- * the theme's background color is overridden to fully transparent so the canvas
- * does not add a second color layer on top of the body-level tint. Terminal
- * options (font, dimensions, cursor behavior, transparency) are derived via
- * buildTermOptions. The returned Terminal is ready to be mounted with term.open().
+ * Builds the xterm.js theme from config.theme, always without the background
+ * image: main() applies that afterwards via applyThemeWithBackground, once the
+ * image is confirmed to load. Terminal options (font, dimensions, cursor behavior,
+ * transparency) are derived via buildTermOptions. The returned Terminal is ready
+ * to be mounted with term.open().
  */
 export function terminalFactory(config: TermConfig): Terminal {
     const theme = buildTheme(config.theme);
 
-    if (config.backgroundImage) {
-        // The body provides a single uniform tint over the background image, so
-        // xterm.js cell backgrounds must be fully transparent to avoid adding a
-        // second layer of color that would make the terminal darker than the gap.
-        theme.background = withAlpha("#000", 0);
-    }
     // Always enable transparency so themes with background images can be switched
     // to at runtime without requiring a page reload.
     const termOptions = buildTermOptions(config, theme, true);
@@ -389,49 +498,37 @@ export function initTerm(
 /**
  * Applies theme-driven background and profile label styles to the page.
  * Called on initial load and on theme change. When hasBackgroundImage is true,
- * the body receives a semi-transparent gradient tint over the background image
- * and the xterm viewport is made transparent; otherwise the container gets a
+ * the body receives a gradient tint of the theme background over the background
+ * image (alpha from backgroundImageAlpha) and the xterm viewport is made transparent; otherwise the container gets a
  * solid background color and the body/style-element overrides are cleared.
+ * themeName selects which theme's image the CSS references (see backgroundImageUrl);
+ * it only matters when hasBackgroundImage is true.
  */
 export function applyThemeStyles(
-    theme: { background?: string; foreground?: string },
-    hasBackgroundImage: boolean
+    theme: {
+        background?: string;
+        foreground?: string;
+        backgroundImage?: string;
+        backgroundImageTransparency?: number;
+    },
+    hasBackgroundImage: boolean,
+    themeName = ""
 ): void {
     const containerEl = requireElement("container");
 
     if (hasBackgroundImage) {
-        const bgColor = withAlpha(theme.background || "", 0.5);
-        document.body.style.background = `linear-gradient(${bgColor}, ${bgColor}), url('/background') center / cover fixed no-repeat`;
+        const bgColor = withAlpha(theme.background || "", backgroundImageAlpha(theme));
+        document.body.style.background = `linear-gradient(${bgColor}, ${bgColor}), url('${pageBackgroundImageUrl(themeName, theme.backgroundImage)}') center / cover fixed no-repeat`;
         let bgStyle = document.getElementById("b3tty-bg-style") as HTMLStyleElement | null;
         if (!bgStyle) {
             bgStyle = document.createElement("style");
             bgStyle.id = "b3tty-bg-style";
             document.head.appendChild(bgStyle);
         }
-        // xterm.js keeps .xterm-viewport opaque by default specifically so the
-        // browser's native scrollbar renders correctly (see its own CSS comment);
-        // forcing it transparent here so the background image shows through removes
-        // that cue, which leaves some browsers painting an opaque scrollbar track
-        // with an invisible thumb. The scrollbar is styled explicitly below instead
-        // of relying on the browser's default track/thumb color inference.
-        const thumbColor = withAlpha("#808080", 0.6);
-        const thumbColorHover = withAlpha("#808080", 0.8);
-        bgStyle.textContent = `
-            #terminal .xterm-viewport {
-                background-color: transparent !important;
-                scrollbar-color: ${thumbColor} transparent;
-            }
-            #terminal .xterm-viewport::-webkit-scrollbar-track {
-                background: transparent;
-            }
-            #terminal .xterm-viewport::-webkit-scrollbar-thumb {
-                background-color: ${thumbColor};
-                border-radius: 5px;
-            }
-            #terminal .xterm-viewport::-webkit-scrollbar-thumb:hover {
-                background-color: ${thumbColorHover};
-            }
-        `;
+        // Let the background image show through xterm's viewport. The viewport's
+        // native scrollbar is hidden for every theme in terminal.css (xterm.js 6
+        // draws its own), so making it transparent needs no scrollbar styling here.
+        bgStyle.textContent = `#terminal .xterm-viewport { background-color: transparent !important; }`;
         containerEl.style.background = "";
     } else {
         document.body.style.background = "";
@@ -448,14 +545,15 @@ export function applyThemeStyles(
 
 /**
  * Applies all config-driven styles to the page: CSS custom properties for font,
- * the container/body background (solid color or background-image tint), and the
- * profile label colors. Kept separate from main() so DOM-style concerns don't
- * obscure the connection setup flow.
+ * the container background, and the profile label colors. The background image,
+ * if any, is not applied here: main() does that via applyThemeWithBackground once
+ * the image is confirmed to load. Kept separate from main() so DOM-style concerns
+ * don't obscure the connection setup flow.
  */
 export function applyPageStyles(config: TermConfig): void {
     document.documentElement.style.setProperty("--b3tty-font-size", `${config.fontSize}px`);
     document.documentElement.style.setProperty("--b3tty-font-family", buildFontFamilyCssVar(config.fontFamily));
-    applyThemeStyles(config.theme, !!config.backgroundImage);
+    applyThemeStyles(config.theme, false);
 }
 
 /**
@@ -635,6 +733,7 @@ export async function main(config: TermConfig): Promise<void> {
 
     const term = terminalFactory(config);
     term.open(requireElement("terminal"));
+    if (config.backgroundImage) void applyThemeWithBackground(config.theme, term, true, config.activeTheme ?? "");
 
     let fitAddon: FitAddon | undefined;
     if (config.autoResize ?? true) {

@@ -286,23 +286,32 @@ func (ts *TerminalServer) editThemeHandler(w http.ResponseWriter, r *http.Reques
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	// Validation errors go back in the response body so the theme editor can
+	// show the user what to fix.
 	if err := ValidateTheme(&req.Theme); err != nil {
 		Warnf("%s %s: bad request: %v", r.Method, r.URL.Path, err)
-		w.WriteHeader(http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	// The request owns the background image: an empty path clears it. A
+	// non-empty one is stored as typed (e.g. "~/bg.png"), but only once it
+	// resolves to a valid image, so a bad path is never saved.
+	if req.Theme.BackgroundImage != "" {
+		if _, err := resolveBackgroundImage(req.Theme.BackgroundImage); err != nil {
+			Warnf("%s %s: bad request: %v", r.Method, r.URL.Path, err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 
 	ts.StateMu.Lock()
-	if existing, ok := ts.Themes[req.Name]; ok && existing.BackgroundImage != "" {
-		req.Theme.BackgroundImage = existing.BackgroundImage
-	}
 	ts.Themes[req.Name] = req.Theme
 	ts.Theme = req.Theme
 	ts.ActiveTheme = req.Name
 	themeNames := ts.sortedThemeNames()
 	ts.StateMu.Unlock()
 
-	if err := SaveThemeToConfig(ts.ConfigFile, req.Name, req.Theme.toColorMap()); err != nil {
+	if err := SaveThemeToConfig(ts.ConfigFile, req.Name, req.Theme); err != nil {
 		Errorf("edit-theme: failed to save config: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
