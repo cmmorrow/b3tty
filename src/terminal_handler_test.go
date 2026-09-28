@@ -3,6 +3,7 @@ package src
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -17,15 +18,32 @@ import (
 // ---------------------------------------------------------------------------
 
 // newWSTestServer starts a real HTTP server exposing only ts.terminalHandler
-// at /ws and returns the ws:// URL to dial. The server is closed automatically
-// when the test ends.
+// at /ws and returns the ws:// URL to dial, carrying ts.Token so the dial is
+// authorized (see withToken to dial with a different or missing token). The
+// server is closed automatically when the test ends.
 func newWSTestServer(t *testing.T, ts *TerminalServer) string {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", ts.terminalHandler)
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
-	return "ws" + strings.TrimPrefix(server.URL, "http") + "/ws"
+	return withToken(t, "ws"+strings.TrimPrefix(server.URL, "http")+"/ws", ts.Token)
+}
+
+// withToken returns wsURL with its token query parameter set to token, or
+// removed when token is empty.
+func withToken(t *testing.T, wsURL, token string) string {
+	t.Helper()
+	u, err := url.Parse(wsURL)
+	require.NoError(t, err)
+	q := u.Query()
+	if token == "" {
+		q.Del("token")
+	} else {
+		q.Set("token", token)
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // dialAndRead dials wsURL, optionally with the given request header (e.g. to
@@ -211,6 +229,44 @@ func TestTerminalHandler(t *testing.T) {
 		// command is written without terminalHandler's real startup delay.
 		out := readUntilContains(ch, "readymarker", 2*time.Second)
 		assert.Contains(t, out, "echo readymarker")
+	})
+
+	t.Run("upgrade without a token is rejected with 403 and logged", func(t *testing.T) {
+		ts := newCatTestServer()
+		wsURL := withToken(t, newWSTestServer(t, ts), "")
+		var (
+			resp *http.Response
+			err  error
+		)
+		logged := captureLog(func() { _, _, resp, err = dialAndRead(t, wsURL, nil) })
+		require.Error(t, err)
+		require.NotNil(t, resp)
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+		assert.Contains(t, logged, "invalid or missing token")
+		assert.Empty(t, ts.WSClients, "a rejected request must never register a session")
+	})
+
+	t.Run("upgrade with a wrong token is rejected with 403", func(t *testing.T) {
+		ts := newCatTestServer()
+		wsURL := withToken(t, newWSTestServer(t, ts), "wrong-token")
+		var (
+			resp *http.Response
+			err  error
+		)
+		logged := captureLog(func() { _, _, resp, err = dialAndRead(t, wsURL, nil) })
+		require.Error(t, err)
+		require.NotNil(t, resp)
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+		assert.NotContains(t, logged, "wrong-token", "the token must never be logged")
+	})
+
+	t.Run("no-auth mode accepts an upgrade without a token", func(t *testing.T) {
+		ts := newCatTestServer()
+		ts.Token = ""
+		wsURL := newWSTestServer(t, ts)
+		_, _, resp, err := dialAndRead(t, wsURL, nil)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
 	})
 
 	t.Run("cross-origin upgrade request is rejected", func(t *testing.T) {

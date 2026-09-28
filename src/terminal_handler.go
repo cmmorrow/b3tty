@@ -85,8 +85,17 @@ func (ts *TerminalServer) logFirstSessionTiming() {
 // distinguish a clean PTY-initiated shutdown from an unexpected WebSocket
 // error.
 func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request) {
-	Debugf(" %s -> %s %s %s", r.RemoteAddr, r.Host, r.Method, r.URL)
+	Debugf(" %s -> %s %s %s", r.RemoteAddr, r.Host, r.Method, redactedURL(r.URL))
 	Debugf("content length: %d", r.ContentLength)
+	// Checked before the upgrade: the upgrader's Origin check only stops
+	// browsers on other sites, and lets through any client that sends no
+	// Origin header at all, so without the token anyone who could reach the
+	// port could open a shell.
+	if !validateToken(r.URL.Query().Get("token"), ts.Token) {
+		Warnf("%s %s: forbidden: invalid or missing token", r.Method, r.URL.Path)
+		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+		return
+	}
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		Errorf("upgrader error: %v", err)

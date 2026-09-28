@@ -470,6 +470,27 @@ describe("buildWsUrl", () => {
         const url = buildWsUrl("ws", "localhost", 8080, 0, 0);
         expect(url.toString()).toBe("ws://localhost:8080/ws?cols=0&rows=0");
     });
+
+    it("carries the page's token, which the server requires on /ws", () => {
+        const url = buildWsUrl("ws", "localhost", 8080, 80, 24, "?token=abc123");
+        expect(url.toString()).toBe("ws://localhost:8080/ws?cols=80&rows=24&token=abc123");
+    });
+
+    it("drops other page query parameters", () => {
+        const url = buildWsUrl("ws", "localhost", 8080, 80, 24, "?profile=work&token=abc123");
+        expect(url.searchParams.get("token")).toBe("abc123");
+        expect(url.searchParams.has("profile")).toBe(false);
+    });
+
+    it("URL-encodes the token", () => {
+        const url = buildWsUrl("ws", "localhost", 8080, 80, 24, "?token=a%26b");
+        expect(url.searchParams.get("token")).toBe("a&b");
+    });
+
+    it("omits the token when the page has none (no-auth mode)", () => {
+        const url = buildWsUrl("ws", "localhost", 8080, 80, 24, "?profile=work");
+        expect(url.searchParams.has("token")).toBe(false);
+    });
 });
 
 // ---------------------------------------------------------------------------

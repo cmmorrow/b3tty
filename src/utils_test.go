@@ -432,3 +432,33 @@ func TestResolveBackgroundImage(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// redactedURL
+// ---------------------------------------------------------------------------
+
+func TestRedactedURL(t *testing.T) {
+	parse := func(raw string) *url.URL {
+		u, err := url.Parse(raw)
+		require.NoError(t, err)
+		return u
+	}
+
+	t.Run("replaces the token and keeps the other parameters", func(t *testing.T) {
+		got := redactedURL(parse("/ws?cols=80&rows=24&token=s3cret"))
+		assert.NotContains(t, got, "s3cret")
+		assert.Contains(t, got, "token=REDACTED")
+		assert.Contains(t, got, "cols=80")
+		assert.Contains(t, got, "rows=24")
+	})
+
+	t.Run("leaves a URL without a token unchanged", func(t *testing.T) {
+		assert.Equal(t, "/ws?cols=80&rows=24", redactedURL(parse("/ws?cols=80&rows=24")))
+	})
+
+	t.Run("does not modify the original URL", func(t *testing.T) {
+		u := parse("/?token=s3cret")
+		redactedURL(u)
+		assert.Equal(t, "token=s3cret", u.RawQuery)
+	})
+}

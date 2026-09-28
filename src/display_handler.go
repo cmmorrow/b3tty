@@ -124,7 +124,7 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 		Nonce       string
 		ShowMenubar string
 	}
-	Debugf(" %s -> %s %s %s", r.RemoteAddr, r.Host, r.Method, r.URL)
+	Debugf(" %s -> %s %s %s", r.RemoteAddr, r.Host, r.Method, redactedURL(r.URL))
 	Debugf("content length: %d", r.ContentLength)
 
 	// The terminal is only served at "/". Anything else that falls through the
