@@ -2,6 +2,7 @@ package src
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"math"
 	"math/big"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -230,8 +232,23 @@ func generateToken(length int) (string, error) {
 	return string(result), nil
 }
 
-// validateToken reports whether the token query parameter matches the expected server
-// token.
+// redactedURL returns u as a string with the value of any "token" query
+// parameter replaced, for request logging: the page and WebSocket URLs carry
+// the auth token, which must not end up in logs that get shared.
+func redactedURL(u *url.URL) string {
+	q := u.Query()
+	if !q.Has("token") {
+		return u.String()
+	}
+	q.Set("token", "REDACTED")
+	redacted := *u
+	redacted.RawQuery = q.Encode()
+	return redacted.String()
+}
+
+// validateToken reports whether the token sent with a request matches the
+// expected server token. The comparison is constant-time so response timing
+// can't reveal how much of a guess was right.
 func validateToken(q string, serverToken string) bool {
-	return q == serverToken
+	return subtle.ConstantTimeCompare([]byte(q), []byte(serverToken)) == 1
 }

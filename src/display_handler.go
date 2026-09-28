@@ -85,6 +85,28 @@ func buildConfigJSON(srv *Server, clnt *TerminalClient, thm *Theme, themeNames [
 	return json.Marshal(cfg)
 }
 
+// requireToken wraps an API handler so it only runs when the request carries
+// the server's auth token as an "Authorization: Bearer <token>" header,
+// answering 403 otherwise. The same-origin check (requireSameOrigin) only stops
+// other websites; without the token, any program able to reach the port could
+// call the API — e.g. set a profile's shell to an arbitrary command, or turn
+// off authentication for the next start via POST /settings. In no-auth mode
+// ts.Token is empty and every request passes.
+func (ts *TerminalServer) requireToken(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token, isBearer := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !isBearer {
+			token = ""
+		}
+		if !validateToken(token, ts.Token) {
+			Warnf("%s %s: forbidden: invalid or missing token", r.Method, r.URL.Path)
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+		next(w, r)
+	}
+}
+
 // requireSameOrigin writes 403 and returns true when the request carries a
 // cross-origin Sec-Fetch-Site header. Callers should return immediately when
 // this returns true.
@@ -124,7 +146,7 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 		Nonce       string
 		ShowMenubar string
 	}
-	Debugf(" %s -> %s %s %s", r.RemoteAddr, r.Host, r.Method, r.URL)
+	Debugf(" %s -> %s %s %s", r.RemoteAddr, r.Host, r.Method, redactedURL(r.URL))
 	Debugf("content length: %d", r.ContentLength)
 
 	// The terminal is only served at "/". Anything else that falls through the

@@ -328,7 +328,9 @@ The server will only allow connections from localhost or 127.0.0.1 as part of an
 
 By default, when the server starts, the url with a token of 24 randomly generated characters is provided and must be provided to access the b3tty client in the browser. This is to prevent a user without access to the terminal session where b3tty was started from guessing the url. This behavior can be disabled by passing the `--no-auth` flag at start up or setting the `server.no-auth: true` property in the b3tty config.
 
-Each failed token validation incurs an exponential backoff delay before the 403 response is sent: 1s after the first failure, doubling on each subsequent attempt up to a maximum of 30s. The counter resets when a valid token is presented. Backoff is skipped entirely when `--no-auth` is set.
+The token is required on every request except the static client files: the page itself, the WebSocket connection that carries the terminal session (`/ws`), the background image (`/background`), and every API endpoint the browser client and the `b3tty settings set` / `b3tty theme set` commands use to change settings, themes, and profiles. The browser client and the CLI pass it along automatically (the CLI reads it from the running server's lock file, `~/.config/b3tty/b3tty.lock`, which only your user can read). Without it, any program able to reach the port could open a shell, or quietly change what a profile runs or turn authentication off.
+
+Each failed token validation on the page itself incurs an exponential backoff delay before the 403 response is sent: 1s after the first failure, doubling on each subsequent attempt up to a maximum of 30s. The counter resets when a valid token is presented. Backoff is skipped entirely when `--no-auth` is set.
 
 #### Content Security Policy
 

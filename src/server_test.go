@@ -1964,3 +1964,85 @@ func TestBackgroundHandler(t *testing.T) {
 		assert.Equal(t, http.StatusUnsupportedMediaType, w.Code)
 	})
 }
+
+// ---------------------------------------------------------------------------
+// requireToken / newMux
+// ---------------------------------------------------------------------------
+
+func TestRequireToken(t *testing.T) {
+	// call runs a request with the given Authorization header (none when
+	// empty) through requireToken, reporting whether the wrapped handler ran.
+	call := func(ts *TerminalServer, target, authorization string) (*httptest.ResponseRecorder, bool, string) {
+		ran := false
+		handler := ts.requireToken(func(w http.ResponseWriter, r *http.Request) { ran = true })
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		if authorization != "" {
+			req.Header.Set("Authorization", authorization)
+		}
+		w := httptest.NewRecorder()
+		logged := captureLog(func() { handler(w, req) })
+		return w, ran, logged
+	}
+
+	t.Run("correct bearer token reaches the handler", func(t *testing.T) {
+		w, ran, _ := call(newTestTerminalServer(), "/settings", "Bearer test-token-1234")
+		assert.True(t, ran)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("missing token returns 403 and logs a warning", func(t *testing.T) {
+		w, ran, logged := call(newTestTerminalServer(), "/settings", "")
+		assert.False(t, ran)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, logged, "invalid or missing token")
+	})
+
+	t.Run("wrong token returns 403 without logging it", func(t *testing.T) {
+		w, ran, logged := call(newTestTerminalServer(), "/settings", "Bearer wrong-secret")
+		assert.False(t, ran)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.NotContains(t, logged, "wrong-secret")
+	})
+
+	t.Run("token without the Bearer scheme is rejected", func(t *testing.T) {
+		_, ran, _ := call(newTestTerminalServer(), "/settings", "test-token-1234")
+		assert.False(t, ran)
+	})
+
+	t.Run("token in the query string is not accepted for the API", func(t *testing.T) {
+		_, ran, _ := call(newTestTerminalServer(), "/settings?token=test-token-1234", "")
+		assert.False(t, ran)
+	})
+
+	t.Run("no-auth mode lets requests through without a token", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		ts.Token = ""
+		_, ran, _ := call(ts, "/settings", "")
+		assert.True(t, ran)
+	})
+}
+
+func TestNewMuxRequiresTokenOnEveryAPIRoute(t *testing.T) {
+	ts := newTestTerminalServer()
+	mux := ts.newMux()
+	for path := range ts.apiRoutes() {
+		t.Run(path+" rejects a request without the token", func(t *testing.T) {
+			w := httptest.NewRecorder()
+			captureLog(func() { mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil)) })
+			assert.Equal(t, http.StatusForbidden, w.Code)
+		})
+		t.Run(path+" accepts a request with the token", func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req.Header.Set("Authorization", "Bearer "+ts.Token)
+			w := httptest.NewRecorder()
+			captureLog(func() { mux.ServeHTTP(w, req) })
+			assert.NotEqual(t, http.StatusForbidden, w.Code)
+		})
+	}
+
+	t.Run("static bundles are served without the token", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/assets/terminal.css", nil))
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+}

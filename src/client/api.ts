@@ -2,12 +2,27 @@ import { isThemeActivateResponse, isEditProfileResponse, isSettingsConfig } from
 import type { ThemeActivateResponse, Palette, ProfileConfig, EditProfileResponse, SettingsConfig } from "./types.ts";
 
 /**
+ * fetch() for the server's JSON API, which requires the page's auth token as an
+ * "Authorization: Bearer" header on every endpoint. The token comes from the
+ * page's own query string; it is absent in no-auth mode, and under bun test,
+ * which has no window, in which case the request goes out unchanged.
+ */
+export function apiFetch(input: string, init?: RequestInit): Promise<Response> {
+    const search = typeof window !== "undefined" ? (window.location?.search ?? "") : "";
+    const token = new URLSearchParams(search).get("token");
+    if (!token) return init ? fetch(input, init) : fetch(input);
+    const headers = new Headers(init?.headers);
+    headers.set("Authorization", `Bearer ${token}`);
+    return fetch(input, { ...init, headers });
+}
+
+/**
  * POSTs to /add-theme to apply and persist the chosen theme.
  * Returns the activated theme config so the caller can apply it to the terminal.
  * Throws if the request fails or the response fails the type guard.
  */
 export async function postAddTheme(name: string): Promise<ThemeActivateResponse> {
-    const res = await fetch("/add-theme", {
+    const res = await apiFetch("/add-theme", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ theme: name }),
@@ -23,7 +38,7 @@ export async function postAddTheme(name: string): Promise<ThemeActivateResponse>
  * Throws if the request fails or the response fails the type guard.
  */
 export async function postThemeConfig(name: string): Promise<ThemeActivateResponse> {
-    const res = await fetch(`/theme-config?name=${encodeURIComponent(name)}`, { method: "POST" });
+    const res = await apiFetch(`/theme-config?name=${encodeURIComponent(name)}`, { method: "POST" });
     if (!res.ok) throw new Error(`Failed to activate theme "${name}": ${res.status}`);
     const parsed: unknown = await res.json();
     if (!isThemeActivateResponse(parsed)) throw new Error(`Unexpected theme-config response shape`);
@@ -35,7 +50,7 @@ export async function postThemeConfig(name: string): Promise<ThemeActivateRespon
  * Throws if the request fails or the response shape is invalid.
  */
 export async function getThemePalette(name: string): Promise<Palette> {
-    const res = await fetch(`/theme?name=${encodeURIComponent(name)}`);
+    const res = await apiFetch(`/theme?name=${encodeURIComponent(name)}`);
     if (!res.ok) throw new Error(`Failed to fetch palette for theme "${name}": ${res.status}`);
     const parsed: unknown = await res.json();
     if (
@@ -54,7 +69,7 @@ export async function getThemePalette(name: string): Promise<Palette> {
  * Does not check the response status (fire-and-forget, caller handles reload).
  */
 export async function postSaveConfig(theme: string): Promise<void> {
-    await fetch("/save-config", {
+    await apiFetch("/save-config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ theme }),
@@ -66,7 +81,7 @@ export async function postSaveConfig(theme: string): Promise<void> {
  * Throws if the request fails or the response fails the type guard.
  */
 export async function getThemeConfig(name: string): Promise<ThemeActivateResponse> {
-    const res = await fetch(`/theme-config?name=${encodeURIComponent(name)}`);
+    const res = await apiFetch(`/theme-config?name=${encodeURIComponent(name)}`);
     if (!res.ok) throw new Error(`Failed to fetch config for theme "${name}": ${res.status}`);
     const parsed: unknown = await res.json();
     if (!isThemeActivateResponse(parsed)) throw new Error(`Unexpected theme-config response shape`);
@@ -78,7 +93,7 @@ export async function getThemeConfig(name: string): Promise<ThemeActivateRespons
  * Throws if the request fails or the response shape is invalid.
  */
 export async function getProfileConfig(name: string): Promise<ProfileConfig> {
-    const res = await fetch(`/profile-config?name=${encodeURIComponent(name)}`);
+    const res = await apiFetch(`/profile-config?name=${encodeURIComponent(name)}`);
     if (!res.ok) throw new Error(`Failed to fetch config for profile "${name}": ${res.status}`);
     const parsed: unknown = await res.json();
     if (
@@ -97,7 +112,7 @@ export async function getProfileConfig(name: string): Promise<ProfileConfig> {
  * Throws if the request fails or the response fails the type guard.
  */
 export async function postEditProfile(name: string, profile: ProfileConfig): Promise<EditProfileResponse> {
-    const res = await fetch("/edit-profile", {
+    const res = await apiFetch("/edit-profile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, profile }),
@@ -114,7 +129,7 @@ export async function postEditProfile(name: string, profile: ProfileConfig): Pro
  * Throws if the request fails or the response fails the type guard.
  */
 export async function postDeleteProfile(name: string): Promise<EditProfileResponse> {
-    const res = await fetch("/delete-profile", {
+    const res = await apiFetch("/delete-profile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
@@ -130,7 +145,7 @@ export async function postDeleteProfile(name: string): Promise<EditProfileRespon
  * Throws if the request fails or the response fails the type guard.
  */
 export async function getSettings(): Promise<SettingsConfig> {
-    const res = await fetch("/settings");
+    const res = await apiFetch("/settings");
     if (!res.ok) throw new Error(`Failed to fetch settings: ${res.status}`);
     const parsed: unknown = await res.json();
     if (!isSettingsConfig(parsed)) throw new Error("Unexpected settings response shape");
@@ -143,7 +158,7 @@ export async function getSettings(): Promise<SettingsConfig> {
  * Throws if the request fails or the response fails the type guard.
  */
 export async function postSettings(settings: SettingsConfig): Promise<SettingsConfig> {
-    const res = await fetch("/settings", {
+    const res = await apiFetch("/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(settings),
@@ -163,7 +178,7 @@ export async function postEditTheme(
     name: string,
     theme: Record<string, string | number>
 ): Promise<ThemeActivateResponse> {
-    const res = await fetch("/edit-theme", {
+    const res = await apiFetch("/edit-theme", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, theme }),

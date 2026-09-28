@@ -143,7 +143,7 @@ font-size apply to live sessions immediately.`,
 		}
 		cmdLog.Info("settings saved")
 
-		notifyRunningServer(currentPort, serverCfg, terminalCfg)
+		notifyRunningServer(serverCfg, terminalCfg)
 
 		needsRestart := false
 		for _, f := range []string{"port", "no-auth", "no-browser", "show-menubar", "auto-resize"} {
@@ -185,12 +185,20 @@ var settingsEditCmd = &cobra.Command{
 	},
 }
 
-// postToRunningServer fires a best-effort POST to the running b3tty server.
-// Errors are silently ignored; the server may simply not be running.
-func postToRunningServer(serverPort int, path string, body any) {
+// postToRunningServer fires a best-effort POST to the running b3tty server,
+// located through its lock file rather than the configured port: the lock
+// file holds the port the server actually listens on (which `settings set
+// --port` may have just changed in the config), its protocol, and the auth
+// token the server requires on its API. Errors are silently ignored; the
+// server may simply not be running.
+func postToRunningServer(path string, body any) {
+	lock, err := src.ReadLockFile()
+	if err != nil || lock == nil {
+		return
+	}
 	scheme := "http"
 	httpClient := &http.Client{Timeout: 2 * time.Second}
-	if tls {
+	if lock.Protocol == "https" {
 		scheme = "https"
 		tlsCfg := &cryptotls.Config{}
 		if certFile != "" {
@@ -210,8 +218,16 @@ func postToRunningServer(serverPort int, path string, body any) {
 	if err != nil {
 		return
 	}
-	url := fmt.Sprintf("%s://localhost:%d%s", scheme, serverPort, path)
-	resp, err := httpClient.Post(url, "application/json", bytes.NewReader(data))
+	url := fmt.Sprintf("%s://localhost:%d%s", scheme, lock.Port, path)
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if lock.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+lock.Token)
+	}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return
 	}
@@ -221,12 +237,12 @@ func postToRunningServer(serverPort int, path string, body any) {
 // notifyRunningServer attempts to POST the new settings to the running b3tty
 // server so it can update its in-memory state and push the change to any open
 // browser sessions. Errors are ignored — the server may simply not be running.
-func notifyRunningServer(serverPort int, serverCfg src.SettingsServerConfig, terminalCfg src.TerminalClient) {
+func notifyRunningServer(serverCfg src.SettingsServerConfig, terminalCfg src.TerminalClient) {
 	payload := struct {
 		Server   src.SettingsServerConfig `json:"server"`
 		Terminal src.TerminalClient       `json:"terminal"`
 	}{Server: serverCfg, Terminal: terminalCfg}
-	postToRunningServer(serverPort, "/settings", payload)
+	postToRunningServer("/settings", payload)
 }
 
 // resolveConfigPath returns the active config file path, falling back to the

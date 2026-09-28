@@ -174,6 +174,42 @@ func (s *Server) buildUIUrl(token, startupProfile string) string {
 	return u.String()
 }
 
+// apiRoutes lists the JSON API endpoints, all of which require the auth token
+// as an "Authorization: Bearer" header (see requireToken). Kept as data so a
+// test can check that every one of them is protected.
+func (ts *TerminalServer) apiRoutes() map[string]http.HandlerFunc {
+	return map[string]http.HandlerFunc{
+		"/theme":          ts.themePaletteHandler,
+		"/theme-config":   ts.themeConfigHandler,
+		"/add-theme":      ts.addThemeHandler,
+		"/edit-theme":     ts.editThemeHandler,
+		"/save-config":    ts.saveConfigHandler,
+		"/profile-config": ts.profileConfigHandler,
+		"/edit-profile":   ts.editProfileHandler,
+		"/delete-profile": ts.deleteProfileHandler,
+		"/settings":       ts.settingsHandler,
+	}
+}
+
+// newMux registers every route. The token is required everywhere except the
+// static bundles under /assets/ and /dist/, which are the same public client
+// code for every user: the page (/), the WebSocket (/ws), and the background
+// image (/background) take it as a ?token= query parameter, since an <img>,
+// CSS url(), or WebSocket can't set headers, and check it themselves; the API
+// routes take it as a header via requireToken.
+func (ts *TerminalServer) newMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", ts.displayTermHandler)
+	mux.HandleFunc("/assets/", assetsHandler)
+	mux.HandleFunc("/dist/", distHandler)
+	mux.HandleFunc("/ws", ts.terminalHandler)
+	mux.HandleFunc("/background", ts.backgroundHandler)
+	for path, handler := range ts.apiRoutes() {
+		mux.HandleFunc(path, ts.requireToken(handler))
+	}
+	return mux
+}
+
 // Serve wires up the HTTP mux and starts the server.
 func Serve(ts *TerminalServer, shouldOpenBrowser bool, useTLS bool) {
 	ts.WSClients = make(map[*websocket.Conn]*wsClient)
@@ -207,7 +243,6 @@ func Serve(ts *TerminalServer, shouldOpenBrowser bool, useTLS bool) {
 		}
 	}
 
-	mux := http.NewServeMux()
 	Infof("%s server started on %s", protocol, Bold(uiUrl))
 
 	// Display the available profiles in the config file
@@ -215,23 +250,9 @@ func Serve(ts *TerminalServer, shouldOpenBrowser bool, useTLS bool) {
 		logProfileURLs(ts.Server, ts.Profiles, ts.Token)
 	}
 
-	mux.HandleFunc("/", ts.displayTermHandler)
-	mux.HandleFunc("/assets/", assetsHandler)
-	mux.HandleFunc("/dist/", distHandler)
-	mux.HandleFunc("/ws", ts.terminalHandler)
-	mux.HandleFunc("/background", ts.backgroundHandler)
-	mux.HandleFunc("/theme", ts.themePaletteHandler)
-	mux.HandleFunc("/theme-config", ts.themeConfigHandler)
-	mux.HandleFunc("/add-theme", ts.addThemeHandler)
-	mux.HandleFunc("/edit-theme", ts.editThemeHandler)
-	mux.HandleFunc("/save-config", ts.saveConfigHandler)
-	mux.HandleFunc("/profile-config", ts.profileConfigHandler)
-	mux.HandleFunc("/edit-profile", ts.editProfileHandler)
-	mux.HandleFunc("/delete-profile", ts.deleteProfileHandler)
-	mux.HandleFunc("/settings", ts.settingsHandler)
 	httpServer := &http.Server{
 		Addr:         ts.Server.URL.Host,
-		Handler:      mux,
+		Handler:      ts.newMux(),
 		ErrorLog:     NewWarnLogger(),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,

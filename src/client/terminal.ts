@@ -166,15 +166,26 @@ export function buildTermOptions(
 /**
  * Builds the URL used to open the terminal WebSocket connection. cols/rows are
  * carried as query parameters so the server can size the pty at upgrade time
- * without a separate /size round trip before the socket opens.
+ * without a separate /size round trip before the socket opens. The server
+ * requires the page's auth token on /ws, so it is carried over from the page's
+ * own query string (`search`) when present (it is absent in no-auth mode).
  */
-export function buildWsUrl(wsProtocol: string, uri: string, port: number, cols: number, rows: number): URL {
+export function buildWsUrl(
+    wsProtocol: string,
+    uri: string,
+    port: number,
+    cols: number,
+    rows: number,
+    search = ""
+): URL {
     if (!isValidWsProtocol(wsProtocol)) throw new Error(`Invalid WebSocket protocol: "${wsProtocol}"`);
     if (!isValidUri(uri)) throw new Error(`Invalid URI: "${uri}"`);
     if (!isValidPort(port)) throw new Error(`Invalid port: ${port}`);
     const url = new URL(`${wsProtocol}://${uri}:${port}/ws`);
     url.searchParams.set("cols", String(cols));
     url.searchParams.set("rows", String(rows));
+    const token = new URLSearchParams(search).get("token");
+    if (token) url.searchParams.set("token", token);
     return url;
 }
 
@@ -751,7 +762,7 @@ export async function main(config: TermConfig): Promise<void> {
 
     // cols/rows travel on the /ws URL itself so the server can size the pty at
     // upgrade time with no separate /size round trip before the socket opens.
-    const wsUrl = buildWsUrl(wsProtocol, config.uri, config.port, term.cols, term.rows);
+    const wsUrl = buildWsUrl(wsProtocol, config.uri, config.port, term.cols, term.rows, window.location.search);
     const socket = new WebSocket(wsUrl);
     socket.binaryType = "arraybuffer";
 
