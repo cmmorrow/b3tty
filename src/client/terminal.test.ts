@@ -48,6 +48,7 @@ import {
     MAX_UINT16,
 } from "./validators.ts";
 import { isB3ttyDialog, isB3ttyMenuBar } from "./components.ts";
+import { apiFetch, getSettings } from "./api.ts";
 import { isThemeActivateResponse } from "./types.ts";
 
 // ---------------------------------------------------------------------------
@@ -2799,5 +2800,65 @@ describe("handleThemeEdited", () => {
             { current: "b3tty-dark" }
         );
         expect(config.allThemeNames!.filter((n) => n === "my-theme").length).toBe(1);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// apiFetch
+// ---------------------------------------------------------------------------
+
+describe("apiFetch", () => {
+    let savedWindow: unknown;
+    let savedFetch: unknown;
+    let fetchMock: ReturnType<typeof mock>;
+
+    beforeEach(() => {
+        savedWindow = (globalThis as Record<string, unknown>)["window"];
+        savedFetch = globalThis.fetch;
+        fetchMock = mock(() => Promise.resolve(new Response("{}")));
+        (globalThis as Record<string, unknown>)["fetch"] = fetchMock;
+    });
+
+    afterEach(() => {
+        (globalThis as Record<string, unknown>)["window"] = savedWindow;
+        (globalThis as Record<string, unknown>)["fetch"] = savedFetch;
+    });
+
+    const setSearch = (search: string) => {
+        (globalThis as Record<string, unknown>)["window"] = { location: { search } };
+    };
+    const sentHeaders = () => new Headers((fetchMock.mock.calls[0] as [string, RequestInit])[1].headers);
+
+    it("sends the page's token as a bearer Authorization header", async () => {
+        setSearch("?profile=work&token=abc123");
+        await apiFetch("/settings");
+        expect(sentHeaders().get("Authorization")).toBe("Bearer abc123");
+    });
+
+    it("keeps the caller's method, body, and headers", async () => {
+        setSearch("?token=abc123");
+        await apiFetch("/edit-theme", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+        });
+        const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+        expect(init.method).toBe("POST");
+        expect(init.body).toBe("{}");
+        expect(sentHeaders().get("Content-Type")).toBe("application/json");
+        expect(sentHeaders().get("Authorization")).toBe("Bearer abc123");
+    });
+
+    it("sends the request unchanged when the page has no token (no-auth mode)", async () => {
+        setSearch("?profile=work");
+        await apiFetch("/settings");
+        expect(fetchMock).toHaveBeenCalledWith("/settings");
+    });
+
+    it("is what the API helpers use", async () => {
+        setSearch("?token=abc123");
+        await getSettings().catch(() => {});
+        expect(fetchMock.mock.calls[0]?.[0]).toBe("/settings");
+        expect(sentHeaders().get("Authorization")).toBe("Bearer abc123");
     });
 });

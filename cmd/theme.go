@@ -93,7 +93,7 @@ Changes take effect the next time b3tty is started.`,
 			cmdLog.Fatalf("failed to update theme: %v", err)
 		}
 		cmdLog.Infof("active theme set to %q", name)
-		postToRunningServer(port, fmt.Sprintf("/theme-config?name=%s", url.QueryEscape(name)), struct{}{})
+		postToRunningServer(fmt.Sprintf("/theme-config?name=%s", url.QueryEscape(name)), struct{}{})
 	},
 }
 
