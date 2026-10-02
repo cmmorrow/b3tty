@@ -17,6 +17,7 @@ b3tty start --help
 * Customizable themes
 * User defined profiles
 * In-browser menu bar for switching themes and profiles at runtime
+* Command palette (Ctrl+Shift+;) for keyboard access to themes, profiles, and settings
 * Mouse support
 * Auto-fit and resizing
 * Background image support
@@ -250,6 +251,19 @@ The menu bar is a browser-side control strip that appears at the top of the term
 
 **Colors** — the menu bar uses the terminal's foreground color as its background and the terminal's background color as its text color, so it contrasts naturally with the active theme. When the theme is changed via the Themes menu, the menu bar colors update automatically to match.
 
+## Command palette
+
+Press **Ctrl+Shift+;** in the terminal to open the command palette, a keyboard-driven search box for everything the menu bar can do. Type to filter, use **↑**/**↓** to choose, **Enter** to run, and **Esc** (or click outside the palette) to close and return to the terminal.
+
+Each command's label starts with its kind, so commands that open a dialog are easy to tell apart from ones that act right away:
+- `select:theme`, `edit:theme`, `edit:profile`, `b3tty:settings`, and `b3tty:about` open the same dialogs as the menu bar
+- `theme:<name>` (for example `theme:solarized-dark`), one per theme in the Themes menu, switches to that theme
+- `profile:<name>`, one per non-default profile, opens that profile in a new browser tab
+
+Themes and profiles added while the page is open appear in the palette right away. With an empty search, recently run commands are listed first; recents are remembered in the browser across page reloads.
+
+The command palette works even when the menu bar is disabled (`--show-menubar disable`, or `show-menubar: disable` in the `server` section of the config file).
+
 ## Theme Selector
 
 The Theme Selector is a full-page overlay that lets you browse and apply any built-in or user-defined theme from directly inside the terminal page, without editing the config file.
@@ -350,5 +364,7 @@ Pull requests are welcome. The following checks run automatically on every PR an
 
 - **Test** — `make test` runs the full Go and bun test suites.
 - **Format** — `make format-check` verifies that all frontend TypeScript source files are formatted with prettier. Run `make format` locally to fix any formatting issues before pushing.
+
+The component styles also live in a b3tty design system artifact used for reviewing and tweaking them. After changing `src/client/components.ts` or `src/client/design.ts`, run `make design-system` to rebuild the artifact's component bundle at `build/design-system/bundle.js`.
 
 When a PR that updates the `VERSION` file is merged into `main`, a git tag matching the new version number is created automatically.

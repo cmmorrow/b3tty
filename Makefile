@@ -19,7 +19,7 @@ PACKAGE_VERSION=$(shell cat VERSION)
 # Build flags
 BUILD_FLAGS=-v -ldflags="-X 'github.com/cmmorrow/b3tty/cmd.Version=$(PACKAGE_VERSION)'"
 # BUILD_FLAGS=-v -ldflags="-X 'github.com/cmmorrow/b3tty/cmd.Version=test'"
-.PHONY: all setup format format-check lint client build test test-race clean run deps tidy build-linux build-freebsd build-mac
+.PHONY: all setup format format-check lint client design-system build test test-race clean run deps tidy build-linux build-freebsd build-mac
 
 all: test build
 
@@ -42,6 +42,12 @@ client:
 		--define __B3TTY_VERSION__='"$(PACKAGE_VERSION)"'
 	cp src/client/node_modules/@xterm/xterm/css/xterm.css src/dist/xterm.min.css
 
+# Bundles the real components.ts/design.ts with a fixture-backed stand-in for
+# api.ts into build/design-system/bundle.js, the project/components/bundle.js
+# of the b3tty design system artifact. Not part of any other target.
+design-system:
+	cd src/client && bun design-system/build.ts ../../build/design-system
+
 build: client
 	@echo "Building $(BINARY_NAME) version $(PACKAGE_VERSION)"
 	$(GOBUILD) $(BUILD_FLAGS) -o $(BINARY_NAME) $(MAIN_PACKAGE)
@@ -63,7 +69,7 @@ test-race: client
 clean:
 	$(GOCLEAN)
 	rm -f $(BINARY_NAME)
-	rm -rf src/dist
+	rm -rf src/dist build/design-system
 
 run: build
 	./$(BINARY_NAME)

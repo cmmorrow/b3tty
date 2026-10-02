@@ -164,3 +164,14 @@ declare global {
         B3TTY?: TermConfig;
     }
 }
+
+/**
+ * One entry in the command palette. `id` is what the palette reports back when
+ * the command is run; `label` is what is shown and searched; `group` is the
+ * short category shown at the right of the row (e.g. "Themes").
+ */
+export interface PaletteCommand {
+    id: string;
+    label: string;
+    group: string;
+}
