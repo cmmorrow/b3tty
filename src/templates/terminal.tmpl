@@ -13,13 +13,12 @@
             <div id="terminal"></div>
             <div id="profile">{{ if ne .ProfileName "default" }}Profile: {{ .ProfileName }}{{ end }}</div>
             <b3tty-dialog id="dialog"></b3tty-dialog>
-        {{ if ne .ShowMenubar "disable" }}
-        <b3tty-theme-picker id="theme-picker"></b3tty-theme-picker>
-        <b3tty-theme-editor id="theme-editor"></b3tty-theme-editor>
-        <b3tty-profile-editor id="profile-editor"></b3tty-profile-editor>
-        <b3tty-settings-editor id="settings-editor"></b3tty-settings-editor>
-        <b3tty-about-dialog id="about-dialog"></b3tty-about-dialog>
-        {{ end }}
+            <b3tty-theme-picker id="theme-picker"></b3tty-theme-picker>
+            <b3tty-theme-editor id="theme-editor"></b3tty-theme-editor>
+            <b3tty-profile-editor id="profile-editor"></b3tty-profile-editor>
+            <b3tty-settings-editor id="settings-editor"></b3tty-settings-editor>
+            <b3tty-about-dialog id="about-dialog"></b3tty-about-dialog>
+            <b3tty-command-palette id="command-palette"></b3tty-command-palette>
         </div>
     </body>
     <script nonce="{{ .Nonce }}">window.B3TTY = {{ .ConfigJSON }};</script>

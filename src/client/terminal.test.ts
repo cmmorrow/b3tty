@@ -37,7 +37,16 @@ import {
     backgroundImageUrl,
     backgroundImageAlpha,
     loadBackgroundImage,
+    activateTheme,
+    handleProfileEdited,
+    isCommandPaletteShortcut,
+    buildPaletteCommands,
+    loadRecentCommandIds,
+    recordRecentCommandId,
+    RECENT_COMMANDS_KEY,
+    MAX_RECENT_COMMANDS,
 } from "./terminal.ts";
+import type { PaletteActions } from "./terminal.ts";
 import {
     isValidHttpProtocol,
     isValidWsProtocol,
@@ -2860,5 +2869,221 @@ describe("apiFetch", () => {
         await getSettings().catch(() => {});
         expect(fetchMock.mock.calls[0]?.[0]).toBe("/settings");
         expect(sentHeaders().get("Authorization")).toBe("Bearer abc123");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// activateTheme
+// ---------------------------------------------------------------------------
+
+describe("activateTheme", () => {
+    let savedDocument: unknown;
+    let savedFetch: unknown;
+
+    beforeEach(() => {
+        savedDocument = (globalThis as Record<string, unknown>)["document"];
+        savedFetch = (globalThis as Record<string, unknown>)["fetch"];
+    });
+
+    afterEach(() => {
+        (globalThis as Record<string, unknown>)["document"] = savedDocument;
+        (globalThis as Record<string, unknown>)["fetch"] = savedFetch;
+        mock.restore();
+    });
+
+    it("applies the theme and updates activeTheme when there is no menu bar", async () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        (globalThis as Record<string, unknown>)["fetch"] = mock(() =>
+            Promise.resolve({
+                ok: true,
+                json: () =>
+                    Promise.resolve({ hasBackgroundImage: false, foreground: "#ffffff", background: "#14181d" }),
+            })
+        );
+        const term = terminalFactory({
+            tls: false,
+            uri: "localhost",
+            port: 8080,
+            fontSize: 14,
+            fontFamily: "monospace",
+            rows: 24,
+            columns: 80,
+            theme: {},
+        });
+        const activeTheme = { current: "b3tty-dark" };
+        await activateTheme("dracula", term, null, activeTheme);
+        expect(activeTheme.current).toBe("dracula");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// handleProfileEdited
+// ---------------------------------------------------------------------------
+
+describe("handleProfileEdited", () => {
+    it("updates config.profileNames when there is no menu bar", async () => {
+        const config = { profileNames: ["default"] } as unknown as Parameters<typeof handleProfileEdited>[2];
+        const e = { detail: { name: "work", response: { profileNames: ["default", "work"] } } } as unknown as Event;
+        await handleProfileEdited(e, null, config);
+        expect(config.profileNames).toEqual(["default", "work"]);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// isCommandPaletteShortcut
+// ---------------------------------------------------------------------------
+
+describe("isCommandPaletteShortcut", () => {
+    const base = { ctrlKey: true, shiftKey: true, altKey: false, metaKey: false, code: "Semicolon" };
+
+    it("matches Ctrl+Shift+;", () => {
+        expect(isCommandPaletteShortcut(base)).toBe(true);
+    });
+
+    it("requires both Ctrl and Shift", () => {
+        expect(isCommandPaletteShortcut({ ...base, ctrlKey: false })).toBe(false);
+        expect(isCommandPaletteShortcut({ ...base, shiftKey: false })).toBe(false);
+    });
+
+    it("rejects extra Alt or Meta modifiers", () => {
+        expect(isCommandPaletteShortcut({ ...base, altKey: true })).toBe(false);
+        expect(isCommandPaletteShortcut({ ...base, metaKey: true })).toBe(false);
+    });
+
+    it("rejects other keys", () => {
+        expect(isCommandPaletteShortcut({ ...base, code: "Quote" })).toBe(false);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// buildPaletteCommands
+// ---------------------------------------------------------------------------
+
+describe("buildPaletteCommands", () => {
+    function makeActions() {
+        return {
+            openThemePicker: mock(() => {}),
+            openThemeEditor: mock(() => {}),
+            openProfileEditor: mock(() => {}),
+            openSettings: mock(() => {}),
+            openAbout: mock(() => {}),
+            activateTheme: mock((_name: string) => {}),
+            openProfile: mock((_name: string) => {}),
+        } satisfies PaletteActions;
+    }
+
+    it("always lists the menu commands, even with no themes or profiles", () => {
+        const ids = buildPaletteCommands({}, makeActions()).map((c) => c.id);
+        expect(ids).toEqual([
+            "open:theme-selector",
+            "open:theme-editor",
+            "open:profile-editor",
+            "open:settings",
+            "open:about",
+        ]);
+    });
+
+    it("labels the menu commands by kind", () => {
+        const labels = buildPaletteCommands({}, makeActions()).map((c) => c.label);
+        expect(labels).toEqual(["select:theme", "edit:theme", "edit:profile", "b3tty:settings", "b3tty:about"]);
+    });
+
+    it("runs the matching action for each menu command", () => {
+        const actions = makeActions();
+        const commands = buildPaletteCommands({}, actions);
+        const run = (id: string) => commands.find((c) => c.id === id)!.run();
+        run("open:theme-selector");
+        run("open:theme-editor");
+        run("open:profile-editor");
+        run("open:settings");
+        run("open:about");
+        expect(actions.openThemePicker).toHaveBeenCalledTimes(1);
+        expect(actions.openThemeEditor).toHaveBeenCalledTimes(1);
+        expect(actions.openProfileEditor).toHaveBeenCalledTimes(1);
+        expect(actions.openSettings).toHaveBeenCalledTimes(1);
+        expect(actions.openAbout).toHaveBeenCalledTimes(1);
+    });
+
+    it("adds one command per Themes-menu theme that activates it", () => {
+        const actions = makeActions();
+        const commands = buildPaletteCommands({ themeNames: ["dracula", "solarized-dark"] }, actions);
+        const themes = commands.filter((c) => c.id.startsWith("theme:"));
+        expect(themes.map((c) => [c.id, c.label, c.group])).toEqual([
+            ["theme:dracula", "theme:dracula", "Themes"],
+            ["theme:solarized-dark", "theme:solarized-dark", "Themes"],
+        ]);
+        themes[1]!.run();
+        expect(actions.activateTheme).toHaveBeenCalledWith("solarized-dark");
+    });
+
+    it("adds one command per non-default profile that opens it", () => {
+        const actions = makeActions();
+        const commands = buildPaletteCommands({ profileNames: ["default", "work"] }, actions);
+        const profiles = commands.filter((c) => c.id.startsWith("profile:"));
+        expect(profiles.map((c) => [c.id, c.label, c.group])).toEqual([["profile:work", "profile:work", "Profiles"]]);
+        profiles[0]!.run();
+        expect(actions.openProfile).toHaveBeenCalledWith("work");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// loadRecentCommandIds / recordRecentCommandId
+// ---------------------------------------------------------------------------
+
+describe("recent command ids", () => {
+    function makeStorage(initial?: string) {
+        const data = new Map<string, string>();
+        if (initial !== undefined) data.set(RECENT_COMMANDS_KEY, initial);
+        return {
+            data,
+            getItem: (k: string) => data.get(k) ?? null,
+            setItem: (k: string, v: string) => void data.set(k, v),
+        };
+    }
+
+    it("loads [] from null, empty, malformed, or non-array storage", () => {
+        expect(loadRecentCommandIds(null)).toEqual([]);
+        expect(loadRecentCommandIds(makeStorage())).toEqual([]);
+        expect(loadRecentCommandIds(makeStorage("{not json"))).toEqual([]);
+        expect(loadRecentCommandIds(makeStorage('{"a":1}'))).toEqual([]);
+    });
+
+    it("loads [] when storage throws", () => {
+        const storage = {
+            getItem: () => {
+                throw new Error("blocked");
+            },
+        };
+        expect(loadRecentCommandIds(storage)).toEqual([]);
+    });
+
+    it("drops non-string entries", () => {
+        expect(loadRecentCommandIds(makeStorage('["a", 1, null, "b"]'))).toEqual(["a", "b"]);
+    });
+
+    it("records most recent first without duplicates", () => {
+        const storage = makeStorage('["a", "b", "c"]');
+        recordRecentCommandId(storage, "b");
+        expect(loadRecentCommandIds(storage)).toEqual(["b", "a", "c"]);
+    });
+
+    it("keeps at most the maximum number of ids", () => {
+        const storage = makeStorage();
+        for (let i = 0; i < MAX_RECENT_COMMANDS + 3; i++) recordRecentCommandId(storage, `cmd${i}`);
+        const ids = loadRecentCommandIds(storage);
+        expect(ids).toHaveLength(MAX_RECENT_COMMANDS);
+        expect(ids[0]).toBe(`cmd${MAX_RECENT_COMMANDS + 2}`);
+    });
+
+    it("ignores null storage and setItem failures", () => {
+        expect(() => recordRecentCommandId(null, "a")).not.toThrow();
+        const storage = {
+            getItem: () => null,
+            setItem: () => {
+                throw new Error("quota");
+            },
+        };
+        expect(() => recordRecentCommandId(storage, "a")).not.toThrow();
     });
 });

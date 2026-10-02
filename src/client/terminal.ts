@@ -15,6 +15,7 @@ import type {
     ThemeConfig,
     SettingsConfig,
     TerminalClient,
+    PaletteCommand,
 } from "./types.ts";
 import { DEFAULT_BACKGROUND_IMAGE_TRANSPARENCY } from "./types.ts";
 import { isValidWsProtocol, isValidPort, isValidUri } from "./validators.ts";
@@ -568,19 +569,18 @@ export function applyPageStyles(config: TermConfig): void {
 }
 
 /**
- * Handles a b3tty-theme-change event by fetching the new theme config from the server,
- * applying it to the terminal and page styles, and updating the menu bar colors.
- * activeTheme is a ref object whose `current` field tracks the last successfully applied
- * theme name; if the selected name matches the current value the handler returns early
- * without making a network request. `current` is updated after each successful change.
+ * Activates a theme already in the Themes menu by fetching its config from the server,
+ * applying it to the terminal and page styles, and updating the menu bar colors (skipped
+ * when menuBar is null). activeTheme is a ref object whose `current` field tracks the
+ * last successfully applied theme name; if name matches the current value this returns
+ * early without making a network request. `current` is updated after each successful change.
  */
-export async function handleThemeChange(
-    e: Event,
+export async function activateTheme(
+    name: string,
     term: Terminal,
-    menuBar: B3ttyMenuBar,
+    menuBar: B3ttyMenuBar | null,
     activeTheme: { current: string }
 ): Promise<void> {
-    const { name } = (e as CustomEvent<{ name: string }>).detail;
     if (name === activeTheme.current) return;
     let newTheme: ThemeActivateResponse;
     try {
@@ -589,36 +589,59 @@ export async function handleThemeChange(
         return;
     }
 
-    menuBar.updateColors(applyResolvedTheme(name, newTheme, term, activeTheme));
+    // Not inlined into the optional call: `?.` would skip applying the theme when menuBar is null.
+    const colors = applyResolvedTheme(name, newTheme, term, activeTheme);
+    menuBar?.updateColors(colors);
 }
 
 /**
- * Handles a b3tty-profile-change event by opening the selected profile in a new tab,
- * preserving any existing query parameters.
+ * Handles a b3tty-theme-change event from the menu bar by activating the selected theme.
  */
-export function handleProfileChange(e: Event): void {
+export async function handleThemeChange(
+    e: Event,
+    term: Terminal,
+    menuBar: B3ttyMenuBar,
+    activeTheme: { current: string }
+): Promise<void> {
     const { name } = (e as CustomEvent<{ name: string }>).detail;
+    await activateTheme(name, term, menuBar, activeTheme);
+}
+
+/**
+ * Opens the named profile in a new tab, preserving any existing query parameters.
+ */
+export function openProfileTab(name: string): void {
     const params = new URLSearchParams(window.location.search);
     params.set("profile", name);
     window.open(`/?${params.toString()}`, "_blank");
 }
 
 /**
+ * Handles a b3tty-profile-change event by opening the selected profile in a new tab.
+ */
+export function handleProfileChange(e: Event): void {
+    const { name } = (e as CustomEvent<{ name: string }>).detail;
+    openProfileTab(name);
+}
+
+/**
  * Refreshes the menu bar after a theme change that may have added a new theme to
  * the Themes menu. When the response includes an updated themeNames list, config
  * and the menu bar are rebuilt with it; otherwise only the menu bar colors are updated.
+ * config is updated even when menuBar is null (menu bar disabled), since the command
+ * palette builds its theme list from it.
  */
 function refreshMenuBarThemeNames(
     newTheme: ThemeActivateResponse,
-    menuBar: B3ttyMenuBar,
+    menuBar: B3ttyMenuBar | null,
     config: TermConfig,
     colors: MenuBarColors
 ): void {
     if (newTheme.themeNames) {
         config.themeNames = newTheme.themeNames;
-        menuBar.setup(config.themeNames, config.profileNames ?? [], colors, menuBarMode(config));
+        menuBar?.setup(config.themeNames, config.profileNames ?? [], colors, menuBarMode(config));
     } else {
-        menuBar.updateColors(colors);
+        menuBar?.updateColors(colors);
     }
 }
 
@@ -633,7 +656,7 @@ function refreshMenuBarThemeNames(
 export async function handleThemeSelected(
     e: Event,
     term: Terminal,
-    menuBar: B3ttyMenuBar,
+    menuBar: B3ttyMenuBar | null,
     picker: B3ttyThemePicker,
     config: TermConfig,
     activeTheme: { current: string }
@@ -656,10 +679,10 @@ export async function handleThemeSelected(
  * Updates the menu bar after a profile is saved or deleted.
  * Called when b3tty-profile-editor dispatches "b3tty-profile-edited".
  */
-export async function handleProfileEdited(e: Event, menuBar: B3ttyMenuBar, config: TermConfig): Promise<void> {
+export async function handleProfileEdited(e: Event, menuBar: B3ttyMenuBar | null, config: TermConfig): Promise<void> {
     const { response } = (e as CustomEvent<{ name: string | null; response: EditProfileResponse }>).detail;
     config.profileNames = response.profileNames;
-    menuBar.setup(config.themeNames ?? [], config.profileNames, menuBarColors(config.theme), menuBarMode(config));
+    menuBar?.setup(config.themeNames ?? [], config.profileNames, menuBarColors(config.theme), menuBarMode(config));
 }
 
 /**
@@ -670,7 +693,7 @@ export async function handleProfileEdited(e: Event, menuBar: B3ttyMenuBar, confi
 export async function handleThemeEdited(
     e: Event,
     term: Terminal,
-    menuBar: B3ttyMenuBar,
+    menuBar: B3ttyMenuBar | null,
     config: TermConfig,
     activeTheme: { current: string }
 ): Promise<void> {
@@ -712,6 +735,121 @@ export function applyTerminalSettings(t: TerminalClient, term: Terminal, config:
 export function handleSettingsEdited(e: Event, term: Terminal, config: TermConfig): void {
     const { response } = (e as CustomEvent<{ response: SettingsConfig }>).detail;
     applyTerminalSettings(response.terminal, term, config);
+}
+
+/**
+ * Returns true for the command palette's keyboard shortcut, Ctrl+Shift+;. Matched on
+ * `code` rather than `key`, since Shift+; produces ":" (or another character on
+ * non-US layouts).
+ */
+export function isCommandPaletteShortcut(
+    e: Pick<KeyboardEvent, "ctrlKey" | "shiftKey" | "altKey" | "metaKey" | "code">
+): boolean {
+    return e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && e.code === "Semicolon";
+}
+
+/**
+ * A command palette entry together with the action it runs.
+ */
+export interface RunnableCommand extends PaletteCommand {
+    run(): void;
+}
+
+/**
+ * The actions command palette entries can run, supplied by main().
+ */
+export interface PaletteActions {
+    openThemePicker(): void;
+    openThemeEditor(): void;
+    openProfileEditor(): void;
+    openSettings(): void;
+    openAbout(): void;
+    activateTheme(name: string): void;
+    openProfile(name: string): void;
+}
+
+/**
+ * Builds the command palette's command list from the current config. Called on every
+ * open, so themes and profiles added since page load (which the theme/profile handlers
+ * record in config) are always listed. Themes come from config.themeNames (the Themes
+ * menu); profiles exclude "default", matching the Profiles menu. Labels are prefixed by
+ * kind (select:/edit:/b3tty: for commands that open a dialog, theme:/profile: for ones
+ * that act directly) so the two are easy to tell apart.
+ */
+export function buildPaletteCommands(
+    config: Pick<TermConfig, "themeNames" | "profileNames">,
+    actions: PaletteActions
+): RunnableCommand[] {
+    const commands: RunnableCommand[] = [
+        { id: "open:theme-selector", label: "select:theme", group: "Themes", run: actions.openThemePicker },
+        { id: "open:theme-editor", label: "edit:theme", group: "Themes", run: actions.openThemeEditor },
+        { id: "open:profile-editor", label: "edit:profile", group: "Profiles", run: actions.openProfileEditor },
+        { id: "open:settings", label: "b3tty:settings", group: "b3tty", run: actions.openSettings },
+        { id: "open:about", label: "b3tty:about", group: "b3tty", run: actions.openAbout },
+    ];
+    for (const name of config.themeNames ?? []) {
+        commands.push({
+            id: `theme:${name}`,
+            label: `theme:${name}`,
+            group: "Themes",
+            run: () => actions.activateTheme(name),
+        });
+    }
+    for (const name of config.profileNames ?? []) {
+        if (name === "default") continue;
+        commands.push({
+            id: `profile:${name}`,
+            label: `profile:${name}`,
+            group: "Profiles",
+            run: () => actions.openProfile(name),
+        });
+    }
+    return commands;
+}
+
+export const RECENT_COMMANDS_KEY = "b3tty-command-recents";
+export const MAX_RECENT_COMMANDS = 10;
+
+/**
+ * Reads the command palette's recent command ids (most recent first) from storage.
+ * Returns [] when storage is unavailable, throws, or holds anything unexpected.
+ */
+export function loadRecentCommandIds(storage: Pick<Storage, "getItem"> | null): string[] {
+    try {
+        const parsed: unknown = JSON.parse(storage?.getItem(RECENT_COMMANDS_KEY) ?? "[]");
+        return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+    } catch {
+        return [];
+    }
+}
+
+/**
+ * Moves id to the front of the stored recent command ids, keeping at most max entries.
+ * Storage failures are ignored: recents are a convenience, never required.
+ */
+export function recordRecentCommandId(
+    storage: Pick<Storage, "getItem" | "setItem"> | null,
+    id: string,
+    max = MAX_RECENT_COMMANDS
+): void {
+    const ids = [id, ...loadRecentCommandIds(storage).filter((r) => r !== id)].slice(0, max);
+    try {
+        storage?.setItem(RECENT_COMMANDS_KEY, JSON.stringify(ids));
+    } catch {
+        // ignored
+    }
+}
+
+/**
+ * Returns window.localStorage, or null when it is unavailable or access throws
+ * (e.g. blocked site data).
+ */
+function pageStorage(): Storage | null {
+    try {
+        return typeof window !== "undefined" ? window.localStorage : null;
+    } catch {
+        return null;
+    }
 }
 
 /**
@@ -829,102 +967,114 @@ export async function main(config: TermConfig): Promise<void> {
             menuBarColors(config.theme),
             menuBarMode(config)
         );
+    }
 
+    // The overlays are present whether or not the menu bar is, since the command
+    // palette can open them too.
+    const picker = getOverlay("theme-picker", components.isB3ttyThemePicker);
+    const editor = getOverlay("theme-editor", components.isB3ttyThemeEditor);
+    const profileEditor = getOverlay("profile-editor", components.isB3ttyProfileEditor);
+    const settingsEditor = getOverlay("settings-editor", components.isB3ttySettingsEditor);
+    const aboutDialog = getOverlay("about-dialog", components.isB3ttyAboutDialog);
+    const palette = getOverlay("command-palette", components.isB3ttyCommandPalette);
+
+    const actions: PaletteActions = {
+        openThemePicker: () => picker?.open(config.allThemeNames ?? []),
+        openThemeEditor: () => editor?.open(config.allThemeNames ?? [], config.builtinThemeNames ?? []),
+        openProfileEditor: () => profileEditor?.open((config.profileNames ?? []).filter((n) => n !== "default")),
+        openSettings: () => {
+            void getSettings().then((settings) => {
+                settingsEditor?.open(settings);
+            });
+        },
+        openAbout: () => aboutDialog?.open(),
+        activateTheme: (name) => void activateTheme(name, term, menuBar, activeTheme),
+        openProfile: openProfileTab,
+    };
+
+    // Closing any menu dialog (Cancel, or OK after a successful save) returns focus to
+    // the terminal, like the command palette. The connection-closed dialog is excluded.
+    for (const overlay of [picker, editor, profileEditor, settingsEditor, aboutDialog]) {
+        overlay?.addEventListener("b3tty-overlay-close", () => term.focus(), { signal });
+    }
+
+    if (picker) {
+        picker.addEventListener(
+            "b3tty-theme-selected",
+            (e) => handleThemeSelected(e, term, menuBar, picker, config, activeTheme),
+            { signal }
+        );
+    }
+    if (editor) {
+        editor.addEventListener("b3tty-theme-edited", (e) => handleThemeEdited(e, term, menuBar, config, activeTheme), {
+            signal,
+        });
+    }
+    if (profileEditor) {
+        profileEditor.addEventListener("b3tty-profile-edited", (e) => handleProfileEdited(e, menuBar, config), {
+            signal,
+        });
+    }
+    if (settingsEditor) {
+        settingsEditor.addEventListener(
+            "b3tty-settings-edited",
+            (e) => {
+                handleSettingsEdited(e, term, config);
+                refit();
+            },
+            { signal }
+        );
+    }
+
+    if (menuBarEl && menuBar) {
+        const bar = menuBar;
         menuBarEl.addEventListener("b3tty-menubar-open", refit, { signal });
         menuBarEl.addEventListener("b3tty-menubar-close", refit, { signal });
-
-        menuBarEl.addEventListener("b3tty-theme-change", (e) => handleThemeChange(e, term, menuBarEl, activeTheme), {
+        menuBarEl.addEventListener("b3tty-theme-change", (e) => handleThemeChange(e, term, bar, activeTheme), {
             signal,
         });
         menuBarEl.addEventListener("b3tty-profile-change", handleProfileChange, { signal });
+        menuBarEl.addEventListener("b3tty-open-theme-selector", actions.openThemePicker, { signal });
+        menuBarEl.addEventListener("b3tty-open-theme-editor", actions.openThemeEditor, { signal });
+        menuBarEl.addEventListener("b3tty-open-profile-editor", actions.openProfileEditor, { signal });
+        menuBarEl.addEventListener("b3tty-open-settings-editor", actions.openSettings, { signal });
+        menuBarEl.addEventListener("b3tty-open-about-dialog", actions.openAbout, { signal });
+    }
 
-        const picker = getOverlay("theme-picker", components.isB3ttyThemePicker);
-
-        menuBarEl.addEventListener(
-            "b3tty-open-theme-selector",
-            () => {
-                picker?.open(config.allThemeNames ?? []);
-            },
-            { signal }
-        );
-
-        if (picker) {
-            picker.addEventListener(
-                "b3tty-theme-selected",
-                (e) => handleThemeSelected(e, term, menuBarEl, picker!, config, activeTheme),
-                { signal }
+    if (palette) {
+        // Rebuilt on every open so themes and profiles added since page load are listed.
+        let paletteCommands: RunnableCommand[] = [];
+        const openPalette = () => {
+            paletteCommands = buildPaletteCommands(config, actions);
+            const ids = new Set(paletteCommands.map((c) => c.id));
+            palette.open(
+                paletteCommands,
+                loadRecentCommandIds(pageStorage()).filter((id) => ids.has(id))
             );
-        }
+        };
 
-        const editor = getOverlay("theme-editor", components.isB3ttyThemeEditor);
+        term.attachCustomKeyEventHandler((e) => {
+            if (!isCommandPaletteShortcut(e)) return true;
+            if (e.type === "keydown" && !signal.aborted) openPalette();
+            e.preventDefault();
+            return false;
+        });
 
-        menuBarEl.addEventListener(
-            "b3tty-open-theme-editor",
-            () => {
-                editor?.open(config.allThemeNames ?? [], config.builtinThemeNames ?? []);
+        palette.addEventListener(
+            "b3tty-command-run",
+            (e) => {
+                const { id } = (e as CustomEvent<{ id: string }>).detail;
+                const command = paletteCommands.find((c) => c.id === id);
+                if (!command) return;
+                recordRecentCommandId(pageStorage(), id);
+                command.run();
+                // Commands that open an overlay leave focus with it; the rest
+                // (switching theme, opening a profile tab) return it to the terminal.
+                if (!id.startsWith("open:")) term.focus();
             },
             { signal }
         );
-
-        if (editor) {
-            editor.addEventListener(
-                "b3tty-theme-edited",
-                (e) => handleThemeEdited(e, term, menuBarEl, config, activeTheme),
-                { signal }
-            );
-        }
-
-        const profileEditor = getOverlay("profile-editor", components.isB3ttyProfileEditor);
-
-        menuBarEl.addEventListener(
-            "b3tty-open-profile-editor",
-            () => {
-                const editableNames = (config.profileNames ?? []).filter((n) => n !== "default");
-                profileEditor?.open(editableNames);
-            },
-            { signal }
-        );
-
-        if (profileEditor) {
-            profileEditor.addEventListener("b3tty-profile-edited", (e) => handleProfileEdited(e, menuBarEl, config), {
-                signal,
-            });
-        }
-
-        const settingsEditor = getOverlay("settings-editor", components.isB3ttySettingsEditor);
-
-        menuBarEl.addEventListener(
-            "b3tty-open-settings-editor",
-            () => {
-                void getSettings().then((settings) => {
-                    settingsEditor?.open(settings);
-                });
-            },
-            { signal }
-        );
-
-        if (settingsEditor) {
-            settingsEditor.addEventListener(
-                "b3tty-settings-edited",
-                (e) => {
-                    handleSettingsEdited(e, term, config);
-                    refit();
-                },
-                {
-                    signal,
-                }
-            );
-        }
-
-        const aboutDialog = getOverlay("about-dialog", components.isB3ttyAboutDialog);
-
-        menuBarEl.addEventListener(
-            "b3tty-open-about-dialog",
-            () => {
-                aboutDialog?.open();
-            },
-            { signal }
-        );
+        palette.addEventListener("b3tty-command-cancel", () => term.focus(), { signal });
     }
 
     term.onResize(({ cols, rows }) => {
