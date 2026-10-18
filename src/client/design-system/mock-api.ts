@@ -5,7 +5,15 @@
  * system preview that has no server behind it.
  */
 import THEMES from "b3tty:builtin-themes";
-import type { EditProfileResponse, Palette, ProfileConfig, SettingsConfig, ThemeActivateResponse } from "../types.ts";
+import type {
+    EditProfileResponse,
+    ExportThemeResponse,
+    Palette,
+    ProfileConfig,
+    SettingsConfig,
+    ThemeActivateResponse,
+    ThemeMetadata,
+} from "../types.ts";
 
 type ThemeFixture = Record<string, string | number>;
 
@@ -95,6 +103,41 @@ export async function postEditTheme(name: string, theme: ThemeFixture): Promise<
     }
     USER_THEMES[name] = { ...theme };
     return { ...theme, hasBackgroundImage: !!image, themeNames: Object.keys(USER_THEMES).sort() };
+}
+
+/** Paths the mock treats as already taken, so the export dialog's error state can be previewed. */
+const EXISTING_EXPORTS = new Set(["~/midnight-ops.b3theme"]);
+
+/**
+ * Each user theme's last export, as the server saves it. midnight-ops has one, so the
+ * export dialog's filled-in fields and its unchanged-version note can be previewed.
+ */
+const SAVED_PACKAGES: Record<string, ThemeMetadata> = {
+    "midnight-ops": {
+        repo: "https://github.com/example/midnight-ops",
+        author: "Example Author",
+        description: "A dark, low-glare theme for long on-call nights.",
+        themeVersion: "1.0.0",
+    },
+};
+
+export async function getThemePackage(name: string): Promise<Partial<ThemeMetadata>> {
+    await wait();
+    return { ...SAVED_PACKAGES[name] };
+}
+
+export async function postExportTheme(
+    name: string,
+    path: string,
+    metadata: ThemeMetadata
+): Promise<ExportThemeResponse> {
+    await wait(300);
+    const full = path.trim().endsWith(".b3theme") ? path.trim() : `${path.trim()}.b3theme`;
+    if (EXISTING_EXPORTS.has(full)) throw new Error(`file already exists: ${full}`);
+    if (!USER_THEMES[name]) throw new Error(`theme "${name}" not found`);
+    EXISTING_EXPORTS.add(full);
+    SAVED_PACKAGES[name] = { ...metadata };
+    return { path: full };
 }
 
 export async function getProfileConfig(name: string): Promise<ProfileConfig> {

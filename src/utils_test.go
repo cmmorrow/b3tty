@@ -462,3 +462,31 @@ func TestRedactedURL(t *testing.T) {
 		assert.Equal(t, "token=s3cret", u.RawQuery)
 	})
 }
+
+func TestNewThemeID(t *testing.T) {
+	a, err := newThemeID()
+	require.NoError(t, err)
+	b, err := newThemeID()
+	require.NoError(t, err)
+	assert.True(t, isThemeID(a), a)
+	assert.NotEqual(t, a, b)
+	assert.Equal(t, byte('4'), a[14], "version nibble")
+	assert.Contains(t, "89ab", string(a[19]), "variant nibble")
+}
+
+func TestIsThemeID(t *testing.T) {
+	assert.True(t, isThemeID("6c0e9d2a-41f7-4c3b-9a55-0b8e2f1d7a10"))
+	assert.False(t, isThemeID(""))
+	assert.False(t, isThemeID("6C0E9D2A-41F7-4C3B-9A55-0B8E2F1D7A10"), "uppercase")
+	assert.False(t, isThemeID("6c0e9d2a41f74c3b9a550b8e2f1d7a10"), "no dashes")
+	assert.False(t, isThemeID("midnight-ops"))
+}
+
+func TestValidateRepoURL(t *testing.T) {
+	for _, ok := range []string{"https://github.com/cmmorrow/b3tty", "https://gitlab.example.com/a/b.git", "https://host"} {
+		assert.NoError(t, validateRepoURL(ok), ok)
+	}
+	for _, bad := range []string{"", "github.com/cmmorrow/b3tty", "http://github.com/x", "javascript:alert(1)", "https:///path", "ftp://host/x", "https://%zz"} {
+		assert.Error(t, validateRepoURL(bad), bad)
+	}
+}

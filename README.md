@@ -257,6 +257,7 @@ Press **Ctrl+Shift+;** in the terminal to open the command palette, a keyboard-d
 
 Each command's label starts with its kind, so commands that open a dialog are easy to tell apart from ones that act right away:
 - `select:theme`, `edit:theme`, `edit:profile`, `b3tty:settings`, and `b3tty:about` open the same dialogs as the menu bar
+- `export:theme` exports the active theme as a `.b3theme` package (see [Sharing themes](#sharing-themes)), and `import:theme` opens the theme import dialog
 - `theme:<name>` (for example `theme:solarized-dark`), one per theme in the Themes menu, switches to that theme
 - `profile:<name>`, one per non-default profile, opens that profile in a new browser tab
 
@@ -305,6 +306,47 @@ b3tty ships with the following built-in themes, all available in the Theme Selec
 | Gruvbox Light | Light |
 
 User-defined themes from the `themes` section of the config file also appear in the Theme Selector alongside the built-in ones.
+
+## Sharing themes
+
+A user-defined theme can be exported as a `.b3theme` package to share with other b3tty users. The package holds only that theme. None of your settings, profiles, or other themes are included.
+
+There are three ways to export:
+- **Theme editor:** select a saved theme and click **Export…** next to its name.
+- **Command palette:** run `export:theme` to export the active theme.
+- **CLI:** run `b3tty theme export <name> --output <path>` (or `-o <path>`). It reads the config file directly, so the server doesn't need to be running.
+
+Each path asks for a file path. It can be absolute or start with `~` for your home directory, and `.b3theme` is added if it's missing. The directory must already exist, since it is never created, and an existing file is never overwritten. The theme editor and command palette write the file on the machine running the b3tty server. Only user-defined themes can be exported, because everyone already has the built-in ones. The export contains the saved version of the theme, so unsaved changes in the theme editor are left out.
+
+Every package also records four details about the theme, all required:
+
+- **Repository:** an `https://` URL of the theme's source repository.
+- **Author.**
+- **Theme version:** free-form, so `1.2.0` and `2024-spring` both work. It's the theme's own version and has nothing to do with the b3tty version.
+- **Description.**
+
+b3tty saves these details with the theme in `conf.yaml` after a successful export, along with a package ID it generates the first time. The next export fills them in for you and reuses the ID, so people who installed an earlier version of the theme will see the new package as an upgrade of it. Bump the theme version when you publish changes; the export dialog and the CLI warn when it matches the last export.
+
+On the CLI, pass the details with `--repo`, `--author`, `--description`, and `--theme-version`. All four are needed on a theme's first export. After that, any flag you leave out uses the saved value:
+
+```bash
+b3tty theme export midnight -o ~/midnight --repo https://github.com/jane/midnight --author "Jane Doe" --theme-version 1.2.0 --description "Deep navy with pastel accents"
+b3tty theme export midnight -o ~/midnight-1.3 --theme-version 1.3.0
+```
+
+The saved details live in a `package:` block under the theme in `conf.yaml`. Editing the theme's colors keeps them, but if the block is lost, the next export gets a new ID and is treated as a separate theme rather than an upgrade.
+
+A `.b3theme` file is a zip archive with this layout:
+
+```
+manifest.json
+theme.json
+assets/background.<ext>   (only when the theme has a background image)
+```
+
+- `manifest.json` holds `schemaVersion` (currently `1`), the theme's `id` and `name`, its `repo`, `author`, `description`, and `themeVersion`, the `b3ttyVersion` that made it, `createdAt` (UTC, RFC 3339), and `files`, which gives the in-package paths of `themeFile` and, if there is one, `backgroundImage`.
+- `theme.json` holds the theme's colors and `backgroundImageTransparency`, in the same JSON shape b3tty's built-in themes use. The background image's path on your machine is not included.
+- If the theme's background image is missing or isn't a supported image, the export fails, and the error explains why.
 
 ## Debug mode
 

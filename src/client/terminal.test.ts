@@ -54,6 +54,7 @@ import {
     isValidUri,
     isValidThemeColor,
     isValidBackgroundImageTransparency,
+    isValidRepoUrl,
     MAX_UINT16,
 } from "./validators.ts";
 import { isB3ttyDialog, isB3ttyMenuBar } from "./components.ts";
@@ -2595,6 +2596,28 @@ describe("isValidBackgroundImageTransparency", () => {
     });
 });
 
+describe("isValidRepoUrl", () => {
+    it("accepts https URLs with a host", () => {
+        for (const v of ["https://github.com/cmmorrow/b3tty", "https://gitlab.example.com/a/b.git", "https://host"]) {
+            expect(isValidRepoUrl(v)).toBe(true);
+        }
+    });
+
+    it("rejects other schemes, missing hosts, and non-URLs", () => {
+        for (const v of [
+            "",
+            "github.com/cmmorrow/b3tty",
+            "http://github.com/x",
+            "javascript:alert(1)",
+            "https:///path",
+            "ftp://host/x",
+            " https://host",
+        ]) {
+            expect(isValidRepoUrl(v)).toBe(false);
+        }
+    });
+});
+
 describe("isValidThemeColor", () => {
     it("returns true for empty string", () => {
         expect(isValidThemeColor("")).toBe(true);
@@ -2965,6 +2988,8 @@ describe("buildPaletteCommands", () => {
         return {
             openThemePicker: mock(() => {}),
             openThemeEditor: mock(() => {}),
+            openThemeImport: mock(() => {}),
+            openThemeExport: mock(() => {}),
             openProfileEditor: mock(() => {}),
             openSettings: mock(() => {}),
             openAbout: mock(() => {}),
@@ -2978,6 +3003,8 @@ describe("buildPaletteCommands", () => {
         expect(ids).toEqual([
             "open:theme-selector",
             "open:theme-editor",
+            "open:theme-import",
+            "open:theme-export",
             "open:profile-editor",
             "open:settings",
             "open:about",
@@ -2986,7 +3013,15 @@ describe("buildPaletteCommands", () => {
 
     it("labels the menu commands by kind", () => {
         const labels = buildPaletteCommands({}, makeActions()).map((c) => c.label);
-        expect(labels).toEqual(["select:theme", "edit:theme", "edit:profile", "b3tty:settings", "b3tty:about"]);
+        expect(labels).toEqual([
+            "select:theme",
+            "edit:theme",
+            "import:theme",
+            "export:theme",
+            "edit:profile",
+            "b3tty:settings",
+            "b3tty:about",
+        ]);
     });
 
     it("runs the matching action for each menu command", () => {
@@ -2995,11 +3030,15 @@ describe("buildPaletteCommands", () => {
         const run = (id: string) => commands.find((c) => c.id === id)!.run();
         run("open:theme-selector");
         run("open:theme-editor");
+        run("open:theme-import");
+        run("open:theme-export");
         run("open:profile-editor");
         run("open:settings");
         run("open:about");
         expect(actions.openThemePicker).toHaveBeenCalledTimes(1);
         expect(actions.openThemeEditor).toHaveBeenCalledTimes(1);
+        expect(actions.openThemeImport).toHaveBeenCalledTimes(1);
+        expect(actions.openThemeExport).toHaveBeenCalledTimes(1);
         expect(actions.openProfileEditor).toHaveBeenCalledTimes(1);
         expect(actions.openSettings).toHaveBeenCalledTimes(1);
         expect(actions.openAbout).toHaveBeenCalledTimes(1);

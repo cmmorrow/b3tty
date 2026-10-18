@@ -13,8 +13,9 @@ import (
 )
 
 // configFileMu serializes every read-modify-write access to conf.yaml made
-// by this process. UpdateThemeInConfig, SaveThemeToConfig, SaveProfileToConfig,
-// DeleteProfileFromConfig, SaveSettingsToConfig, and saveDefaultThemeConfig each
+// by this process. UpdateThemeInConfig, SaveThemeToConfig,
+// SaveThemePackageToConfig, SaveProfileToConfig, DeleteProfileFromConfig,
+// SaveSettingsToConfig, and saveDefaultThemeConfig each
 // read the file, mutate a section (or, for saveDefaultThemeConfig, build it from
 // scratch), and write it back; without this lock two such calls racing within
 // the same process — e.g. two concurrent HTTP handlers on a running b3tty
@@ -206,9 +207,75 @@ func SaveThemeToConfig(configPath string, themeName string, theme Theme) error {
 	if theme.BackgroundImageTransparency != nil {
 		entry["background-image-transparency"] = *theme.BackgroundImageTransparency
 	}
+	// The package: block (the theme's export identity) is carried over from
+	// disk rather than taken from theme.Package: editing a theme never changes
+	// it, and the in-memory copy can be older than a CLI export.
+	if old, ok := themesSection[themeName].(map[string]any); ok {
+		if pkg, ok := old["package"]; ok {
+			entry["package"] = pkg
+		}
+	}
 	themesSection[themeName] = entry
 
 	return writeConfigMap(configPath, cfg, "SaveThemeToConfig")
+}
+
+// ReadThemePackageDetails returns the package: block of the theme themeName in
+// the config file at configPath (or the default path when empty), or nil when
+// the theme has none — it has never been exported, or it isn't in the file.
+// A missing config file is also nil, not an error.
+func ReadThemePackageDetails(configPath, themeName string) (*ThemePackageDetails, error) {
+	configFileMu.Lock()
+	defer configFileMu.Unlock()
+
+	configPath, err := resolveConfigPath(configPath)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(configPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	var raw struct {
+		Themes map[string]struct {
+			Package *ThemePackageDetails `yaml:"package"`
+		} `yaml:"themes"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("ReadThemePackageDetails: %w", err)
+	}
+	return raw.Themes[themeName].Package, nil
+}
+
+// SaveThemePackageToConfig sets the package: block of the user theme
+// themeName in the config file at configPath to details, leaving the rest of
+// the theme's entry and the file untouched. It fails when the theme isn't in
+// the file's themes: section, since a package block on its own would not be a
+// theme.
+func SaveThemePackageToConfig(configPath, themeName string, details ThemePackageDetails) error {
+	configFileMu.Lock()
+	defer configFileMu.Unlock()
+
+	configPath, err := resolveConfigPath(configPath)
+	if err != nil {
+		return err
+	}
+	cfg, err := loadConfigMap(configPath, "SaveThemePackageToConfig")
+	if err != nil {
+		return err
+	}
+	themesSection, _ := cfg["themes"].(map[string]any)
+	entry, ok := themesSection[themeName].(map[string]any)
+	if !ok {
+		return fmt.Errorf("theme %q not found in %s", themeName, configPath)
+	}
+	// Stored as the struct itself, like SaveProfileToConfig, so the key names
+	// live only in ThemePackageDetails' yaml tags.
+	entry["package"] = details
+
+	return writeConfigMap(configPath, cfg, "SaveThemePackageToConfig")
 }
 
 // ReadThemeNames reads the config file at path and returns the names from the

@@ -1652,6 +1652,181 @@ func TestEditThemeHandler(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// exportThemeHandler
+// ---------------------------------------------------------------------------
+
+func TestExportThemeHandler(t *testing.T) {
+	post := func(ts *TerminalServer, body string, headers map[string]string) (*httptest.ResponseRecorder, string) {
+		req := httptest.NewRequest(http.MethodPost, "/export-theme", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		w := httptest.NewRecorder()
+		logged := captureLog(func() { ts.exportThemeHandler(w, req) })
+		return w, logged
+	}
+	meta := testPackageDetails.ThemeMetadata
+	exportBody := func(name, path string) string {
+		b, _ := json.Marshal(map[string]string{
+			"name": name, "path": path,
+			"repo": meta.Repo, "author": meta.Author, "description": meta.Description, "themeVersion": meta.ThemeVersion,
+		})
+		return string(b)
+	}
+	// newExportServer returns a server whose config file holds the user theme
+	// "mine", since exports record their details in it.
+	newExportServer := func(t *testing.T) *TerminalServer {
+		ts := newTestTerminalServer()
+		ts.ConfigFile = writeTempFile(t, "conf.yaml", []byte("themes:\n  mine:\n    foreground: \"#fff\"\n"))
+		ts.Themes["mine"] = Theme{Foreground: "#fff"}
+		return ts
+	}
+
+	t.Run("GET returns 405", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		req := httptest.NewRequest(http.MethodGet, "/export-theme", nil)
+		w := httptest.NewRecorder()
+		captureLog(func() { ts.exportThemeHandler(w, req) })
+		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+	})
+
+	t.Run("cross-site Sec-Fetch-Site returns 403 and writes nothing", func(t *testing.T) {
+		ts := newExportServer(t)
+		out := filepath.Join(t.TempDir(), "mine.b3theme")
+		w, _ := post(ts, exportBody("mine", out), map[string]string{"Sec-Fetch-Site": "cross-site"})
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.NoFileExists(t, out)
+	})
+
+	t.Run("missing name returns 400", func(t *testing.T) {
+		w, logged := post(newTestTerminalServer(), exportBody("", "/tmp/x"), nil)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, logged, "missing name")
+	})
+
+	t.Run("built-in theme returns 400 even when added to ts.Themes", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		ts.Themes["dracula"] = builtinThemes["dracula"]
+		out := filepath.Join(t.TempDir(), "dracula.b3theme")
+		w, _ := post(ts, exportBody("dracula", out), nil)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "built-in theme")
+		assert.NoFileExists(t, out)
+	})
+
+	t.Run("unknown theme returns 404", func(t *testing.T) {
+		w, _ := post(newTestTerminalServer(), exportBody("nope", filepath.Join(t.TempDir(), "x")), nil)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Contains(t, w.Body.String(), `"nope" not found`)
+	})
+
+	t.Run("existing file returns 409 with the reason", func(t *testing.T) {
+		ts := newExportServer(t)
+		out := filepath.Join(t.TempDir(), "mine.b3theme")
+		require.NoError(t, os.WriteFile(out, []byte("keep"), 0o600))
+		w, _ := post(ts, exportBody("mine", out), nil)
+		assert.Equal(t, http.StatusConflict, w.Code)
+		assert.Contains(t, w.Body.String(), "already exists")
+	})
+
+	t.Run("other export failures return 400 with the reason", func(t *testing.T) {
+		w, _ := post(newExportServer(t), exportBody("mine", "relative/path"), nil)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "must be an absolute path")
+	})
+
+	t.Run("missing metadata returns 400 and writes nothing", func(t *testing.T) {
+		out := filepath.Join(t.TempDir(), "mine")
+		body, _ := json.Marshal(map[string]string{"name": "mine", "path": out, "author": "Chris"})
+		w, _ := post(newExportServer(t), string(body), nil)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "repo, description, theme version are required")
+		assert.NoFileExists(t, out+".b3theme")
+	})
+
+	t.Run("a written package whose details can't be saved returns 500", func(t *testing.T) {
+		ts := newExportServer(t)
+		ts.ConfigFile = writeTempFile(t, "conf.yaml", []byte("themes: {}\n"))
+		w, _ := post(ts, exportBody("mine", filepath.Join(t.TempDir(), "mine")), nil)
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Contains(t, w.Body.String(), "saving the package details failed")
+	})
+
+	t.Run("exports the saved theme, records its details, and returns the path written", func(t *testing.T) {
+		ts := newExportServer(t)
+		ts.Version = "9.9.9"
+		dir := t.TempDir()
+		w, _ := post(ts, exportBody("mine", filepath.Join(dir, "mine")), nil)
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var resp struct {
+			Path string `json:"path"`
+		}
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.Equal(t, filepath.Join(dir, "mine.b3theme"), resp.Path)
+
+		files := readThemePackage(t, resp.Path)
+		var manifest ThemeManifest
+		require.NoError(t, json.Unmarshal(files["manifest.json"], &manifest))
+		assert.Equal(t, "mine", manifest.Name)
+		assert.Equal(t, "9.9.9", manifest.B3ttyVersion)
+		assert.Equal(t, meta, manifest.ThemeMetadata)
+		assert.True(t, isThemeID(manifest.ID))
+
+		saved, err := ReadThemePackageDetails(ts.ConfigFile, "mine")
+		require.NoError(t, err)
+		require.NotNil(t, saved)
+		assert.Equal(t, manifest.ID, saved.ID)
+		require.NotNil(t, ts.Themes["mine"].Package)
+		assert.Equal(t, manifest.ID, ts.Themes["mine"].Package.ID)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// themePackageHandler
+// ---------------------------------------------------------------------------
+
+func TestThemePackageHandler(t *testing.T) {
+	get := func(ts *TerminalServer, name string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/theme-package?name="+url.QueryEscape(name), nil)
+		w := httptest.NewRecorder()
+		captureLog(func() { ts.themePackageHandler(w, req) })
+		return w
+	}
+
+	t.Run("POST returns 405", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/theme-package?name=mine", nil)
+		w := httptest.NewRecorder()
+		captureLog(func() { newTestTerminalServer().themePackageHandler(w, req) })
+		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+	})
+
+	t.Run("missing or built-in name returns 400", func(t *testing.T) {
+		assert.Equal(t, http.StatusBadRequest, get(newTestTerminalServer(), "").Code)
+		assert.Equal(t, http.StatusBadRequest, get(newTestTerminalServer(), "dracula").Code)
+	})
+
+	t.Run("returns {} for a theme never exported", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		ts.ConfigFile = writeTempFile(t, "conf.yaml", []byte("themes:\n  mine:\n    foreground: \"#fff\"\n"))
+		w := get(ts, "mine")
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.JSONEq(t, `{}`, w.Body.String())
+	})
+
+	t.Run("returns the saved metadata without the id", func(t *testing.T) {
+		ts := newTestTerminalServer()
+		ts.ConfigFile = writeTempFile(t, "conf.yaml", []byte("themes:\n  mine:\n    foreground: \"#fff\"\n"))
+		require.NoError(t, SaveThemePackageToConfig(ts.ConfigFile, "mine", testPackageDetails))
+		w := get(ts, "mine")
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.JSONEq(t, `{"repo":"https://github.com/example/themes","author":"Chris","description":"Soft pastels.","themeVersion":"1.0"}`, w.Body.String())
+		assert.NotContains(t, w.Body.String(), testThemeID)
+	})
+}
+
+// ---------------------------------------------------------------------------
 // sortedThemeNames
 // ---------------------------------------------------------------------------
 

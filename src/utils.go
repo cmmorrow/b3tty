@@ -24,6 +24,7 @@ import (
 var (
 	reHexColor   = regexp.MustCompile(`^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$`)
 	reNamedColor = regexp.MustCompile(`^[a-zA-Z]+$`)
+	reThemeID    = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 )
 
 // backgroundImageExts and backgroundImageTypes are the allowlists a theme's
@@ -230,6 +231,35 @@ func generateToken(length int) (string, error) {
 		result[i] = charset[randomInt.Int64()]
 	}
 	return string(result), nil
+}
+
+// newThemeID returns a random (version 4) UUID in its lowercase canonical form,
+// used as a theme package's id: its identity across exported versions.
+func newThemeID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("generate theme id: %w", err)
+	}
+	b[6] = b[6]&0x0f | 0x40 // version 4
+	b[8] = b[8]&0x3f | 0x80 // RFC 4122 variant
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
+}
+
+// isThemeID reports whether s is a UUID in lowercase canonical form, the shape
+// newThemeID produces.
+func isThemeID(s string) bool {
+	return reThemeID.MatchString(s)
+}
+
+// validateRepoURL checks that s is an absolute https URL with a host, the form
+// a theme package's repo must take. Only https is accepted so the link the UI
+// renders from it can never be a javascript: or other non-web URL.
+func validateRepoURL(s string) error {
+	u, err := url.Parse(s)
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return fmt.Errorf("repo must be an https URL, got %q", s)
+	}
+	return nil
 }
 
 // redactedURL returns u as a string with the value of any "token" query

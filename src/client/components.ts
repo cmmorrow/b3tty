@@ -2,16 +2,18 @@ import {
     getThemePalette,
     getThemeConfig,
     postEditTheme,
+    postExportTheme,
+    getThemePackage,
     postSaveConfig,
     getProfileConfig,
     postEditProfile,
     postDeleteProfile,
     postSettings,
 } from "./api.ts";
-import type { Palette, PaletteCommand, ProfileConfig, SettingsConfig } from "./types.ts";
+import type { Palette, PaletteCommand, ProfileConfig, SettingsConfig, ThemeMetadata } from "./types.ts";
 import { searchCommands, splitLabel, type CommandMatch } from "./command-search.ts";
 import { DEFAULT_BACKGROUND_IMAGE_TRANSPARENCY } from "./types.ts";
-import { isValidBackgroundImageTransparency, isValidThemeColor } from "./validators.ts";
+import { isValidBackgroundImageTransparency, isValidRepoUrl, isValidThemeColor } from "./validators.ts";
 import {
     DESIGN_TOKENS,
     BASE_STYLES,
@@ -183,6 +185,69 @@ export function isB3ttyAboutDialog(el: Element): el is HTMLElement & B3ttyAboutD
 }
 
 /**
+ * Detail of the b3tty-open-theme-import event the theme editor dispatches when its
+ * "Import theme…" card is clicked. `opener` is the element to refocus on close.
+ */
+export interface ThemeImportRequest {
+    opener: HTMLElement;
+}
+
+/**
+ * Detail of the b3tty-open-theme-export event the theme editor dispatches when its
+ * Export… button is clicked. `unsavedChanges` is true when the editor's inputs differ
+ * from the saved theme, which is what gets exported.
+ */
+export interface ThemeExportRequest {
+    name: string;
+    unsavedChanges: boolean;
+    opener: HTMLElement;
+}
+
+/**
+ * Interface for the b3tty-theme-import-dialog web component. `opener` is the
+ * element to return focus to on close; without one, closing dispatches
+ * b3tty-overlay-close like the other overlays.
+ */
+export interface B3ttyThemeImportDialog {
+    open(opener?: HTMLElement | null): void;
+    close(): void;
+}
+
+/**
+ * Returns true when el is a b3tty-theme-import-dialog element.
+ */
+export function isB3ttyThemeImportDialog(el: Element): el is HTMLElement & B3ttyThemeImportDialog {
+    return el.tagName.toLowerCase() === "b3tty-theme-import-dialog";
+}
+
+/**
+ * Options for B3ttyThemeExportDialog.open(). `unsavedChanges` shows a note that the
+ * saved version is what gets exported; `builtin` marks themeName as a built-in theme,
+ * which can't be exported; `opener` is as for the import dialog.
+ */
+export interface ThemeExportOptions {
+    unsavedChanges?: boolean;
+    builtin?: boolean;
+    opener?: HTMLElement | null;
+}
+
+/**
+ * Interface for the b3tty-theme-export-dialog web component. An empty themeName
+ * (no active theme) or a built-in one shows a message and leaves Export disabled.
+ */
+export interface B3ttyThemeExportDialog {
+    open(themeName: string, options?: ThemeExportOptions): void;
+    close(): void;
+}
+
+/**
+ * Returns true when el is a b3tty-theme-export-dialog element.
+ */
+export function isB3ttyThemeExportDialog(el: Element): el is HTMLElement & B3ttyThemeExportDialog {
+    return el.tagName.toLowerCase() === "b3tty-theme-export-dialog";
+}
+
+/**
  * Interface for the b3tty-command-palette web component.
  */
 export interface B3ttyCommandPalette {
@@ -244,6 +309,21 @@ function closeOverlay(el: HTMLElement): void {
     if (!el.hasAttribute("open")) return;
     el.removeAttribute("open");
     el.dispatchEvent(new CustomEvent("b3tty-overlay-close", { bubbles: true, composed: true }));
+}
+
+/**
+ * Closes a dialog that can open on top of another overlay. With a connected opener,
+ * focus goes back to it and no b3tty-overlay-close is dispatched (that would send
+ * focus to the terminal, under the still-open overlay); otherwise it is closeOverlay.
+ */
+function closeStackedOverlay(el: HTMLElement, opener: HTMLElement | null): void {
+    if (opener?.isConnected) {
+        if (!el.hasAttribute("open")) return;
+        el.removeAttribute("open");
+        opener.focus();
+    } else {
+        closeOverlay(el);
+    }
 }
 
 if (typeof HTMLElement !== "undefined") {
@@ -1077,6 +1157,10 @@ if (typeof HTMLElement !== "undefined") {
         #bgTransparencyInput: HTMLInputElement;
         #bgTransparencyError: HTMLSpanElement;
         #okBtn: HTMLButtonElement;
+        #exportBtn: HTMLButtonElement;
+        // The selected theme's inputs as loaded, to tell whether the form has unsaved
+        // changes; null when no saved theme is loaded.
+        #savedSnapshot: string | null = null;
         #selectedName: string | null = null;
         #selectedCard: HTMLElement | null = null;
         #selectedPalette: Palette | null = null;
@@ -1168,6 +1252,24 @@ if (typeof HTMLElement !== "undefined") {
             this.#createCard.appendChild(createLabel);
             this.#leftPanel.appendChild(this.#createCard);
 
+            const importCard = document.createElement("button");
+            importCard.className = "action-card";
+            const importIcon = document.createElement("span");
+            importIcon.className = "action-card-icon";
+            importIcon.setAttribute("aria-hidden", "true");
+            importIcon.textContent = "⤓";
+            const importLabel = document.createElement("span");
+            importLabel.textContent = "Import theme…";
+            importCard.appendChild(importIcon);
+            importCard.appendChild(importLabel);
+            importCard.addEventListener("click", () => {
+                const detail: ThemeImportRequest = { opener: importCard };
+                this.dispatchEvent(
+                    new CustomEvent("b3tty-open-theme-import", { bubbles: true, composed: true, detail })
+                );
+            });
+            this.#leftPanel.appendChild(importCard);
+
             // --- Right panel ---
             const rightPanel = document.createElement("div");
             rightPanel.className = "right-panel";
@@ -1186,8 +1288,26 @@ if (typeof HTMLElement !== "undefined") {
             this.#nameError = document.createElement("span");
             this.#nameError.className = "name-error field-error";
             this.#nameError.textContent = "Cannot use a built-in theme name";
+            // Exports the selected saved theme, so it is disabled while
+            // "Create new theme" is selected.
+            this.#exportBtn = document.createElement("button");
+            this.#exportBtn.className = "inline-btn";
+            this.#exportBtn.textContent = "Export…";
+            this.#exportBtn.disabled = true;
+            this.#exportBtn.addEventListener("click", () => {
+                if (!this.#selectedName) return;
+                const detail: ThemeExportRequest = {
+                    name: this.#selectedName,
+                    unsavedChanges: this.#hasUnsavedChanges(),
+                    opener: this.#exportBtn,
+                };
+                this.dispatchEvent(
+                    new CustomEvent("b3tty-open-theme-export", { bubbles: true, composed: true, detail })
+                );
+            });
             nameRow.appendChild(nameLabel);
             nameRow.appendChild(this.#nameInput);
+            nameRow.appendChild(this.#exportBtn);
             nameSection.appendChild(nameRow);
             nameSection.appendChild(this.#nameError);
 
@@ -1338,6 +1458,7 @@ if (typeof HTMLElement !== "undefined") {
                 this.#createRadio.checked = true;
                 this.#restoreSelectedCard();
                 this.#selectedName = null;
+                this.#exportBtn.disabled = true;
                 this.#nameInput.value = "";
                 this.#clearInputs();
                 this.#isLoading = false;
@@ -1354,6 +1475,7 @@ if (typeof HTMLElement !== "undefined") {
                 const name = (target as unknown as B3ttyPaletteCard).value;
                 this.#restoreSelectedCard();
                 this.#selectedName = name;
+                this.#exportBtn.disabled = false;
                 this.#selectedCard = target;
                 this.#selectedPalette = this.#paletteCache.get(name) ?? null;
                 this.#nameInput.value = name;
@@ -1505,7 +1627,18 @@ if (typeof HTMLElement !== "undefined") {
             );
         }
 
+        #snapshotInputs(): string {
+            const values = Array.from(this.#colorInputs.values(), (input) => input.value);
+            values.push(this.#bgImageInput.value, this.#bgTransparencyInput.value);
+            return JSON.stringify(values);
+        }
+
+        #hasUnsavedChanges(): boolean {
+            return this.#savedSnapshot !== null && this.#savedSnapshot !== this.#snapshotInputs();
+        }
+
         #clearInputs(): void {
+            this.#savedSnapshot = null;
             for (const [key, input] of this.#colorInputs) {
                 input.value = "";
                 const swatch = this.#swatches.get(key);
@@ -1529,6 +1662,7 @@ if (typeof HTMLElement !== "undefined") {
                 this.#bgImageInput.value = config.backgroundImage ?? "";
                 // Left empty when unset so the placeholder shows the default.
                 this.#bgTransparencyInput.value = config.backgroundImageTransparency?.toString() ?? "";
+                this.#savedSnapshot = this.#snapshotInputs();
             } catch {
                 // leave inputs as-is on failure
             } finally {
@@ -1582,6 +1716,7 @@ if (typeof HTMLElement !== "undefined") {
             this.#saveError.classList.remove("visible");
             this.#clearInputs();
             this.#okBtn.disabled = true;
+            this.#exportBtn.disabled = true;
 
             // rebuild card list (keep create-card)
             const existingCards = Array.from(this.#leftPanel.querySelectorAll("b3tty-palette-card"));
@@ -2618,6 +2753,376 @@ if (typeof HTMLElement !== "undefined") {
     }
 
     customElements.define("b3tty-about-dialog", B3ttyAboutDialogImpl);
+
+    interface ThemeFileDialogParts {
+        intro: HTMLParagraphElement;
+        warning: HTMLDivElement;
+        input: HTMLInputElement;
+        hint: HTMLSpanElement;
+        actions: HTMLDivElement;
+        saveError: HTMLSpanElement;
+        cancelBtn: HTMLButtonElement;
+        actionBtn: HTMLButtonElement;
+    }
+
+    /**
+     * Builds the shared layout of the theme import and export dialogs into host's shadow
+     * root: title, intro, a hidden .warning-note, a File Path field, and an actions row of
+     * .save-error, Cancel, and the action button. Opens above other overlays
+     * (--z-overlay-stacked) since both can be opened from the theme editor. Cancel calls
+     * host.close(); Enter in the field clicks the action button when it is enabled.
+     */
+    function buildThemeFileDialog(
+        host: HTMLElement & { close(): void },
+        title: string,
+        actionLabel: string
+    ): ThemeFileDialogParts {
+        const shadow = host.attachShadow({ mode: "open" });
+
+        const style = document.createElement("style");
+        style.textContent = `
+            ${DESIGN_TOKENS}
+            ${BASE_STYLES}
+            ${OVERLAY_STYLES}
+            ${TEXT_STYLES}
+            ${FORM_INPUT_STYLES}
+            ${BUTTON_STYLES}
+            ${SAVE_ERROR_STYLES}
+            .overlay { z-index: var(--z-overlay-stacked); }
+            .modal {
+                width: min(460px, 100%); padding: var(--space-2xl);
+                display: flex; flex-direction: column; gap: var(--space-lg);
+            }
+            .intro { margin: calc(-1 * var(--space-sm)) 0 0; font-size: var(--font-size-sm); }
+            .intro b { color: var(--color-text); }
+            .field { display: flex; flex-direction: column; gap: var(--space-2xs); }
+            .field-input { width: 100%; font-family: var(--font-family-mono); font-size: var(--font-size-sm); }
+            .field-input:disabled { opacity: var(--opacity-disabled); }
+            .actions { margin-top: var(--space-xs); }
+        `;
+
+        const overlay = document.createElement("div");
+        overlay.className = "overlay";
+        const modal = document.createElement("div");
+        modal.className = "modal";
+        modal.setAttribute("role", "dialog");
+        modal.setAttribute("aria-modal", "true");
+
+        const heading = document.createElement("h2");
+        heading.className = "modal-title";
+        heading.textContent = title;
+        const intro = document.createElement("p");
+        intro.className = "intro field-desc";
+        const warning = document.createElement("div");
+        warning.className = "warning-note";
+        warning.setAttribute("role", "status");
+
+        const field = document.createElement("label");
+        field.className = "field";
+        const label = document.createElement("span");
+        label.className = "field-label strong";
+        label.textContent = "File Path";
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "field-input";
+        input.spellcheck = false;
+        input.autocomplete = "off";
+        const hint = document.createElement("span");
+        hint.className = "field-desc";
+        field.append(label, input, hint);
+
+        const actions = document.createElement("div");
+        actions.className = "actions";
+        const saveError = document.createElement("span");
+        saveError.className = "save-error";
+        const cancelBtn = document.createElement("button");
+        cancelBtn.className = "cancel-btn";
+        cancelBtn.textContent = "Cancel";
+        cancelBtn.addEventListener("click", () => host.close());
+        const actionBtn = document.createElement("button");
+        actionBtn.className = "ok-btn";
+        actionBtn.textContent = actionLabel;
+        actions.append(saveError, cancelBtn, actionBtn);
+
+        input.addEventListener("input", () => {
+            actionBtn.disabled = input.disabled || !input.value.trim();
+            saveError.classList.remove("visible");
+        });
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" && !actionBtn.disabled) actionBtn.click();
+        });
+
+        modal.append(heading, intro, warning, field, actions);
+        overlay.appendChild(modal);
+        shadow.append(style, overlay);
+        return { intro, warning, input, hint, actions, saveError, cancelBtn, actionBtn };
+    }
+
+    /** Focuses the path field with the caret at the end. Call after setting [open]. */
+    function focusPathInput(input: HTMLInputElement): void {
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+    }
+
+    class B3ttyThemeImportDialogImpl extends HTMLElement implements B3ttyThemeImportDialog {
+        #parts: ThemeFileDialogParts;
+        #opener: HTMLElement | null = null;
+
+        constructor() {
+            super();
+            this.#parts = buildThemeFileDialog(this, "Import Theme", "Import");
+            this.#parts.intro.textContent = "Add a theme from a .b3theme package. It will appear in your Themes menu.";
+            this.#parts.input.placeholder = "~/Downloads/theme.b3theme";
+            this.#parts.hint.textContent = "An absolute path, or one starting with ~ for your home directory.";
+            // The Import button is wired up along with the .b3theme import path.
+        }
+
+        open(opener: HTMLElement | null = null): void {
+            this.#opener = opener;
+            const { input, saveError, actionBtn } = this.#parts;
+            input.value = "";
+            actionBtn.disabled = true;
+            saveError.classList.remove("visible");
+            this.setAttribute("open", "");
+            focusPathInput(input);
+        }
+
+        close(): void {
+            this.#parts.saveError.classList.remove("visible");
+            const opener = this.#opener;
+            this.#opener = null;
+            closeStackedOverlay(this, opener);
+        }
+    }
+
+    customElements.define("b3tty-theme-import-dialog", B3ttyThemeImportDialogImpl);
+
+    class B3ttyThemeExportDialogImpl extends HTMLElement implements B3ttyThemeExportDialog {
+        #parts: ThemeFileDialogParts;
+        #opener: HTMLElement | null = null;
+        #themeName = "";
+        #details: HTMLDivElement;
+        #repoInput: HTMLInputElement;
+        #repoError: HTMLSpanElement;
+        #authorInput: HTMLInputElement;
+        #themeVersionInput: HTMLInputElement;
+        #versionNote: HTMLSpanElement;
+        #descriptionInput: HTMLTextAreaElement;
+        /** The theme version of the last export, or "" for a theme never exported. */
+        #lastVersion = "";
+        /** Bumped on every open, so a slow package-details fetch for an earlier open is ignored. */
+        #prefillRequestId = 0;
+
+        constructor() {
+            super();
+            this.#parts = buildThemeFileDialog(this, "Export Theme", "Export");
+            const style = document.createElement("style");
+            style.textContent = `
+                .details { display: flex; flex-direction: column; gap: var(--space-md); }
+                .details[hidden], .details [hidden] { display: none; }
+                .details-row { display: grid; grid-template-columns: 1fr 120px; gap: var(--space-md); }
+                .details .field-input { font-family: var(--font-family-ui); font-size: var(--font-size-md); }
+                .details .field-input.repo { font-family: var(--font-family-mono); font-size: var(--font-size-sm); }
+                .details textarea.field-input {
+                    resize: vertical; min-height: 56px; line-height: var(--line-height-body);
+                }
+            `;
+            this.shadowRoot?.appendChild(style);
+
+            const makeInput = (placeholder: string): HTMLInputElement => {
+                const input = document.createElement("input");
+                input.type = "text";
+                input.className = "field-input";
+                input.placeholder = placeholder;
+                input.autocomplete = "off";
+                input.spellcheck = false;
+                input.addEventListener("keydown", (e) => {
+                    if (e.key === "Enter" && !this.#parts.actionBtn.disabled) this.#parts.actionBtn.click();
+                });
+                return input;
+            };
+            this.#repoInput = makeInput("https://github.com/you/your-theme");
+            this.#repoInput.classList.add("repo");
+            this.#repoError = document.createElement("span");
+            this.#repoError.className = "field-error";
+            this.#repoError.textContent = "Must be an https:// URL.";
+            this.#authorInput = makeInput("Your name");
+            this.#themeVersionInput = makeInput("1.0.0");
+            this.#versionNote = document.createElement("span");
+            this.#versionNote.className = "field-desc";
+            this.#versionNote.hidden = true;
+            this.#descriptionInput = document.createElement("textarea");
+            this.#descriptionInput.className = "field-input";
+            this.#descriptionInput.rows = 3;
+            this.#descriptionInput.placeholder = "What the theme looks like or was inspired by";
+
+            const repoField = this.#makeField("Repository", this.#repoInput);
+            repoField.append(this.#repoError);
+            const versionField = this.#makeField("Theme Version", this.#themeVersionInput);
+            const row = document.createElement("div");
+            row.className = "details-row";
+            row.append(this.#makeField("Author", this.#authorInput), versionField);
+            this.#details = document.createElement("div");
+            this.#details.className = "details";
+            this.#details.append(
+                repoField,
+                row,
+                this.#versionNote,
+                this.#makeField("Description", this.#descriptionInput)
+            );
+            this.#parts.actions.before(this.#details);
+
+            // Registered after buildThemeFileDialog's own listener on the path field, so this
+            // one decides whether Export is enabled.
+            for (const el of [this.#parts.input, ...this.#detailInputs()]) {
+                el.addEventListener("input", () => {
+                    this.#parts.saveError.classList.remove("visible");
+                    this.#updateState();
+                });
+            }
+
+            this.#parts.warning.textContent =
+                "This theme has unsaved changes. The export will contain the last saved version.";
+            this.#parts.hint.textContent =
+                "An absolute path, or one starting with ~ for your home directory. .b3theme is added if missing, and an existing file is never overwritten.";
+            this.#parts.actionBtn.addEventListener("click", () => void this.#export());
+        }
+
+        open(themeName: string, options: ThemeExportOptions = {}): void {
+            this.#opener = options.opener ?? null;
+            const exportable = !!themeName && !options.builtin;
+            this.#themeName = exportable ? themeName : "";
+            this.#lastVersion = "";
+            for (const el of this.#detailInputs()) el.value = "";
+            this.#details.hidden = !exportable;
+            const { intro, warning, input, saveError, cancelBtn } = this.#parts;
+            if (exportable) {
+                const name = document.createElement("b");
+                name.textContent = themeName;
+                intro.replaceChildren("Save ", name, " as a .b3theme package you can share.");
+                input.value = `~/${themeName}.b3theme`;
+                input.placeholder = `~/${themeName}.b3theme`;
+            } else {
+                intro.textContent = themeName
+                    ? "Built-in themes can't be exported. Select or create a user-defined theme to export."
+                    : "There is no active theme to export.";
+                input.value = "";
+                input.placeholder = "";
+            }
+            input.disabled = !exportable;
+            this.#setDetailsDisabled(false);
+            warning.classList.toggle("visible", exportable && !!options.unsavedChanges);
+            saveError.classList.remove("visible");
+            this.#updateState();
+            this.setAttribute("open", "");
+            if (exportable) {
+                focusPathInput(input);
+                void this.#prefill(themeName);
+            } else {
+                cancelBtn.focus();
+            }
+        }
+
+        close(): void {
+            this.#parts.saveError.classList.remove("visible");
+            this.#prefillRequestId++;
+            const opener = this.#opener;
+            this.#opener = null;
+            closeStackedOverlay(this, opener);
+        }
+
+        #makeField(label: string, control: HTMLInputElement | HTMLTextAreaElement): HTMLLabelElement {
+            const field = document.createElement("label");
+            field.className = "field";
+            const text = document.createElement("span");
+            text.className = "field-label strong";
+            text.textContent = label;
+            field.append(text, control);
+            return field;
+        }
+
+        #detailInputs(): Array<HTMLInputElement | HTMLTextAreaElement> {
+            return [this.#repoInput, this.#authorInput, this.#themeVersionInput, this.#descriptionInput];
+        }
+
+        #setDetailsDisabled(disabled: boolean): void {
+            for (const el of this.#detailInputs()) el.disabled = disabled;
+        }
+
+        /**
+         * Fills in the fields from the theme's last export. A field the user has already
+         * typed into is left alone, and a failed fetch just leaves the fields empty.
+         */
+        async #prefill(themeName: string): Promise<void> {
+            const requestId = ++this.#prefillRequestId;
+            let saved: Partial<ThemeMetadata>;
+            try {
+                saved = await getThemePackage(themeName);
+            } catch (err) {
+                console.warn(`[b3tty] could not load package details for "${themeName}":`, err);
+                return;
+            }
+            if (requestId !== this.#prefillRequestId) return;
+            const fill = (el: HTMLInputElement | HTMLTextAreaElement, value: string | undefined): void => {
+                if (value && !el.value) el.value = value;
+            };
+            fill(this.#repoInput, saved.repo);
+            fill(this.#authorInput, saved.author);
+            fill(this.#themeVersionInput, saved.themeVersion);
+            fill(this.#descriptionInput, saved.description);
+            this.#lastVersion = saved.themeVersion ?? "";
+            this.#updateState();
+        }
+
+        #metadata(): ThemeMetadata {
+            return {
+                repo: this.#repoInput.value.trim(),
+                author: this.#authorInput.value.trim(),
+                description: this.#descriptionInput.value.trim(),
+                themeVersion: this.#themeVersionInput.value.trim(),
+            };
+        }
+
+        /**
+         * Enables Export only when there is a path and every detail is filled in with a
+         * valid repo, and shows the repo error and the unchanged-version note. The repo
+         * error waits until something has been typed, so an empty form isn't shown as wrong.
+         */
+        #updateState(): void {
+            const meta = this.#metadata();
+            const repoValid = isValidRepoUrl(meta.repo);
+            this.#repoError.classList.toggle("visible", !!meta.repo && !repoValid);
+            const sameVersion = !!this.#lastVersion && meta.themeVersion === this.#lastVersion;
+            this.#versionNote.textContent = `Same as the last export (${this.#lastVersion}). Bump it so people who installed the theme see an upgrade.`;
+            this.#versionNote.hidden = !sameVersion;
+            const complete = !!meta.author && !!meta.description && !!meta.themeVersion && repoValid;
+            const { input, actionBtn } = this.#parts;
+            actionBtn.disabled = !this.#themeName || input.disabled || !input.value.trim() || !complete;
+        }
+
+        async #export(): Promise<void> {
+            const { input, saveError, actionBtn } = this.#parts;
+            const path = input.value.trim();
+            if (!this.#themeName || !path) return;
+            saveError.classList.remove("visible");
+            input.disabled = true;
+            actionBtn.disabled = true;
+            this.#setDetailsDisabled(true);
+            try {
+                await postExportTheme(this.#themeName, path, this.#metadata());
+                this.close();
+            } catch (err) {
+                saveError.textContent = err instanceof Error ? err.message : String(err);
+                saveError.classList.add("visible");
+            } finally {
+                input.disabled = false;
+                this.#setDetailsDisabled(false);
+                this.#updateState();
+            }
+        }
+    }
+
+    customElements.define("b3tty-theme-export-dialog", B3ttyThemeExportDialogImpl);
 
     // Rows have a fixed height so the list is always exactly VISIBLE_ROWS tall,
     // scrolling when more commands match.

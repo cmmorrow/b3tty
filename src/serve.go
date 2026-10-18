@@ -70,6 +70,10 @@ type TerminalServer struct {
 	// package-level startTime var in cmd/root.go) and set once before Serve()
 	// starts accepting requests; never mutated afterward.
 	StartTime time.Time
+	// Version is the b3tty version (cmd.Version), recorded in exported theme
+	// packages. Set once before Serve() starts accepting requests; never
+	// mutated afterward.
+	Version string
 	// WSEstablishedOnce guards the one-time debug log of how long the server
 	// took, from StartTime, to reach its first established WebSocket+pty
 	// session — see terminalHandler.
@@ -183,6 +187,8 @@ func (ts *TerminalServer) apiRoutes() map[string]http.HandlerFunc {
 		"/theme-config":   ts.themeConfigHandler,
 		"/add-theme":      ts.addThemeHandler,
 		"/edit-theme":     ts.editThemeHandler,
+		"/export-theme":   ts.exportThemeHandler,
+		"/theme-package":  ts.themePackageHandler,
 		"/save-config":    ts.saveConfigHandler,
 		"/profile-config": ts.profileConfigHandler,
 		"/edit-profile":   ts.editProfileHandler,

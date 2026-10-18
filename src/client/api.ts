@@ -1,5 +1,13 @@
-import { isThemeActivateResponse, isEditProfileResponse, isSettingsConfig } from "./types.ts";
-import type { ThemeActivateResponse, Palette, ProfileConfig, EditProfileResponse, SettingsConfig } from "./types.ts";
+import { isThemeActivateResponse, isEditProfileResponse, isExportThemeResponse, isSettingsConfig } from "./types.ts";
+import type {
+    ThemeActivateResponse,
+    Palette,
+    ProfileConfig,
+    EditProfileResponse,
+    ExportThemeResponse,
+    SettingsConfig,
+    ThemeMetadata,
+} from "./types.ts";
 
 /**
  * fetch() for the server's JSON API, which requires the page's auth token as an
@@ -191,5 +199,50 @@ export async function postEditTheme(
     }
     const parsed: unknown = await res.json();
     if (!isThemeActivateResponse(parsed)) throw new Error(`Unexpected edit-theme response shape`);
+    return parsed;
+}
+
+/**
+ * GETs /theme-package?name=<name>: the metadata recorded by the user-defined
+ * theme's last export, used to fill in the export dialog. Resolves to {} for a
+ * theme that has never been exported; throws if the request fails.
+ */
+export async function getThemePackage(name: string): Promise<Partial<ThemeMetadata>> {
+    const res = await apiFetch(`/theme-package?name=${encodeURIComponent(name)}`);
+    if (!res.ok) throw new Error(`Failed to fetch package details for theme "${name}": ${res.status}`);
+    const parsed: unknown = await res.json();
+    if (typeof parsed !== "object" || parsed === null) throw new Error(`Unexpected theme-package response shape`);
+    const details: Partial<ThemeMetadata> = {};
+    for (const key of ["repo", "author", "description", "themeVersion"] as const) {
+        const value = (parsed as Record<string, unknown>)[key];
+        if (typeof value === "string") details[key] = value;
+    }
+    return details;
+}
+
+/**
+ * POSTs to /export-theme to write the saved user-defined theme `name` as a
+ * .b3theme package at `path` on the server's filesystem, recording `metadata`
+ * in the package's manifest; the server also saves it with the theme for the
+ * next export. Resolves to the path actually written (".b3theme" is appended
+ * when missing); on failure throws the server's plain-text reason (e.g. the
+ * file already exists) when there is one.
+ */
+export async function postExportTheme(
+    name: string,
+    path: string,
+    metadata: ThemeMetadata
+): Promise<ExportThemeResponse> {
+    const res = await apiFetch("/export-theme", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...metadata, name, path }),
+    });
+    if (!res.ok) {
+        const reason = (await res.text().catch(() => "")).trim();
+        throw new Error(reason || `Failed to export theme "${name}": ${res.status}`);
+    }
+    const parsed: unknown = await res.json();
+    if (!isExportThemeResponse(parsed)) throw new Error(`Unexpected export-theme response shape`);
     return parsed;
 }

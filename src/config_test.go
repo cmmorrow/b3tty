@@ -628,6 +628,84 @@ themes:
 		require.NotNil(t, loaded.BackgroundImageTransparency, "an explicit 0 must not decode as absent")
 		assert.Equal(t, 0, *loaded.BackgroundImageTransparency)
 	})
+
+	t.Run("keeps the package block on disk, ignoring theme.Package", func(t *testing.T) {
+		_, cfgPath := setupUpdateThemeTest(t)
+		writeInitialConfig(t, `
+themes:
+  mine:
+    foreground: "#aaaaaa"
+    package:
+      id: 6c0e9d2a-41f7-4c3b-9a55-0b8e2f1d7a10
+      repo: https://github.com/example/themes
+      author: Chris
+      description: Soft pastels.
+      theme-version: "1.0"
+`)
+		stale := ThemePackageDetails{ID: "00000000-0000-4000-8000-000000000000"}
+		require.NoError(t, SaveThemeToConfig(cfgPath, "mine", Theme{Foreground: "#ffffff", Package: &stale}))
+
+		var cfg Config
+		_, err := LoadConfig(cfgPath, &cfg)
+		require.NoError(t, err, "a package block must load under KnownFields")
+		loaded := cfg.Themes["mine"]
+		assert.Equal(t, "#ffffff", loaded.Foreground)
+		require.NotNil(t, loaded.Package)
+		assert.Equal(t, "6c0e9d2a-41f7-4c3b-9a55-0b8e2f1d7a10", loaded.Package.ID)
+		assert.Equal(t, "1.0", loaded.Package.ThemeVersion)
+	})
+}
+
+func TestThemePackageDetailsInConfig(t *testing.T) {
+	details := ThemePackageDetails{
+		ID: "6c0e9d2a-41f7-4c3b-9a55-0b8e2f1d7a10",
+		ThemeMetadata: ThemeMetadata{
+			Repo: "https://github.com/example/themes", Author: "Chris", Description: "Soft pastels.", ThemeVersion: "1.0",
+		},
+	}
+
+	t.Run("round-trips and leaves the rest of the entry alone", func(t *testing.T) {
+		readConfig, cfgPath := setupUpdateThemeTest(t)
+		writeInitialConfig(t, `
+theme: mine
+themes:
+  mine:
+    foreground: "#aaaaaa"
+`)
+		require.NoError(t, SaveThemePackageToConfig(cfgPath, "mine", details))
+
+		got, err := ReadThemePackageDetails(cfgPath, "mine")
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, details, *got)
+
+		out := readConfig()
+		assert.Equal(t, "mine", out["theme"])
+		entry := out["themes"].(map[string]any)["mine"].(map[string]any)
+		assert.Equal(t, "#aaaaaa", entry["foreground"])
+		assert.Equal(t, "1.0", entry["package"].(map[string]any)["theme-version"])
+	})
+
+	t.Run("reads nil for a theme never exported, an unknown theme, or no file", func(t *testing.T) {
+		_, cfgPath := setupUpdateThemeTest(t)
+		got, err := ReadThemePackageDetails(cfgPath, "mine")
+		require.NoError(t, err)
+		assert.Nil(t, got)
+
+		writeInitialConfig(t, "themes:\n  mine:\n    foreground: \"#aaaaaa\"\n")
+		got, err = ReadThemePackageDetails(cfgPath, "mine")
+		require.NoError(t, err)
+		assert.Nil(t, got)
+		got, err = ReadThemePackageDetails(cfgPath, "other")
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
+
+	t.Run("refuses to save details for a theme not in the file", func(t *testing.T) {
+		_, cfgPath := setupUpdateThemeTest(t)
+		writeInitialConfig(t, "themes: {}\n")
+		require.ErrorContains(t, SaveThemePackageToConfig(cfgPath, "mine", details), `theme "mine" not found`)
+	})
 }
 
 // ---------------------------------------------------------------------------
