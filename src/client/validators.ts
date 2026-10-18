@@ -54,3 +54,19 @@ export function isValidBackgroundImageTransparency(value: string): boolean {
     if (value === "") return true;
     return /^\d+$/.test(value) && Number(value) <= 100;
 }
+
+/**
+ * Returns true if value is an https URL with a host, the form a theme package's
+ * repo must take. Mirrors validateRepoURL in src/utils.go: only https is
+ * accepted, so the link rendered from a repo can never be a javascript: URL.
+ * The prefix check rejects "https:///path", which URL parsing would otherwise
+ * repair into a host the server's parser doesn't see.
+ */
+export function isValidRepoUrl(value: string): boolean {
+    if (!/^https:\/\/[^/?#\s]+/.test(value)) return false;
+    try {
+        return new URL(value).protocol === "https:";
+    } catch {
+        return false;
+    }
+}

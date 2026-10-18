@@ -51,6 +51,10 @@ export const DESIGN_TOKENS = `
         --color-destructive-bg: #f5d5d5;
         --color-destructive-border: #c44;
         --color-destructive-hover: #f0b8b8;
+        /* Color: warning */
+        --color-warning: #7a4f00;
+        --color-warning-bg: #fbecc4;
+        --color-warning-border: #d9a83a;
         /* Color: misc */
         --color-overlay: rgba(0,0,0,0.72);
         --color-handle: #808080;
@@ -98,6 +102,8 @@ export const DESIGN_TOKENS = `
         --z-menubar: 1000;
         --z-dropdown: 1001;
         --z-overlay: 10000;
+        /* Dialogs that open on top of another overlay (theme import/export over the theme editor). */
+        --z-overlay-stacked: 10001;
 
         /* Motion & state */
         --transition: 0.15s;
@@ -128,6 +134,7 @@ export const BASE_STYLES = `
  *   .section-title — uppercase group heading within a form
  *   .field-desc    — secondary help text under a field
  *   .field-error   — inline validation/save error, hidden until `.visible`
+ *   .warning-note  — boxed caution message (e.g. unsaved changes), hidden until `.visible`
  */
 export const TEXT_STYLES = `
     .modal-title {
@@ -150,6 +157,14 @@ export const TEXT_STYLES = `
         font-size: var(--font-size-xs); color: var(--color-destructive);
     }
     .field-error.visible { display: block; }
+    .warning-note {
+        display: none;
+        padding: var(--space-xs) var(--space-sm);
+        border: 1px solid var(--color-warning-border); border-radius: var(--radius-sm);
+        background: var(--color-warning-bg); color: var(--color-warning);
+        font-size: var(--font-size-sm); line-height: var(--line-height-body);
+    }
+    .warning-note.visible { display: block; }
 `;
 
 /** OK, Cancel, and Delete button styles. */
@@ -177,6 +192,16 @@ export const BUTTON_STYLES = `
         color: var(--color-destructive);
     }
     .delete-btn:hover { background: var(--color-destructive-hover); }
+    /* Compact secondary button for use inline with form fields. */
+    .inline-btn {
+        padding: var(--space-xs) var(--space-md); border-radius: var(--radius-md);
+        font-size: var(--font-size-md); white-space: nowrap; cursor: pointer;
+        border: 1px solid var(--color-border); background: var(--color-surface-2);
+        color: var(--color-text);
+        transition: background var(--transition);
+    }
+    .inline-btn:not(:disabled):hover { background: var(--color-surface-hover); }
+    .inline-btn:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
 `;
 
 /**
@@ -227,7 +252,10 @@ export const OVERLAY_STYLES = `
 
 /**
  * Selectable card styles for two-panel editor left panels (theme editor, profile editor).
- * Covers .create-card and .profile-card including hover and selected states.
+ * Covers .create-card and .profile-card including hover and selected states, and
+ * .action-card: a dashed-border card that runs an action (e.g. "Import theme…")
+ * rather than selecting an item, so it has no selected state. Use it on a
+ * <button>; an optional leading .action-card-icon holds a glyph.
  */
 export const EDITOR_CARD_STYLES = `
     .create-card, .profile-card {
@@ -245,6 +273,20 @@ export const EDITOR_CARD_STYLES = `
     .create-card[selected], .profile-card[selected] {
         border-color: var(--color-accent); background: var(--color-surface-selected);
     }
+    .action-card {
+        display: flex; align-items: center; gap: var(--space-xs);
+        padding: var(--space-sm) var(--space-md);
+        background: transparent;
+        border: 2px dashed var(--color-border);
+        border-radius: var(--radius-sm);
+        cursor: pointer; text-align: left;
+        font-size: var(--font-size-md); font-weight: var(--font-weight-semibold);
+        color: var(--color-text);
+        user-select: none; flex-shrink: 0;
+        transition: background var(--transition);
+    }
+    .action-card:hover { background: var(--color-surface-hover); }
+    .action-card-icon { width: 16px; text-align: center; }
 `;
 
 /**

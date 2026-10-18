@@ -91,6 +91,29 @@ export function isEditProfileResponse(val: unknown): val is EditProfileResponse 
     return typeof val === "object" && val !== null && Array.isArray((val as Record<string, unknown>)["profileNames"]);
 }
 
+/**
+ * Information recorded in an exported .b3theme package's manifest
+ * (ThemeMetadata in src/theme_package.go). Every field is required; the server
+ * trims them, repo must be an https URL, and themeVersion is free-form. The
+ * server saves them with the theme after each export, and GET /theme-package
+ * returns them (or {} for a theme never exported) to fill in the next one.
+ */
+export interface ThemeMetadata {
+    repo: string;
+    author: string;
+    description: string;
+    themeVersion: string;
+}
+
+/** Response of POST /export-theme: the path the .b3theme package was written to. */
+export interface ExportThemeResponse {
+    path: string;
+}
+
+export function isExportThemeResponse(val: unknown): val is ExportThemeResponse {
+    return typeof val === "object" && val !== null && typeof (val as Record<string, unknown>)["path"] === "string";
+}
+
 export interface ClientConfig {
     fontFamily: string;
     fontSize: number;

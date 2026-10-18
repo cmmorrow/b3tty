@@ -20,7 +20,14 @@ import type {
 import { DEFAULT_BACKGROUND_IMAGE_TRANSPARENCY } from "./types.ts";
 import { isValidWsProtocol, isValidPort, isValidUri } from "./validators.ts";
 import { postThemeConfig, postAddTheme, getSettings } from "./api.ts";
-import type { B3ttyDialog, B3ttyMenuBar, B3ttyThemePicker, MenuBarColors } from "./components.ts";
+import type {
+    B3ttyDialog,
+    B3ttyMenuBar,
+    B3ttyThemePicker,
+    MenuBarColors,
+    ThemeExportRequest,
+    ThemeImportRequest,
+} from "./components.ts";
 
 export const THEME_KEYS = [
     "foreground",
@@ -761,6 +768,8 @@ export interface RunnableCommand extends PaletteCommand {
 export interface PaletteActions {
     openThemePicker(): void;
     openThemeEditor(): void;
+    openThemeImport(): void;
+    openThemeExport(): void;
     openProfileEditor(): void;
     openSettings(): void;
     openAbout(): void;
@@ -773,8 +782,8 @@ export interface PaletteActions {
  * open, so themes and profiles added since page load (which the theme/profile handlers
  * record in config) are always listed. Themes come from config.themeNames (the Themes
  * menu); profiles exclude "default", matching the Profiles menu. Labels are prefixed by
- * kind (select:/edit:/b3tty: for commands that open a dialog, theme:/profile: for ones
- * that act directly) so the two are easy to tell apart.
+ * kind (select:/edit:/import:/export:/b3tty: for commands that open a dialog,
+ * theme:/profile: for ones that act directly) so the two are easy to tell apart.
  */
 export function buildPaletteCommands(
     config: Pick<TermConfig, "themeNames" | "profileNames">,
@@ -783,6 +792,8 @@ export function buildPaletteCommands(
     const commands: RunnableCommand[] = [
         { id: "open:theme-selector", label: "select:theme", group: "Themes", run: actions.openThemePicker },
         { id: "open:theme-editor", label: "edit:theme", group: "Themes", run: actions.openThemeEditor },
+        { id: "open:theme-import", label: "import:theme", group: "Themes", run: actions.openThemeImport },
+        { id: "open:theme-export", label: "export:theme", group: "Themes", run: actions.openThemeExport },
         { id: "open:profile-editor", label: "edit:profile", group: "Profiles", run: actions.openProfileEditor },
         { id: "open:settings", label: "b3tty:settings", group: "b3tty", run: actions.openSettings },
         { id: "open:about", label: "b3tty:about", group: "b3tty", run: actions.openAbout },
@@ -976,11 +987,19 @@ export async function main(config: TermConfig): Promise<void> {
     const profileEditor = getOverlay("profile-editor", components.isB3ttyProfileEditor);
     const settingsEditor = getOverlay("settings-editor", components.isB3ttySettingsEditor);
     const aboutDialog = getOverlay("about-dialog", components.isB3ttyAboutDialog);
+    const importDialog = getOverlay("theme-import-dialog", components.isB3ttyThemeImportDialog);
+    const exportDialog = getOverlay("theme-export-dialog", components.isB3ttyThemeExportDialog);
     const palette = getOverlay("command-palette", components.isB3ttyCommandPalette);
 
     const actions: PaletteActions = {
         openThemePicker: () => picker?.open(config.allThemeNames ?? []),
         openThemeEditor: () => editor?.open(config.allThemeNames ?? [], config.builtinThemeNames ?? []),
+        openThemeImport: () => importDialog?.open(),
+        // From the palette there is no editor open, so the saved active theme is exported.
+        openThemeExport: () =>
+            exportDialog?.open(activeTheme.current, {
+                builtin: (config.builtinThemeNames ?? []).includes(activeTheme.current),
+            }),
         openProfileEditor: () => profileEditor?.open((config.profileNames ?? []).filter((n) => n !== "default")),
         openSettings: () => {
             void getSettings().then((settings) => {
@@ -994,7 +1013,9 @@ export async function main(config: TermConfig): Promise<void> {
 
     // Closing any menu dialog (Cancel, or OK after a successful save) returns focus to
     // the terminal, like the command palette. The connection-closed dialog is excluded.
-    for (const overlay of [picker, editor, profileEditor, settingsEditor, aboutDialog]) {
+    // The import/export dialogs only dispatch b3tty-overlay-close when opened without an
+    // opener (from the palette); opened from the theme editor, they refocus it instead.
+    for (const overlay of [picker, editor, profileEditor, settingsEditor, aboutDialog, importDialog, exportDialog]) {
         overlay?.addEventListener("b3tty-overlay-close", () => term.focus(), { signal });
     }
 
@@ -1009,6 +1030,19 @@ export async function main(config: TermConfig): Promise<void> {
         editor.addEventListener("b3tty-theme-edited", (e) => handleThemeEdited(e, term, menuBar, config, activeTheme), {
             signal,
         });
+        editor.addEventListener(
+            "b3tty-open-theme-import",
+            (e) => importDialog?.open((e as CustomEvent<ThemeImportRequest>).detail.opener),
+            { signal }
+        );
+        editor.addEventListener(
+            "b3tty-open-theme-export",
+            (e) => {
+                const { name, unsavedChanges, opener } = (e as CustomEvent<ThemeExportRequest>).detail;
+                exportDialog?.open(name, { unsavedChanges, opener });
+            },
+            { signal }
+        );
     }
     if (profileEditor) {
         profileEditor.addEventListener("b3tty-profile-edited", (e) => handleProfileEdited(e, menuBar, config), {

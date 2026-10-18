@@ -22,3 +22,5 @@ const CONFIG_FILE_NAME = "conf.yaml"
 const LOCK_FILE_NAME = "b3tty.lock"
 const DOT_CONFIG_PATH = ".config"
 const B3TTY_CONFIG_PATH = "b3tty"
+const THEME_PACKAGE_EXT = ".b3theme"
+const THEME_PACKAGE_SCHEMA_VERSION = 1

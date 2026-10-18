@@ -3,8 +3,11 @@ package src
 import (
 	_ "embed"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"sort"
+	"time"
 )
 
 //go:embed default_themes/b3tty_dark.json
@@ -324,4 +327,113 @@ func (ts *TerminalServer) editThemeHandler(w http.ResponseWriter, r *http.Reques
 		ThemeNames:         themeNames,
 	}
 	writeJSON(w, resp, "edit-theme")
+}
+
+// exportThemeHandler handles POST /export-theme. It accepts
+// { "name": "<theme>", "path": "<file>" } plus the required ThemeMetadata fields
+// (repo, author, description, themeVersion) and writes the saved user-defined
+// theme as a .b3theme package to path via ExportUserTheme, which also records
+// the export in the theme's package: block in the config file. It returns
+// { "path": "<file written>" }. Built-in themes are refused (400) and unknown
+// names are 404; an existing file is 409, any other export failure (including
+// missing or invalid metadata) 400, and a written package whose details could
+// not be saved 500, each with the reason as a plain-text body for the export
+// dialog to show.
+func (ts *TerminalServer) exportThemeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		Warnf("%s %s: method not allowed: %s", r.Method, r.URL.Path, r.Method)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if requireSameOrigin(w, r) {
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, MAX_REQUEST_BODY_SIZE)
+	var req struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+		ThemeMetadata
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		Warnf("%s %s: bad request: %v", r.Method, r.URL.Path, err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" {
+		Warnf("%s %s: bad request: missing name", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if IsBuiltinThemeName(req.Name) {
+		Warnf("%s %s: bad request: built-in theme %q", r.Method, r.URL.Path, req.Name)
+		http.Error(w, fmt.Sprintf("%q is a built-in theme; only user-defined themes can be exported", req.Name), http.StatusBadRequest)
+		return
+	}
+
+	ts.StateMu.RLock()
+	theme, ok := ts.Themes[req.Name]
+	ts.StateMu.RUnlock()
+	if !ok {
+		Warnf("%s %s: theme %q not found", r.Method, r.URL.Path, req.Name)
+		http.Error(w, fmt.Sprintf("theme %q not found", req.Name), http.StatusNotFound)
+		return
+	}
+
+	path, details, err := ExportUserTheme(ts.ConfigFile, req.Name, theme, req.ThemeMetadata, req.Path, ts.Version, time.Now())
+	if err != nil {
+		status := http.StatusBadRequest
+		switch {
+		case errors.Is(err, ErrThemePackageExists):
+			status = http.StatusConflict
+		case path != "":
+			// The package was written but its details weren't saved.
+			status = http.StatusInternalServerError
+		}
+		Warnf("%s %s: export failed: %v", r.Method, r.URL.Path, err)
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	ts.StateMu.Lock()
+	if t, ok := ts.Themes[req.Name]; ok {
+		t.Package = &details
+		ts.Themes[req.Name] = t
+	}
+	ts.StateMu.Unlock()
+
+	Infof("exported theme %q to %s", req.Name, path)
+	writeJSON(w, struct {
+		Path string `json:"path"`
+	}{path}, "export-theme")
+}
+
+// themePackageHandler handles GET /theme-package?name=<theme>. It returns the
+// metadata recorded by the user theme's last export, read from the config
+// file's package: block, so the export dialog can fill in its fields — or {}
+// when the theme has never been exported. The package id is never sent. A
+// built-in name is 400.
+func (ts *TerminalServer) themePackageHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		Warnf("%s %s: method not allowed: %s", r.Method, r.URL.Path, r.Method)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	name := r.URL.Query().Get("name")
+	if name == "" || IsBuiltinThemeName(name) {
+		Warnf("%s %s: bad request: missing or built-in name %q", r.Method, r.URL.Path, name)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	details, err := ReadThemePackageDetails(ts.ConfigFile, name)
+	if err != nil {
+		Errorf("theme-package: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if details == nil {
+		writeJSON(w, struct{}{}, "theme-package")
+		return
+	}
+	writeJSON(w, details.ThemeMetadata, "theme-package")
 }

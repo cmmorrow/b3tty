@@ -173,6 +173,15 @@ type Theme struct {
 	// value/100, so higher values make the image fainter. It is a pointer so an
 	// absent key (the client falls back to 50) stays distinct from an explicit 0.
 	BackgroundImageTransparency *int `yaml:"background-image-transparency,omitempty" json:"backgroundImageTransparency,omitempty"`
+	// Package is the package: block a user theme gains on its first export
+	// (see ThemePackageDetails). It is here so the config file's themes:
+	// section decodes under KnownFields; json:"-" keeps it out of theme.json in
+	// exported packages and out of every API response. The config file, not
+	// this copy, is the source of truth: a CLI export changes the file without
+	// touching a running server's memory, so exports and the export dialog read
+	// it from disk (ReadThemePackageDetails), and SaveThemeToConfig keeps the
+	// block that is on disk rather than writing this one.
+	Package *ThemePackageDetails `yaml:"package,omitempty" json:"-"`
 }
 
 // HasBackgroundImage reports whether the theme has a background image
