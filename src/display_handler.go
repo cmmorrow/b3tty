@@ -204,31 +204,11 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	profileName := ts.ProfileName
 	profile := ts.Profiles[profileName]
 
-	themeNames := ts.sortedThemeNames()
-
-	// allThemeNames is the union of built-in and user-defined theme names, used
-	// to populate the in-page theme picker.
-	allNameSet := make(map[string]struct{})
-	var allThemeNames []string
-	for name := range builtinThemes {
-		if _, seen := allNameSet[name]; !seen {
-			allNameSet[name] = struct{}{}
-			allThemeNames = append(allThemeNames, name)
-		}
-	}
-	for name := range ts.Themes {
-		if _, seen := allNameSet[name]; !seen {
-			allNameSet[name] = struct{}{}
-			allThemeNames = append(allThemeNames, name)
-		}
-	}
-	sort.Strings(allThemeNames)
-
-	builtinNames := make([]string, 0, len(builtinThemes))
-	for name := range builtinThemes {
-		builtinNames = append(builtinNames, name)
-	}
-	sort.Strings(builtinNames)
+	// themeNames is the Themes menu, in menu order; allThemeNames is every
+	// built-in and user theme, for the in-page theme picker.
+	themeNames := ts.menuThemeNames()
+	allThemeNames := ts.allThemeNames()
+	builtinNames := GetBuiltinThemeNames()
 
 	profileNames := make([]string, 0, len(ts.Profiles))
 	for name := range ts.Profiles {

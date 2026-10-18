@@ -74,7 +74,7 @@ Colors are shown when output is an interactive terminal and suppressed when pipe
 
 When b3tty starts and no config file is found, it opens a theme selector in the browser instead of the terminal. The selector presents two built-in themes — **Dark** and **Light** — as visual previews, along with a **No theme** option to skip and configure one manually later.
 
-Selecting a theme and clicking **OK** writes a `conf.yaml` file to `~/.config/b3tty/` with the chosen theme and immediately reloads the page to start the terminal. Choosing **No theme** skips config file creation and starts the terminal with the default xterm.js colors.
+Selecting a theme and clicking **OK** writes a `conf.yaml` file to `~/.config/b3tty/` that makes the chosen theme the active theme, the default theme, and the first entry in the Themes menu, then reloads the page to start the terminal. Choosing **No theme** writes a `conf.yaml` with no theme, and the terminal starts with xterm.js's own colors.
 
 Once a config file exists, the setup page is never shown again. To return to the theme selector, delete or move the config file before restarting b3tty.
 
@@ -101,6 +101,10 @@ profiles:
     title: "Project Development"
     shell: "/bin/fish"
 theme: "my-theme"
+default-theme: "dracula"
+available-themes:
+  - "my-theme"
+  - "dracula"
 themes:
   my-theme:
     black: "#14181d"
@@ -129,7 +133,7 @@ themes:
 
 ### Config file schema
 
-The config file is a YAML document with five top-level keys. All keys are optional; omitting a section leaves those settings at their defaults.
+The config file is a YAML document with seven top-level keys. All keys are optional; omitting a section leaves those settings at their defaults.
 
 #### `server`
 
@@ -157,11 +161,21 @@ Controls the appearance and dimensions of the terminal.
 
 #### `theme`
 
-A string naming which entry under `themes` to activate, e.g. `theme: "my-theme"`. Omit this key (or leave it empty) to use the default xterm.js colors.
+The name of the active theme, e.g. `theme: "my-theme"`. It can be a built-in theme (see [Built-in themes](#built-in-themes)) or one of your own under `themes`. If the name doesn't match any theme, b3tty logs a warning and uses `default-theme` instead. Omit this key (or leave it empty) to use `default-theme`.
+
+#### `default-theme`
+
+The theme to fall back on when `theme` is missing or names a theme that no longer exists. Like `theme`, it can be a built-in or one of your own. The first-run setup page sets it. When neither `theme` nor `default-theme` names a theme, no theme is applied and the terminal uses xterm.js's own colors.
+
+#### `available-themes`
+
+The list of themes shown in the menu bar's **Themes** menu and as `theme:<name>` commands in the command palette, in the order given. Entries can be built-in themes or your own. Picking a theme in the Theme Selector, creating one in the theme editor, or running `b3tty theme set` adds it to the end of the list; to remove or reorder entries, edit the list. Names that don't match any theme are skipped with a warning.
+
+If the key is missing entirely, as in config files from earlier versions, the menu lists every name under `themes`, sorted. Writing the list yourself takes over from that.
 
 #### `themes`
 
-A map of named theme objects. Each key is an arbitrary theme name; the value is an object whose fields set terminal colors and an optional background image. All fields are optional; omitting a color keeps the xterm.js default for that color. Every field can also be edited from the menu bar's **Themes → Edit Theme…** dialog, which saves back to this file.
+A map of your own named theme objects. Built-in themes don't belong here: refer to them by name in `theme`, `default-theme`, or `available-themes` instead. A `themes` entry with the same name as a built-in theme is ignored with a warning, since built-in themes can't be redefined; to keep its colors, rename it. Each key is an arbitrary theme name; the value is an object whose fields set terminal colors and an optional background image. All fields are optional; omitting a color keeps the xterm.js default for that color. Every field can also be edited from the menu bar's **Themes → Edit Theme…** dialog, which saves back to this file.
 
 Color values must be a 3- or 6-digit CSS hex color (e.g. `#fff` or `#14181d`) or a letters-only CSS named color (e.g. `red` or `cornflowerblue`). Invalid values are rejected at startup.
 
@@ -245,7 +259,7 @@ The menu bar is a browser-side control strip that appears at the top of the term
 - The menu bar automatically hides after 5 seconds of inactivity, or immediately when you click outside it.
 - When the menu bar opens or closes, the terminal resizes to fill the available space.
 
-**Themes menu** — The first item is always **Select Theme…**, which opens the Theme Selector overlay (see below). When themes are defined in the config file, a separator is shown followed by one item per theme; selecting a theme applies it immediately without reloading the page.
+**Themes menu** — The first item is always **Select Theme…**, which opens the Theme Selector overlay (see below). When `available-themes` lists any themes, a separator is shown followed by one item per theme, in list order; selecting a theme applies it immediately without reloading the page.
 
 **Profiles menu** — visible when more than one profile is configured. Selecting a profile opens that profile in a new browser tab.
 
@@ -284,7 +298,7 @@ Click a card to select it. The **OK** button becomes active once a card is selec
 Click **OK** to apply the selected theme. The following happens immediately, without a page reload:
 
 1. The theme colors are applied to the terminal and the page background.
-2. If the selected theme is a built-in theme that was not previously in your config file, it is added to the `themes` section of your config file and the `theme` key is updated — so the selection persists across restarts.
+2. The `theme` key in your config file is updated, and the theme is added to `available-themes` if it isn't there already, so the selection persists across restarts and the theme appears in the Themes menu. Built-in themes are referenced by name; their colors are never copied into your config file.
 
 Click **Cancel** at any time to close the overlay without making any changes.
 

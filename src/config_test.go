@@ -333,12 +333,12 @@ server:
 }
 
 // ---------------------------------------------------------------------------
-// UpdateThemeInConfig
+// ActivateThemeInConfig
 // ---------------------------------------------------------------------------
 
 // setupUpdateThemeTest creates a temp HOME directory, points HOME at it, and
 // returns a helper that reads the resulting conf.yaml back as a generic map,
-// along with the explicit config file path to pass to UpdateThemeInConfig /
+// along with the explicit config file path to pass to ActivateThemeInConfig /
 // SaveThemeToConfig.
 func setupUpdateThemeTest(t *testing.T) (func() map[string]any, string) {
 	t.Helper()
@@ -365,127 +365,95 @@ func writeInitialConfig(t *testing.T, content string) {
 	require.NoError(t, os.WriteFile(dir+"/conf.yaml", []byte(content), 0644))
 }
 
-func TestUpdateThemeInConfig(t *testing.T) {
+func TestActivateThemeInConfig(t *testing.T) {
+	menu := func(out map[string]any) []any {
+		list, _ := out["available-themes"].([]any)
+		return list
+	}
+
 	t.Run("creates config file when none exists", func(t *testing.T) {
 		readConfig, cfgPath := setupUpdateThemeTest(t)
-		require.NoError(t, UpdateThemeInConfig(cfgPath, "dracula", map[string]any{"foreground": "#f8f8f2"}))
+		require.NoError(t, ActivateThemeInConfig(cfgPath, "dracula"))
 		out := readConfig()
 		assert.Equal(t, "dracula", out["theme"])
+		assert.Equal(t, []any{"dracula"}, menu(out))
 	})
 
-	t.Run("sets the theme key at the top level", func(t *testing.T) {
+	t.Run("never writes theme colors", func(t *testing.T) {
 		readConfig, cfgPath := setupUpdateThemeTest(t)
-		require.NoError(t, UpdateThemeInConfig(cfgPath, "catppuccin-mocha", map[string]any{"foreground": "#cdd6f4"}))
-		assert.Equal(t, "catppuccin-mocha", readConfig()["theme"])
+		require.NoError(t, ActivateThemeInConfig(cfgPath, "dracula"))
+		assert.NotContains(t, readConfig(), "themes")
 	})
 
-	t.Run("adds color entries under the themes section", func(t *testing.T) {
+	t.Run("appends to the menu once, keeping its order", func(t *testing.T) {
 		readConfig, cfgPath := setupUpdateThemeTest(t)
-		require.NoError(t, UpdateThemeInConfig(cfgPath, "dracula", map[string]any{
-			"foreground": "#f8f8f2",
-			"background": "#282a36",
-		}))
+		writeInitialConfig(t, `
+available-themes:
+  - zenburn-mine
+  - dracula
+themes:
+  zenburn-mine:
+    foreground: "#dcdccc"
+`)
+		require.NoError(t, ActivateThemeInConfig(cfgPath, "one-light"))
+		require.NoError(t, ActivateThemeInConfig(cfgPath, "dracula"))
 		out := readConfig()
-		themes := out["themes"].(map[string]any)
-		palette := themes["dracula"].(map[string]any)
-		assert.Equal(t, "#f8f8f2", palette["foreground"])
-		assert.Equal(t, "#282a36", palette["background"])
+		assert.Equal(t, "dracula", out["theme"])
+		assert.Equal(t, []any{"zenburn-mine", "dracula", "one-light"}, menu(out))
 	})
 
-	t.Run("preserves existing settings in the config file", func(t *testing.T) {
+	t.Run("seeds a missing menu from the user themes before appending", func(t *testing.T) {
+		readConfig, cfgPath := setupUpdateThemeTest(t)
+		writeInitialConfig(t, `
+theme: zebra
+themes:
+  zebra:
+    foreground: "#ffffff"
+  alpha:
+    foreground: "#000000"
+  dracula:
+    foreground: "#f8f8f2"
+`)
+		require.NoError(t, ActivateThemeInConfig(cfgPath, "one-light"))
+		// dracula, an old copy of a built-in, stays in the menu as the built-in.
+		assert.Equal(t, []any{"alpha", "dracula", "zebra", "one-light"}, menu(readConfig()))
+	})
+
+	t.Run("an existing empty menu stays otherwise empty", func(t *testing.T) {
+		readConfig, cfgPath := setupUpdateThemeTest(t)
+		writeInitialConfig(t, `
+available-themes: []
+themes:
+  mine:
+    foreground: "#ffffff"
+`)
+		require.NoError(t, ActivateThemeInConfig(cfgPath, "dracula"))
+		assert.Equal(t, []any{"dracula"}, menu(readConfig()))
+	})
+
+	t.Run("preserves existing settings and themes", func(t *testing.T) {
 		readConfig, cfgPath := setupUpdateThemeTest(t)
 		writeInitialConfig(t, `
 server:
   no-auth: true
   port: 9000
-theme: b3tty-dark
+theme: mine
 themes:
-  b3tty-dark:
+  mine:
     foreground: "#dbdbdb"
 `)
-		require.NoError(t, UpdateThemeInConfig(cfgPath, "dracula", map[string]any{"foreground": "#f8f8f2"}))
+		require.NoError(t, ActivateThemeInConfig(cfgPath, "dracula"))
 		out := readConfig()
 		server := out["server"].(map[string]any)
 		assert.Equal(t, true, server["no-auth"])
 		assert.Equal(t, 9000, server["port"])
-	})
-
-	t.Run("updates the theme key without touching other existing themes", func(t *testing.T) {
-		readConfig, cfgPath := setupUpdateThemeTest(t)
-		writeInitialConfig(t, `
-theme: b3tty-dark
-themes:
-  b3tty-dark:
-    foreground: "#dbdbdb"
-`)
-		require.NoError(t, UpdateThemeInConfig(cfgPath, "dracula", map[string]any{"foreground": "#f8f8f2"}))
-		out := readConfig()
-		themes := out["themes"].(map[string]any)
-		assert.Equal(t, "dracula", out["theme"])
-		assert.Contains(t, themes, "b3tty-dark")
-		assert.Contains(t, themes, "dracula")
-	})
-
-	t.Run("does not overwrite colors when the theme already exists in the themes section", func(t *testing.T) {
-		readConfig, cfgPath := setupUpdateThemeTest(t)
-		writeInitialConfig(t, `
-theme: dracula
-themes:
-  dracula:
-    foreground: "#original"
-`)
-		require.NoError(t, UpdateThemeInConfig(cfgPath, "dracula", map[string]any{"foreground": "#new"}))
-		out := readConfig()
-		palette := out["themes"].(map[string]any)["dracula"].(map[string]any)
-		assert.Equal(t, "#original", palette["foreground"])
-	})
-
-	t.Run("creates the themes section when the config has none", func(t *testing.T) {
-		readConfig, cfgPath := setupUpdateThemeTest(t)
-		writeInitialConfig(t, `
-server:
-  port: 8080
-`)
-		require.NoError(t, UpdateThemeInConfig(cfgPath, "dracula", map[string]any{"foreground": "#f8f8f2"}))
-		out := readConfig()
-		themes, ok := out["themes"].(map[string]any)
-		require.True(t, ok)
-		assert.Contains(t, themes, "dracula")
-	})
-
-	t.Run("silently drops non-string color values", func(t *testing.T) {
-		readConfig, cfgPath := setupUpdateThemeTest(t)
-		require.NoError(t, UpdateThemeInConfig(cfgPath, "dracula", map[string]any{
-			"foreground": "#f8f8f2",
-			"count":      42,
-			"flag":       true,
-		}))
-		palette := readConfig()["themes"].(map[string]any)["dracula"].(map[string]any)
-		assert.Equal(t, "#f8f8f2", palette["foreground"])
-		assert.NotContains(t, palette, "count")
-		assert.NotContains(t, palette, "flag")
-	})
-
-	t.Run("silently drops invalid color strings", func(t *testing.T) {
-		readConfig, cfgPath := setupUpdateThemeTest(t)
-		require.NoError(t, UpdateThemeInConfig(cfgPath, "dracula", map[string]any{
-			"foreground": "#f8f8f2",
-			"background": "rgb(40,42,54)",
-		}))
-		palette := readConfig()["themes"].(map[string]any)["dracula"].(map[string]any)
-		assert.Equal(t, "#f8f8f2", palette["foreground"])
-		assert.NotContains(t, palette, "background")
+		palette := out["themes"].(map[string]any)["mine"].(map[string]any)
+		assert.Equal(t, "#dbdbdb", palette["foreground"])
 	})
 
 	t.Run("output passes LoadConfig", func(t *testing.T) {
 		readConfig, cfgPath := setupUpdateThemeTest(t)
-		require.NoError(t, UpdateThemeInConfig(cfgPath, "dracula", map[string]any{
-			"foreground": "#f8f8f2",
-			"background": "#282a36",
-			"cursor":     "#f8f8f2",
-			"red":        "#ff5555",
-			"bright-red": "#ff6e6e",
-		}))
+		require.NoError(t, ActivateThemeInConfig(cfgPath, "dracula"))
 		_ = readConfig() // ensure file exists
 		assert.NoError(t, loadConfigErr(t, cfgPath))
 	})
@@ -1095,7 +1063,7 @@ func TestSaveDefaultThemeConfig(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("HOME", home)
 
-		require.NoError(t, saveDefaultThemeConfig("", "dracula", map[string]any{"foreground": "#f8f8f2"}))
+		require.NoError(t, saveDefaultThemeConfig("", "dracula"))
 
 		info, err := os.Stat(filepath.Join(home, DOT_CONFIG_PATH, B3TTY_CONFIG_PATH))
 		require.NoError(t, err)
@@ -1105,45 +1073,35 @@ func TestSaveDefaultThemeConfig(t *testing.T) {
 		assert.Equal(t, "dracula", out["theme"])
 	})
 
-	t.Run("writes the theme's color entries under the themes section", func(t *testing.T) {
+	t.Run("makes the theme active, default, and the one menu entry, with no colors", func(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("HOME", home)
 
-		require.NoError(t, saveDefaultThemeConfig("", "dracula", map[string]any{
-			"foreground": "#f8f8f2",
-			"background": "#282a36",
-		}))
+		require.NoError(t, saveDefaultThemeConfig("", "b3tty-dark"))
 
 		out := readConfig(t, home)
-		themes := out["themes"].(map[string]any)
-		palette := themes["dracula"].(map[string]any)
-		assert.Equal(t, "#f8f8f2", palette["foreground"])
-		assert.Equal(t, "#282a36", palette["background"])
+		assert.Equal(t, "b3tty-dark", out["theme"])
+		assert.Equal(t, "b3tty-dark", out["default-theme"])
+		assert.Equal(t, []any{"b3tty-dark"}, out["available-themes"])
+		assert.NotContains(t, out, "themes")
 	})
 
-	t.Run("silently drops invalid color strings", func(t *testing.T) {
+	t.Run("an empty theme name writes a config with no theme keys", func(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("HOME", home)
 
-		require.NoError(t, saveDefaultThemeConfig("", "dracula", map[string]any{
-			"foreground": "#f8f8f2",
-			"background": "rgb(40,42,54)",
-		}))
+		require.NoError(t, saveDefaultThemeConfig("", ""))
 
-		palette := readConfig(t, home)["themes"].(map[string]any)["dracula"].(map[string]any)
-		assert.Equal(t, "#f8f8f2", palette["foreground"])
-		assert.NotContains(t, palette, "background")
+		path := filepath.Join(home, DOT_CONFIG_PATH, B3TTY_CONFIG_PATH, CONFIG_FILE_NAME)
+		assert.Empty(t, readConfig(t, home))
+		assert.NoError(t, loadConfigErr(t, path))
 	})
 
 	t.Run("output passes LoadConfig", func(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("HOME", home)
 
-		require.NoError(t, saveDefaultThemeConfig("", "dracula", map[string]any{
-			"foreground": "#f8f8f2",
-			"background": "#282a36",
-			"red":        "#ff5555",
-		}))
+		require.NoError(t, saveDefaultThemeConfig("", "dracula"))
 
 		assert.NoError(t, loadConfigErr(t, filepath.Join(home, DOT_CONFIG_PATH, B3TTY_CONFIG_PATH, CONFIG_FILE_NAME)))
 	})
@@ -1151,9 +1109,9 @@ func TestSaveDefaultThemeConfig(t *testing.T) {
 	t.Run("overwrites an existing config file at the same path", func(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("HOME", home)
-		require.NoError(t, saveDefaultThemeConfig("", "b3tty-dark", map[string]any{"foreground": "#dbdbdb"}))
+		require.NoError(t, saveDefaultThemeConfig("", "b3tty-dark"))
 
-		require.NoError(t, saveDefaultThemeConfig("", "b3tty-light", map[string]any{"foreground": "#111111"}))
+		require.NoError(t, saveDefaultThemeConfig("", "b3tty-light"))
 
 		out := readConfig(t, home)
 		assert.Equal(t, "b3tty-light", out["theme"])
@@ -1161,7 +1119,7 @@ func TestSaveDefaultThemeConfig(t *testing.T) {
 
 	t.Run("returns an error when the home directory cannot be determined", func(t *testing.T) {
 		t.Setenv("HOME", "")
-		err := saveDefaultThemeConfig("", "dracula", map[string]any{"foreground": "#f8f8f2"})
+		err := saveDefaultThemeConfig("", "dracula")
 		assert.Error(t, err)
 	})
 
@@ -1172,7 +1130,7 @@ func TestSaveDefaultThemeConfig(t *testing.T) {
 		// created, so MkdirAll must fail.
 		require.NoError(t, os.WriteFile(filepath.Join(home, DOT_CONFIG_PATH), []byte("not a directory"), 0644))
 
-		err := saveDefaultThemeConfig("", "dracula", map[string]any{"foreground": "#f8f8f2"})
+		err := saveDefaultThemeConfig("", "dracula")
 		assert.Error(t, err)
 	})
 
@@ -1187,7 +1145,7 @@ func TestSaveDefaultThemeConfig(t *testing.T) {
 		require.NoError(t, os.Chmod(configDir, 0555)) // read+execute, no write
 		t.Cleanup(func() { _ = os.Chmod(configDir, 0755) })
 
-		err := saveDefaultThemeConfig("", "dracula", map[string]any{"foreground": "#f8f8f2"})
+		err := saveDefaultThemeConfig("", "dracula")
 		assert.Error(t, err)
 	})
 }

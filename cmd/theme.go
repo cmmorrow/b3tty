@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -63,9 +64,10 @@ var themeListCmd = &cobra.Command{
 var themeSetCmd = &cobra.Command{
 	Use:   "set <name>",
 	Short: "Set the active theme",
-	Long: `Sets the active theme in the b3tty config file. The name must be a built-in
-theme or a user-defined theme already present in the config file. Run
-'b3tty theme list' to see all available theme names.
+	Long: `Sets the active theme in the b3tty config file and adds it to the Themes
+menu if it isn't there. The name must be a built-in theme or a user-defined
+theme already present in the config file. Run 'b3tty theme list' to see all
+available theme names.
 
 Changes take effect the next time b3tty is started.`,
 	Args: cobra.ExactArgs(1),
@@ -73,25 +75,17 @@ Changes take effect the next time b3tty is started.`,
 		name := args[0]
 		configPath := resolveConfigPath()
 
-		colors, isBuiltin := src.GetBuiltinTheme(name)
-		if !isBuiltin {
+		if !src.IsBuiltinThemeName(name) {
 			themeNames, err := src.ReadThemeNames(configPath)
 			if err != nil {
 				cmdLog.Fatalf("could not read themes from config: %v", err)
 			}
-			found := false
-			for _, n := range themeNames {
-				if n == name {
-					found = true
-					break
-				}
-			}
-			if !found {
+			if !slices.Contains(themeNames, name) {
 				cmdLog.Fatalf("theme %q not found; run 'b3tty theme list' to see available themes", name)
 			}
 		}
 
-		if err := src.UpdateThemeInConfig(configPath, name, colors); err != nil {
+		if err := src.ActivateThemeInConfig(configPath, name); err != nil {
 			cmdLog.Fatalf("failed to update theme: %v", err)
 		}
 		cmdLog.Infof("active theme set to %q", name)

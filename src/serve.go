@@ -33,11 +33,17 @@ var dist embed.FS
 // TerminalServer bundles all mutable per-session state used by the HTTP handlers,
 // making them independent of package-level globals and straightforward to test.
 type TerminalServer struct {
-	Client         *TerminalClient
-	Theme          Theme
-	Server         *Server
-	Profiles       map[string]Profile
-	Themes         map[string]Theme
+	Client   *TerminalClient
+	Theme    Theme
+	Server   *Server
+	Profiles map[string]Profile
+	Themes   map[string]Theme
+	// AvailableThemes is the Themes menu, in order: names of built-in or user
+	// themes, mirroring the config file's available-themes.
+	AvailableThemes []string
+	// DefaultTheme mirrors the config file's default-theme, the theme used
+	// when the active one is gone; "" means no theme.
+	DefaultTheme   string
 	Token          string
 	ProfileName    string
 	StartupProfile string
@@ -51,8 +57,10 @@ type TerminalServer struct {
 	WSClients      map[*websocket.Conn]*wsClient
 	WSClientsMu    sync.Mutex
 	// StateMu guards every field above that is read or written by more than one
-	// HTTP handler after startup: Client, Theme, Profiles, Themes, ActiveTheme,
-	// and ProfileName. Server, ConfigFile, StartupProfile, NoBrowser, and
+	// HTTP handler after startup: Client, Theme, Profiles, Themes,
+	// AvailableThemes, DefaultTheme, ActiveTheme, and ProfileName. Themes holds
+	// user-defined themes only; built-in themes stay in builtinThemes (see
+	// resolveTheme). Server, ConfigFile, StartupProfile, NoBrowser, and
 	// ShowMenubar are set once before Serve() starts accepting requests and
 	// never mutated afterward, so they do not need to be guarded. Callers
 	// should hold StateMu only long enough to read or mutate state into local

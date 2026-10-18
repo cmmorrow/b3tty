@@ -7,13 +7,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"sync"
 
 	"gopkg.in/yaml.v3"
 )
 
 // configFileMu serializes every read-modify-write access to conf.yaml made
-// by this process. UpdateThemeInConfig, SaveThemeToConfig,
+// by this process. ActivateThemeInConfig, SaveThemeToConfig,
 // SaveThemePackageToConfig, SaveProfileToConfig, DeleteProfileFromConfig,
 // SaveSettingsToConfig, and saveDefaultThemeConfig each
 // read the file, mutate a section (or, for saveDefaultThemeConfig, build it from
@@ -46,12 +48,20 @@ var configFileMu sync.Mutex
 // value type (map[string]Theme) for the same reason.
 
 // Config is the decoded contents of conf.yaml.
+//
+// Theme is the active theme and DefaultTheme the one used when Theme doesn't
+// resolve; either may name a built-in or user theme, and when neither resolves
+// no theme is applied. AvailableThemes is the Themes menu, in order, and may
+// name themes from any source. Themes holds only user-defined theme
+// definitions: built-in themes are never copied into it.
 type Config struct {
-	Server   ServerConfig       `yaml:"server"`
-	Terminal TerminalClient     `yaml:"terminal"`
-	Theme    string             `yaml:"theme"`
-	Themes   map[string]Theme   `yaml:"themes"`
-	Profiles map[string]Profile `yaml:"profiles"`
+	Server          ServerConfig       `yaml:"server"`
+	Terminal        TerminalClient     `yaml:"terminal"`
+	Theme           string             `yaml:"theme"`
+	DefaultTheme    string             `yaml:"default-theme"`
+	AvailableThemes []string           `yaml:"available-themes"`
+	Themes          map[string]Theme   `yaml:"themes"`
+	Profiles        map[string]Profile `yaml:"profiles"`
 }
 
 // ServerConfig is the config file's server section.
@@ -130,13 +140,15 @@ func filterValidThemeColors(colors map[string]any) map[string]any {
 }
 
 // saveDefaultThemeConfig writes a fresh conf.yaml at configPath (resolved via
-// resolveConfigPath) containing only the given active theme name and its color
-// entries under the themes section. Unlike the other config-writing functions
-// in this file, it does not read or preserve any existing file content: it is
-// used solely for the first-run setup flow, where no config file exists yet.
-// Keys in colors use the hyphenated form of Theme's yaml tags (e.g. "bright-red"),
-// as produced by Theme.toColorMap.
-func saveDefaultThemeConfig(configPath string, themeName string, colors map[string]any) error {
+// resolveConfigPath) for the first-run setup flow, where no config file exists
+// yet: unlike the other config-writing functions in this file, it does not read
+// or preserve any existing file content. themeName — a built-in theme — becomes
+// the active theme, the default theme, and the only Themes menu entry; no
+// colors are written, since built-in themes are never copied into the themes
+// section. An empty themeName ("set a theme later") writes a config with no
+// theme keys at all, so no theme is applied but the setup page isn't shown
+// again.
+func saveDefaultThemeConfig(configPath string, themeName string) error {
 	configFileMu.Lock()
 	defer configFileMu.Unlock()
 
@@ -145,18 +157,49 @@ func saveDefaultThemeConfig(configPath string, themeName string, colors map[stri
 		return err
 	}
 
-	cfg := map[string]any{
-		"theme":  themeName,
-		"themes": map[string]any{themeName: filterValidThemeColors(colors)},
+	cfg := map[string]any{}
+	if themeName != "" {
+		cfg["theme"] = themeName
+		cfg["default-theme"] = themeName
+		cfg["available-themes"] = []string{themeName}
 	}
 
 	return writeConfigMap(configPath, cfg, "saveDefaultThemeConfig")
 }
 
-// UpdateThemeInConfig reads the existing config file at configPath (creating it if
-// absent), sets the active theme name, and adds the theme's color entries to the
-// themes section if they are not already present. Existing settings are preserved.
-func UpdateThemeInConfig(configPath string, themeName string, colors map[string]any) error {
+// appendAvailableTheme adds name to the end of cfg's available-themes list (the
+// Themes menu) unless it is already there. A config written before that key
+// existed has no list; one is first seeded the way LoadThemeState seeds the
+// menu for such a config — every name in the themes section, sorted — so
+// adding a theme doesn't drop the rest of the menu.
+func appendAvailableTheme(cfg map[string]any, name string) {
+	raw, ok := cfg["available-themes"].([]any)
+	var names []string
+	if ok {
+		for _, v := range raw {
+			if s, ok := v.(string); ok {
+				names = append(names, s)
+			}
+		}
+	} else if _, present := cfg["available-themes"]; !present {
+		themesSection, _ := cfg["themes"].(map[string]any)
+		for n := range themesSection {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+	}
+	if !slices.Contains(names, name) {
+		names = append(names, name)
+	}
+	cfg["available-themes"] = names
+}
+
+// ActivateThemeInConfig reads the existing config file at configPath (creating
+// it if absent), sets the active theme to themeName, and adds it to the Themes
+// menu (available-themes) if it isn't already there. It never writes theme
+// colors: the theme may be built-in or user-defined, and either way its
+// definition is already where it belongs. Existing settings are preserved.
+func ActivateThemeInConfig(configPath string, themeName string) error {
 	configFileMu.Lock()
 	defer configFileMu.Unlock()
 
@@ -164,19 +207,15 @@ func UpdateThemeInConfig(configPath string, themeName string, colors map[string]
 	if err != nil {
 		return err
 	}
-	cfg, err := loadConfigMap(configPath, "UpdateThemeInConfig")
+	cfg, err := loadConfigMap(configPath, "ActivateThemeInConfig")
 	if err != nil {
 		return err
 	}
 
 	cfg["theme"] = themeName
-	themesSection := getOrCreateSection(cfg, "themes")
+	appendAvailableTheme(cfg, themeName)
 
-	if _, exists := themesSection[themeName]; !exists && len(colors) > 0 {
-		themesSection[themeName] = filterValidThemeColors(colors)
-	}
-
-	return writeConfigMap(configPath, cfg, "UpdateThemeInConfig")
+	return writeConfigMap(configPath, cfg, "ActivateThemeInConfig")
 }
 
 // SaveThemeToConfig reads the existing config file at configPath (creating it if
@@ -216,6 +255,7 @@ func SaveThemeToConfig(configPath string, themeName string, theme Theme) error {
 		}
 	}
 	themesSection[themeName] = entry
+	appendAvailableTheme(cfg, themeName)
 
 	return writeConfigMap(configPath, cfg, "SaveThemeToConfig")
 }

@@ -24,6 +24,8 @@ var profiles map[string]src.Profile
 var configFileFound bool
 var activeThemeName string
 var themes = make(map[string]src.Theme)
+var availableThemes []string
+var defaultThemeName string
 
 // configKeys records which dotted keys the config file actually contained,
 // and configLoadErr the error from decoding it (nil on success, and always
@@ -189,21 +191,15 @@ func initConfig() {
 	fontSize = cfg.Terminal.FontSize
 
 	// Decoding straight into map[string]Theme preserves each theme name's
-	// exact case, which viper.GetStringMap does not — the reason the active
-	// theme and the themes list used to be read back out of the raw YAML
-	// separately.
-	for name, t := range cfg.Themes {
-		themes[name] = t
-	}
-	if cfg.Theme != "" {
-		t, ok := cfg.Themes[cfg.Theme]
-		if !ok {
-			src.Errorf("cannot find theme %s", cfg.Theme)
-			os.Exit(3)
-		}
-		theme = t
-		activeThemeName = cfg.Theme
-	}
+	// exact case, which viper.GetStringMap does not. LoadThemeState separates
+	// the user themes from the Themes menu and resolves the active theme,
+	// warning (rather than failing) about entries that name no theme.
+	themeState := src.LoadThemeState(cfg, configKeys)
+	themes = themeState.Themes
+	availableThemes = themeState.AvailableThemes
+	defaultThemeName = themeState.DefaultTheme
+	theme = themeState.Active
+	activeThemeName = themeState.ActiveName
 
 	for name, p := range cfg.Profiles {
 		profiles[name] = applyProfileDefaults(p)
