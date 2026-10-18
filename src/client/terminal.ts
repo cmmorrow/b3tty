@@ -1128,6 +1128,13 @@ export async function main(config: TermConfig): Promise<void> {
     }
 }
 
-if (typeof window !== "undefined" && window.B3TTY) {
-    main(window.B3TTY);
+if (typeof window !== "undefined") {
+    if (window.B3TTY) {
+        main(window.B3TTY);
+    } else {
+        // The first-run setup page (setup.tmpl) loads this same bundle but has no
+        // window.B3TTY. Its <b3tty-theme-selector> is defined in the components
+        // chunk, which main() would otherwise be the only thing to import.
+        void import("./components.ts");
+    }
 }

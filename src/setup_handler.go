@@ -29,8 +29,10 @@ func (ts *TerminalServer) renderSetupPage(w http.ResponseWriter) {
 }
 
 // saveConfigHandler accepts a POST request with a JSON body containing a "theme"
-// field ("b3tty-dark", "b3tty-light", or "skip"). For b3tty-dark/b3tty-light, it writes a default config
-// file to $HOME/.config/b3tty/conf.yaml. Sets firstRun to false on success.
+// field ("b3tty-dark", "b3tty-light", or "skip") and writes a new config file
+// to $HOME/.config/b3tty/conf.yaml via saveDefaultThemeConfig: the chosen
+// built-in becomes the active and default theme and the one Themes menu entry,
+// and "skip" writes a config with no theme. Sets firstRun to false on success.
 func (ts *TerminalServer) saveConfigHandler(w http.ResponseWriter, r *http.Request) {
 	ts.StateMu.RLock()
 	firstRun := ts.FirstRun
@@ -58,29 +60,37 @@ func (ts *TerminalServer) saveConfigHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var selected *Theme
+	// "b3tty-dark" and "b3tty-light" become the active and default theme;
+	// anything else ("skip") applies no theme. Either way a config file is
+	// written, so the setup page isn't shown on the next start.
+	var themeName string
+	var selected Theme
 	switch req.Theme {
 	case "b3tty-dark":
-		selected = &defaultDarkTheme
+		themeName, selected = req.Theme, defaultDarkTheme
 	case "b3tty-light":
-		selected = &defaultLightTheme
+		themeName, selected = req.Theme, defaultLightTheme
 	}
 
-	if selected != nil {
-		Debug("writing config file....")
-		if err := saveDefaultThemeConfig(ts.ConfigFile, req.Theme, selected.toColorMap()); err != nil {
-			Errorf("failed to write config: %v", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		ts.StateMu.Lock()
-		ts.Theme = *selected
-		// Register the selected theme in ts.Themes so it appears in the Themes
-		// menu after the browser reloads into the normal terminal flow.
-		ts.Themes[req.Theme] = ts.Theme
-		ts.ActiveTheme = req.Theme
-		ts.StateMu.Unlock()
-		Infof("created default %s theme config", req.Theme)
+	Debug("writing config file....")
+	if err := saveDefaultThemeConfig(ts.ConfigFile, themeName); err != nil {
+		Errorf("failed to write config: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	ts.StateMu.Lock()
+	ts.Theme = selected
+	ts.ActiveTheme = themeName
+	ts.DefaultTheme = themeName
+	ts.AvailableThemes = []string{}
+	if themeName != "" {
+		ts.AvailableThemes = []string{themeName}
+	}
+	ts.StateMu.Unlock()
+	if themeName != "" {
+		Infof("created config with the %s theme", themeName)
+	} else {
+		Info("created config with no theme")
 	}
 
 	ts.StateMu.Lock()

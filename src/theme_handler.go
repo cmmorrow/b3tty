@@ -72,31 +72,6 @@ func GetBuiltinThemeNames() []string {
 	return names
 }
 
-// GetBuiltinTheme returns the color map for the named built-in theme, in the
-// hyphenated form the config-writing functions expect. The second return value
-// is false when no such theme exists, in which case the map is nil — which
-// UpdateThemeInConfig reads as "set the active theme name but leave any
-// existing color entries alone".
-func GetBuiltinTheme(name string) (map[string]any, bool) {
-	t, ok := builtinThemes[name]
-	if !ok {
-		return nil, false
-	}
-	return t.toColorMap(), true
-}
-
-// sortedThemeNames returns the names of all user-defined themes in ts.Themes,
-// sorted alphabetically. Callers must hold ts.StateMu (read or write) before
-// calling this method since it reads ts.Themes directly.
-func (ts *TerminalServer) sortedThemeNames() []string {
-	names := make([]string, 0, len(ts.Themes))
-	for name := range ts.Themes {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
 // themePaletteHandler serves a GET /theme?name=<name> request for any built-in or
 // user-defined theme and returns a themePaletteResponse JSON payload shaped for the
 // theme selector components.
@@ -108,15 +83,12 @@ func (ts *TerminalServer) themePaletteHandler(w http.ResponseWriter, r *http.Req
 	}
 	name := r.URL.Query().Get("name")
 	ts.StateMu.RLock()
-	t, ok := ts.Themes[name]
+	t, _, ok := ts.resolveTheme(name)
 	ts.StateMu.RUnlock()
-
 	if !ok {
-		if t, ok = builtinThemes[name]; !ok {
-			Warnf("unknown theme name: %q", name)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
+		Warnf("unknown theme name: %q", name)
+		w.WriteHeader(http.StatusBadRequest)
+		return
 	}
 
 	// ANSI display order (black, red, yellow, green, cyan, blue, magenta,
@@ -137,10 +109,13 @@ func (ts *TerminalServer) themePaletteHandler(w http.ResponseWriter, r *http.Req
 // GET returns the full theme color config and hasBackgroundImage flag without
 // side effects.
 //
+// The name may be a built-in or user theme (see resolveTheme).
+//
 // POST additionally activates the named theme on the server (updating
-// ts.client.Theme) so that the /background endpoint immediately serves the
-// correct image and subsequent page loads receive the new theme. POST requires
-// a same-origin Sec-Fetch-Site header to prevent CSRF.
+// ts.Theme) so that the /background endpoint immediately serves the correct
+// image and subsequent page loads receive the new theme, adds it to the
+// Themes menu, and records both in conf.yaml via ActivateThemeInConfig. POST
+// requires a same-origin Sec-Fetch-Site header to prevent CSRF.
 func (ts *TerminalServer) themeConfigHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET", "POST":
@@ -161,30 +136,19 @@ func (ts *TerminalServer) themeConfigHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	ts.StateMu.RLock()
-	theme, ok := ts.Themes[name]
+	theme, _, ok := ts.resolveTheme(name)
 	ts.StateMu.RUnlock()
 	if !ok {
-		if builtinTheme, ok := builtinThemes[name]; ok {
-			theme = builtinTheme
-		} else {
-			http.NotFound(w, r)
-			return
-		}
+		http.NotFound(w, r)
+		return
 	}
 	if r.Method == "POST" {
 		ts.StateMu.Lock()
 		ts.Theme = theme
 		ts.ActiveTheme = name
+		ts.addMenuTheme(name)
 		ts.StateMu.Unlock()
-		// A built-in name persists the built-in's own colors rather than the
-		// in-memory theme, which may carry user edits under the same name.
-		var colors map[string]any
-		if builtinTheme, ok := builtinThemes[name]; ok {
-			colors = builtinTheme.toColorMap()
-		} else {
-			colors = theme.toColorMap()
-		}
-		if err := UpdateThemeInConfig(ts.ConfigFile, name, colors); err != nil {
+		if err := ActivateThemeInConfig(ts.ConfigFile, name); err != nil {
 			Errorf("theme-config: failed to update config: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
@@ -200,7 +164,11 @@ func (ts *TerminalServer) themeConfigHandler(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, resp, "theme-config")
 }
 
-// addThemeHandler applies a chosen theme and persists it to conf.yaml.
+// addThemeHandler activates a theme chosen in the theme picker and adds it to
+// the Themes menu, in memory and in conf.yaml (ActivateThemeInConfig). The
+// theme may be built-in or user-defined; built-in themes are referenced by
+// name, never copied into the themes section or ts.Themes. It returns the
+// theme plus themeNames, the updated menu, so the client can rebuild it.
 // POST /add-theme  body: {"theme":"<name>"}
 func (ts *TerminalServer) addThemeHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
@@ -222,32 +190,21 @@ func (ts *TerminalServer) addThemeHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Resolve theme colors and ensure the theme is in ts.Themes. The whole
-	// read-check-then-write sequence runs under a single write lock so two
-	// concurrent add-theme requests for the same new theme name can't race.
 	ts.StateMu.Lock()
-	var colors map[string]any
-	if builtinTheme, ok := builtinThemes[req.Theme]; ok {
-		colors = builtinTheme.toColorMap()
-		if _, exists := ts.Themes[req.Theme]; !exists {
-			ts.Themes[req.Theme] = builtinTheme
-		}
-	} else if theme, ok := ts.Themes[req.Theme]; ok {
-		colors = theme.toColorMap()
-	} else {
+	theme, _, ok := ts.resolveTheme(req.Theme)
+	if !ok {
 		ts.StateMu.Unlock()
 		Warnf("%s %s: unknown theme %q", r.Method, r.URL.Path, req.Theme)
 		http.NotFound(w, r)
 		return
 	}
-
-	ts.Theme = ts.Themes[req.Theme]
+	ts.Theme = theme
 	ts.ActiveTheme = req.Theme
-	activeTheme := ts.Theme
-	themeNames := ts.sortedThemeNames()
+	ts.addMenuTheme(req.Theme)
+	themeNames := ts.menuThemeNames()
 	ts.StateMu.Unlock()
 
-	if err := UpdateThemeInConfig(ts.ConfigFile, req.Theme, colors); err != nil {
+	if err := ActivateThemeInConfig(ts.ConfigFile, req.Theme); err != nil {
 		Errorf("add-theme: failed to update config: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -255,14 +212,17 @@ func (ts *TerminalServer) addThemeHandler(w http.ResponseWriter, r *http.Request
 
 	Debugf("added theme %q", req.Theme)
 	resp := themeConfigResponse{
-		Theme:              activeTheme,
-		HasBackgroundImage: activeTheme.BackgroundImage != "",
+		Theme:              theme,
+		HasBackgroundImage: theme.BackgroundImage != "",
 		ThemeNames:         themeNames,
 	}
 	writeJSON(w, resp, "add-theme")
 }
 
-// editThemeHandler creates or overwrites a user-defined theme and activates it.
+// editThemeHandler creates or overwrites a user-defined theme, activates it,
+// and adds it to the Themes menu; the response's themeNames is the updated
+// menu. A built-in theme's name is refused (400), since built-in themes can't
+// be redefined.
 // POST /edit-theme  body: {"name":"<name>","theme":{...Theme fields...}}
 func (ts *TerminalServer) editThemeHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
@@ -291,6 +251,11 @@ func (ts *TerminalServer) editThemeHandler(w http.ResponseWriter, r *http.Reques
 	}
 	// Validation errors go back in the response body so the theme editor can
 	// show the user what to fix.
+	if IsBuiltinThemeName(req.Name) {
+		Warnf("%s %s: bad request: built-in theme %q", r.Method, r.URL.Path, req.Name)
+		http.Error(w, fmt.Sprintf("%q is a built-in theme and can't be edited; save your changes under a new name", req.Name), http.StatusBadRequest)
+		return
+	}
 	if err := ValidateTheme(&req.Theme); err != nil {
 		Warnf("%s %s: bad request: %v", r.Method, r.URL.Path, err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -311,7 +276,8 @@ func (ts *TerminalServer) editThemeHandler(w http.ResponseWriter, r *http.Reques
 	ts.Themes[req.Name] = req.Theme
 	ts.Theme = req.Theme
 	ts.ActiveTheme = req.Name
-	themeNames := ts.sortedThemeNames()
+	ts.addMenuTheme(req.Name)
+	themeNames := ts.menuThemeNames()
 	ts.StateMu.Unlock()
 
 	if err := SaveThemeToConfig(ts.ConfigFile, req.Name, req.Theme); err != nil {

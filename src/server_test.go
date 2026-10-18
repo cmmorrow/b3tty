@@ -18,6 +18,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // syncBuffer wraps bytes.Buffer with a mutex guarding both Write and String.
@@ -1145,7 +1146,7 @@ func TestThemePaletteHandler(t *testing.T) {
 		assert.Equal(t, "#526fff", resp.Cursor)
 	})
 
-	t.Run("GET user-customized builtin in ts.Themes takes precedence over builtinThemes", func(t *testing.T) {
+	t.Run("GET a built-in wins over a user theme of the same name", func(t *testing.T) {
 		ts := newTestTerminalServer()
 		ts.Themes = map[string]Theme{
 			"b3tty-dark": {Foreground: "#custom", Background: "#000001"},
@@ -1157,8 +1158,8 @@ func TestThemePaletteHandler(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 		var resp themePaletteResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		assert.Equal(t, "#custom", resp.Fg)
-		assert.Equal(t, "#000001", resp.Bg)
+		assert.Equal(t, builtinThemes["b3tty-dark"].Foreground, resp.Fg)
+		assert.Equal(t, builtinThemes["b3tty-dark"].Background, resp.Bg)
 	})
 }
 
@@ -1388,7 +1389,7 @@ func TestThemeConfigHandler(t *testing.T) {
 		assert.Equal(t, "#1e1e1e", resp.Background)
 	})
 
-	t.Run("GET user-customized builtin in ts.Themes takes precedence over builtinThemes", func(t *testing.T) {
+	t.Run("GET a built-in wins over a user theme of the same name", func(t *testing.T) {
 		ts := newTestTerminalServer()
 		ts.Themes = map[string]Theme{
 			"b3tty-dark": {Foreground: "#custom", Background: "#000001"},
@@ -1400,8 +1401,8 @@ func TestThemeConfigHandler(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 		var resp themeConfigResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		assert.Equal(t, "#custom", resp.Foreground)
-		assert.Equal(t, "#000001", resp.Background)
+		assert.Equal(t, builtinThemes["b3tty-dark"].Foreground, resp.Foreground)
+		assert.Equal(t, builtinThemes["b3tty-dark"].Background, resp.Background)
 	})
 }
 
@@ -1491,12 +1492,13 @@ func TestEditThemeHandler(t *testing.T) {
 		assert.Equal(t, "#112233", ts.Themes["my-theme"].Background)
 	})
 
-	t.Run("POST response includes sorted themeNames", func(t *testing.T) {
+	t.Run("POST response's themeNames is the menu, with a new theme appended", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		ts := newTestTerminalServer()
 		ts.Themes = map[string]Theme{
 			"alpha": {Foreground: "#111"},
 		}
+		ts.AvailableThemes = []string{"dracula", "alpha"}
 		body := strings.NewReader(editBody("zebra", "#fff", "#000"))
 		req := httptest.NewRequest(http.MethodPost, "/edit-theme", body)
 		req.Header.Set("Content-Type", "application/json")
@@ -1505,7 +1507,7 @@ func TestEditThemeHandler(t *testing.T) {
 
 		var resp themeConfigResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		require.Equal(t, []string{"alpha", "zebra"}, resp.ThemeNames)
+		require.Equal(t, []string{"dracula", "alpha", "zebra"}, resp.ThemeNames)
 	})
 
 	t.Run("POST response contains activated theme colors", func(t *testing.T) {
@@ -1827,43 +1829,6 @@ func TestThemePackageHandler(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// sortedThemeNames
-// ---------------------------------------------------------------------------
-
-func TestSortedThemeNames(t *testing.T) {
-	t.Run("returns empty slice when no themes are configured", func(t *testing.T) {
-		ts := newTestTerminalServer()
-		assert.Empty(t, ts.sortedThemeNames())
-	})
-
-	t.Run("returns names in alphabetical order", func(t *testing.T) {
-		ts := newTestTerminalServer()
-		ts.Themes["zebra"] = Theme{}
-		ts.Themes["alpha"] = Theme{}
-		ts.Themes["mango"] = Theme{}
-		assert.Equal(t, []string{"alpha", "mango", "zebra"}, ts.sortedThemeNames())
-	})
-
-	t.Run("returns a single-element slice for one theme", func(t *testing.T) {
-		ts := newTestTerminalServer()
-		ts.Themes["my-theme"] = Theme{}
-		assert.Equal(t, []string{"my-theme"}, ts.sortedThemeNames())
-	})
-
-	t.Run("does not modify ts.Themes", func(t *testing.T) {
-		ts := newTestTerminalServer()
-		ts.Themes["b"] = Theme{}
-		ts.Themes["a"] = Theme{}
-		_ = ts.sortedThemeNames()
-		assert.Len(t, ts.Themes, 2)
-		_, hasA := ts.Themes["a"]
-		_, hasB := ts.Themes["b"]
-		assert.True(t, hasA)
-		assert.True(t, hasB)
-	})
-}
-
-// ---------------------------------------------------------------------------
 // Concurrent state access (regression test for the StateMu data race)
 // ---------------------------------------------------------------------------
 
@@ -1907,7 +1872,7 @@ func TestConcurrentStateAccess(t *testing.T) {
 			ts.editThemeHandler(httptest.NewRecorder(), req)
 		})
 
-		// Adding a built-in theme: read+write Themes, write Theme/ActiveTheme.
+		// Adding a built-in theme: read Themes, write AvailableThemes/Theme/ActiveTheme.
 		run(func() {
 			body := strings.NewReader(`{"theme":"b3tty-dark"}`)
 			req := httptest.NewRequest(http.MethodPost, "/add-theme", body)
@@ -2219,5 +2184,152 @@ func TestNewMuxRequiresTokenOnEveryAPIRoute(t *testing.T) {
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/assets/terminal.css", nil))
 		assert.Equal(t, http.StatusOK, w.Code)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Themes menu: add-theme, theme-config POST, edit-theme, save-config
+// ---------------------------------------------------------------------------
+
+// readTestConfig reads conf.yaml under HOME as a generic map.
+func readTestConfig(t *testing.T) map[string]any {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	data, err := os.ReadFile(filepath.Join(home, DOT_CONFIG_PATH, B3TTY_CONFIG_PATH, CONFIG_FILE_NAME))
+	require.NoError(t, err)
+	var out map[string]any
+	require.NoError(t, yaml.Unmarshal(data, &out))
+	return out
+}
+
+func TestAddThemeHandler(t *testing.T) {
+	post := func(ts *TerminalServer, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/add-theme", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		captureLog(func() { ts.addThemeHandler(w, req) })
+		return w
+	}
+
+	t.Run("activates a built-in by name, appending it to the menu without copying it", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		writeInitialConfig(t, "available-themes: [mine]\nthemes:\n  mine:\n    foreground: \"#123456\"\n")
+		ts := newTestTerminalServer()
+		ts.Themes["mine"] = Theme{Foreground: "#123456"}
+		ts.AvailableThemes = []string{"mine"}
+
+		w := post(ts, `{"theme":"dracula"}`)
+		require.Equal(t, http.StatusOK, w.Code)
+		var resp themeConfigResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, builtinThemes["dracula"].Foreground, resp.Foreground)
+		assert.Equal(t, []string{"mine", "dracula"}, resp.ThemeNames)
+
+		assert.Equal(t, "dracula", ts.ActiveTheme)
+		assert.Equal(t, builtinThemes["dracula"], ts.Theme)
+		assert.NotContains(t, ts.Themes, "dracula")
+
+		out := readTestConfig(t)
+		assert.Equal(t, "dracula", out["theme"])
+		assert.Equal(t, []any{"mine", "dracula"}, out["available-themes"])
+		assert.NotContains(t, out["themes"], "dracula")
+	})
+
+	t.Run("a theme already in the menu isn't added twice", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		ts := newTestTerminalServer()
+		ts.AvailableThemes = []string{"dracula", "one-light"}
+		w := post(ts, `{"theme":"dracula"}`)
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, []string{"dracula", "one-light"}, ts.AvailableThemes)
+	})
+
+	t.Run("unknown theme returns 404 and changes nothing", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		ts := newTestTerminalServer()
+		w := post(ts, `{"theme":"nope"}`)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Empty(t, ts.AvailableThemes)
+		assert.Equal(t, "", ts.ActiveTheme)
+	})
+
+	t.Run("missing theme returns 400", func(t *testing.T) {
+		assert.Equal(t, http.StatusBadRequest, post(newTestTerminalServer(), `{}`).Code)
+	})
+}
+
+func TestThemeConfigHandlerAddsToMenu(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ts := newTestTerminalServer()
+	req := httptest.NewRequest(http.MethodPost, "/theme-config?name=one-light", nil)
+	w := httptest.NewRecorder()
+	captureLog(func() { ts.themeConfigHandler(w, req) })
+	require.Equal(t, http.StatusOK, w.Code)
+
+	assert.Equal(t, []string{"one-light"}, ts.AvailableThemes)
+	out := readTestConfig(t)
+	assert.Equal(t, "one-light", out["theme"])
+	assert.Equal(t, []any{"one-light"}, out["available-themes"])
+	assert.NotContains(t, out, "themes", "a built-in's colors are never written")
+}
+
+func TestEditThemeHandlerRejectsBuiltinName(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ts := newTestTerminalServer()
+	body := strings.NewReader(`{"name":"dracula","theme":{"foreground":"#fff","background":"#000"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/edit-theme", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	captureLog(func() { ts.editThemeHandler(w, req) })
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "built-in theme")
+	assert.NotContains(t, ts.Themes, "dracula")
+	assert.Empty(t, ts.AvailableThemes)
+}
+
+func TestSaveConfigHandler(t *testing.T) {
+	post := func(ts *TerminalServer, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/save-config", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		captureLog(func() { ts.saveConfigHandler(w, req) })
+		return w
+	}
+
+	t.Run("a built-in becomes the active and default theme and the one menu entry", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		ts := newTestTerminalServer()
+		ts.FirstRun = true
+		require.Equal(t, http.StatusOK, post(ts, `{"theme":"b3tty-light"}`).Code)
+
+		assert.False(t, ts.FirstRun)
+		assert.Equal(t, "b3tty-light", ts.ActiveTheme)
+		assert.Equal(t, "b3tty-light", ts.DefaultTheme)
+		assert.Equal(t, []string{"b3tty-light"}, ts.AvailableThemes)
+		assert.Equal(t, defaultLightTheme, ts.Theme)
+		assert.Empty(t, ts.Themes)
+
+		out := readTestConfig(t)
+		assert.Equal(t, "b3tty-light", out["default-theme"])
+		assert.NotContains(t, out, "themes")
+	})
+
+	t.Run("skip writes a config with no theme and applies none", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		ts := newTestTerminalServer()
+		ts.FirstRun = true
+		require.Equal(t, http.StatusOK, post(ts, `{"theme":"skip"}`).Code)
+
+		assert.False(t, ts.FirstRun)
+		assert.Equal(t, "", ts.ActiveTheme)
+		assert.Equal(t, Theme{}, ts.Theme)
+		assert.Empty(t, ts.AvailableThemes)
+		assert.Empty(t, readTestConfig(t), "the file exists, so setup isn't shown again")
+	})
+
+	t.Run("returns 404 after the first run", func(t *testing.T) {
+		assert.Equal(t, http.StatusNotFound, post(newTestTerminalServer(), `{"theme":"b3tty-dark"}`).Code)
 	})
 }
