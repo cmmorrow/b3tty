@@ -21,24 +21,7 @@ func (ts *TerminalServer) broadcastTheme(name string, resp themeConfigResponse) 
 		Name:  name,
 		Theme: resp,
 	}
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return
-	}
-
-	ts.WSClientsMu.Lock()
-	clients := make([]*wsClient, 0, len(ts.WSClients))
-	for _, c := range ts.WSClients {
-		clients = append(clients, c)
-	}
-	ts.WSClientsMu.Unlock()
-
-	for _, c := range clients {
-		c.mu.Lock()
-		c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		_ = c.conn.WriteMessage(websocket.TextMessage, data)
-		c.mu.Unlock()
-	}
+	ts.broadcastJSON(msg)
 }
 
 // broadcastSettings sends a settings control message over every open WebSocket
@@ -52,24 +35,7 @@ func (ts *TerminalServer) broadcastSettings(terminal TerminalClient) {
 		Type:     "settings",
 		Terminal: terminal,
 	}
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return
-	}
-
-	ts.WSClientsMu.Lock()
-	clients := make([]*wsClient, 0, len(ts.WSClients))
-	for _, c := range ts.WSClients {
-		clients = append(clients, c)
-	}
-	ts.WSClientsMu.Unlock()
-
-	for _, c := range clients {
-		c.mu.Lock()
-		c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		_ = c.conn.WriteMessage(websocket.TextMessage, data)
-		c.mu.Unlock()
-	}
+	ts.broadcastJSON(msg)
 }
 
 // settingsHandler returns or updates the server and terminal settings.
@@ -165,4 +131,50 @@ func (ts *TerminalServer) settingsHandler(w http.ResponseWriter, r *http.Request
 		// would need another lock acquisition for values we already have.
 		Terminal: req.Terminal,
 	}, "settings")
+}
+
+// broadcastThemeLists pushes the theme name lists to every open session, as a
+// { type: "themes", themeNames, allThemeNames, builtinThemeNames } message, so
+// the Themes menu and theme dialogs pick up themes added or removed elsewhere
+// (another tab, or the b3tty theme CLI through POST /reload-themes). The lists
+// have the same meaning as in the page config (see displayTermHandler).
+func (ts *TerminalServer) broadcastThemeLists() {
+	ts.StateMu.RLock()
+	msg := struct {
+		Type              string   `json:"type"`
+		ThemeNames        []string `json:"themeNames"`
+		AllThemeNames     []string `json:"allThemeNames"`
+		BuiltinThemeNames []string `json:"builtinThemeNames"`
+	}{
+		Type:              "themes",
+		ThemeNames:        ts.menuThemeNames(),
+		AllThemeNames:     ts.allThemeNames(),
+		BuiltinThemeNames: ts.readOnlyThemeNames(),
+	}
+	ts.StateMu.RUnlock()
+	ts.broadcastJSON(msg)
+}
+
+// broadcastJSON sends msg, encoded as JSON, as a text message to every open
+// WebSocket session. The client list is copied under WSClientsMu and written
+// to outside it, each write holding that client's own mutex.
+func (ts *TerminalServer) broadcastJSON(msg any) {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+
+	ts.WSClientsMu.Lock()
+	clients := make([]*wsClient, 0, len(ts.WSClients))
+	for _, c := range ts.WSClients {
+		clients = append(clients, c)
+	}
+	ts.WSClientsMu.Unlock()
+
+	for _, c := range clients {
+		c.mu.Lock()
+		c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		_ = c.conn.WriteMessage(websocket.TextMessage, data)
+		c.mu.Unlock()
+	}
 }

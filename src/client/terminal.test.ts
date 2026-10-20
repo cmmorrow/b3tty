@@ -33,6 +33,7 @@ import {
     handleThemeEdited,
     applyResolvedTheme,
     applyThemeBroadcast,
+    applyThemeLists,
     applyThemeWithBackground,
     backgroundImageUrl,
     backgroundImageAlpha,
@@ -60,6 +61,7 @@ import {
 import { isB3ttyDialog, isB3ttyMenuBar } from "./components.ts";
 import { apiFetch, getSettings } from "./api.ts";
 import { isThemeActivateResponse } from "./types.ts";
+import type { TermConfig } from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Shared mock factories
@@ -792,6 +794,88 @@ describe("handleSocketMessage", () => {
         const payload = JSON.stringify({ type: "settings", terminal: {} });
         handleSocketMessage({ data: payload }, decoder, term, undefined, undefined, onTheme);
         expect(onTheme).not.toHaveBeenCalled();
+    });
+
+    it("calls onTheme with an empty name when the server switched to no theme", () => {
+        const onTheme = mock((_name: string, _theme: unknown) => {});
+        const payload = JSON.stringify({ type: "theme", name: "", theme: { hasBackgroundImage: false } });
+        handleSocketMessage({ data: payload }, decoder, term, undefined, undefined, onTheme);
+        expect(onTheme).toHaveBeenCalledTimes(1);
+        expect(onTheme.mock.calls[0]![0]).toBe("");
+    });
+
+    it("calls onThemes with the lists from a themes frame", () => {
+        const onThemes = mock((_lists: unknown) => {});
+        const lists = {
+            themeNames: ["dracula"],
+            allThemeNames: ["dracula", "midnight"],
+            builtinThemeNames: ["midnight"],
+        };
+        const payload = JSON.stringify({ type: "themes", ...lists });
+        handleSocketMessage({ data: payload }, decoder, term, undefined, undefined, undefined, onThemes);
+        expect(onThemes).toHaveBeenCalledTimes(1);
+        expect(onThemes.mock.calls[0]![0]).toEqual(lists);
+    });
+
+    it("does not call onThemes when a list is missing", () => {
+        const onThemes = mock((_lists: unknown) => {});
+        const payload = JSON.stringify({ type: "themes", themeNames: [], allThemeNames: [] });
+        handleSocketMessage({ data: payload }, decoder, term, undefined, undefined, undefined, onThemes);
+        expect(onThemes).not.toHaveBeenCalled();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// applyThemeLists
+// ---------------------------------------------------------------------------
+
+describe("applyThemeLists", () => {
+    const lists = {
+        themeNames: ["midnight"],
+        allThemeNames: ["dracula", "midnight"],
+        builtinThemeNames: ["dracula", "midnight"],
+    };
+
+    function makeConfig(): TermConfig {
+        return {
+            tls: false,
+            uri: "localhost",
+            port: 8080,
+            fontSize: 14,
+            fontFamily: "monospace",
+            rows: 24,
+            columns: 80,
+            theme: { foreground: "#ffffff", background: "#000000" },
+            themeNames: [],
+            profileNames: ["default", "work"],
+        } as TermConfig;
+    }
+
+    it("updates config and rebuilds the menu bar with the active theme's colors", () => {
+        const config = makeConfig();
+        const menuBar = { setup: mock((..._args: unknown[]) => {}), updateColors: mock((_c: unknown) => {}) };
+        const colors = { bg: "#111111", fg: "#eeeeee" };
+        applyThemeLists(lists, menuBar, config, { current: "midnight", colors });
+        expect(config.themeNames).toEqual(["midnight"]);
+        expect(config.allThemeNames).toEqual(["dracula", "midnight"]);
+        expect(config.builtinThemeNames).toEqual(["dracula", "midnight"]);
+        expect(menuBar.setup).toHaveBeenCalledTimes(1);
+        expect(menuBar.setup.mock.calls[0]![0]).toEqual(["midnight"]);
+        expect(menuBar.setup.mock.calls[0]![1]).toEqual(["default", "work"]);
+        expect(menuBar.setup.mock.calls[0]![2]).toBe(colors);
+    });
+
+    it("falls back to the page's theme colors before the theme first changes", () => {
+        const config = makeConfig();
+        const menuBar = { setup: mock((..._args: unknown[]) => {}), updateColors: mock((_c: unknown) => {}) };
+        applyThemeLists(lists, menuBar, config, { current: "" });
+        expect(menuBar.setup.mock.calls[0]![2]).toEqual(menuBarColors(config.theme));
+    });
+
+    it("still updates config without a menu bar", () => {
+        const config = makeConfig();
+        applyThemeLists(lists, null, config, { current: "" });
+        expect(config.allThemeNames).toEqual(["dracula", "midnight"]);
     });
 });
 

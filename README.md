@@ -14,7 +14,7 @@ b3tty start --help
 
 ### Features
 
-* Customizable themes
+* Customizable themes, shareable as .b3theme packages that others can install
 * User defined profiles
 * In-browser menu bar for switching themes and profiles at runtime
 * Command palette (Ctrl+Shift+;) for keyboard access to themes, profiles, and settings
@@ -161,21 +161,21 @@ Controls the appearance and dimensions of the terminal.
 
 #### `theme`
 
-The name of the active theme, e.g. `theme: "my-theme"`. It can be a built-in theme (see [Built-in themes](#built-in-themes)) or one of your own under `themes`. If the name doesn't match any theme, b3tty logs a warning and uses `default-theme` instead. Omit this key (or leave it empty) to use `default-theme`.
+The name of the active theme, e.g. `theme: "my-theme"`. It can be a built-in theme (see [Built-in themes](#built-in-themes)), an installed theme (see [Installing themes](#installing-themes)), or one of your own under `themes`. If the name doesn't match any theme, b3tty logs a warning and uses `default-theme` instead. Omit this key (or leave it empty) to use `default-theme`.
 
 #### `default-theme`
 
-The theme to fall back on when `theme` is missing or names a theme that no longer exists. Like `theme`, it can be a built-in or one of your own. The first-run setup page sets it. When neither `theme` nor `default-theme` names a theme, no theme is applied and the terminal uses xterm.js's own colors.
+The theme to fall back on when `theme` is missing or names a theme that no longer exists. Like `theme`, it can be a theme of any kind. The first-run setup page sets it. When neither `theme` nor `default-theme` names a theme, no theme is applied and the terminal uses xterm.js's own colors.
 
 #### `available-themes`
 
-The list of themes shown in the menu bar's **Themes** menu and as `theme:<name>` commands in the command palette, in the order given. Entries can be built-in themes or your own. Picking a theme in the Theme Selector, creating one in the theme editor, or running `b3tty theme set` adds it to the end of the list; to remove or reorder entries, edit the list. Names that don't match any theme are skipped with a warning.
+The list of themes shown in the menu bar's **Themes** menu and as `theme:<name>` commands in the command palette, in the order given. Entries can be built-in, installed, or your own themes. Picking a theme in the Theme Selector, creating one in the theme editor, or running `b3tty theme set` adds it to the end of the list; to remove or reorder entries, edit the list. Names that don't match any theme are skipped with a warning.
 
 If the key is missing entirely, as in config files from earlier versions, the menu lists every name under `themes`, sorted. Writing the list yourself takes over from that.
 
 #### `themes`
 
-A map of your own named theme objects. Built-in themes don't belong here: refer to them by name in `theme`, `default-theme`, or `available-themes` instead. A `themes` entry with the same name as a built-in theme is ignored with a warning, since built-in themes can't be redefined; to keep its colors, rename it. Each key is an arbitrary theme name; the value is an object whose fields set terminal colors and an optional background image. All fields are optional; omitting a color keeps the xterm.js default for that color. Every field can also be edited from the menu bar's **Themes → Edit Theme…** dialog, which saves back to this file.
+A map of your own named theme objects. Built-in themes don't belong here: refer to them by name in `theme`, `default-theme`, or `available-themes` instead. A `themes` entry with the same name as a built-in or installed theme is ignored with a warning, since those themes can't be redefined; to keep its colors, rename it. Each key is an arbitrary theme name; the value is an object whose fields set terminal colors and an optional background image. All fields are optional; omitting a color keeps the xterm.js default for that color. Every field can also be edited from the menu bar's **Themes → Edit Theme…** dialog, which saves back to this file.
 
 Color values must be a 3- or 6-digit CSS hex color (e.g. `#fff` or `#14181d`) or a letters-only CSS named color (e.g. `red` or `cornflowerblue`). Invalid values are rejected at startup.
 
@@ -281,7 +281,7 @@ The command palette works even when the menu bar is disabled (`--show-menubar di
 
 ## Theme Selector
 
-The Theme Selector is a full-page overlay that lets you browse and apply any built-in or user-defined theme from directly inside the terminal page, without editing the config file.
+The Theme Selector is a full-page overlay that lets you browse and apply any built-in, installed, or user-defined theme from directly inside the terminal page, without editing the config file.
 
 ### Opening the Theme Selector
 
@@ -298,7 +298,7 @@ Click a card to select it. The **OK** button becomes active once a card is selec
 Click **OK** to apply the selected theme. The following happens immediately, without a page reload:
 
 1. The theme colors are applied to the terminal and the page background.
-2. The `theme` key in your config file is updated, and the theme is added to `available-themes` if it isn't there already, so the selection persists across restarts and the theme appears in the Themes menu. Built-in themes are referenced by name; their colors are never copied into your config file.
+2. The `theme` key in your config file is updated, and the theme is added to `available-themes` if it isn't there already, so the selection persists across restarts and the theme appears in the Themes menu. Built-in and installed themes are referenced by name; their colors are never copied into your config file.
 
 Click **Cancel** at any time to close the overlay without making any changes.
 
@@ -319,7 +319,7 @@ b3tty ships with the following built-in themes, all available in the Theme Selec
 | One Light | Light |
 | Gruvbox Light | Light |
 
-User-defined themes from the `themes` section of the config file also appear in the Theme Selector alongside the built-in ones.
+Installed themes and user-defined themes from the `themes` section of the config file also appear in the Theme Selector alongside the built-in ones.
 
 ## Sharing themes
 
@@ -330,7 +330,7 @@ There are three ways to export:
 - **Command palette:** run `export:theme` to export the active theme.
 - **CLI:** run `b3tty theme export <name> --output <path>` (or `-o <path>`). It reads the config file directly, so the server doesn't need to be running.
 
-Each path asks for a file path. It can be absolute or start with `~` for your home directory, and `.b3theme` is added if it's missing. The directory must already exist, since it is never created, and an existing file is never overwritten. The theme editor and command palette write the file on the machine running the b3tty server. Only user-defined themes can be exported, because everyone already has the built-in ones. The export contains the saved version of the theme, so unsaved changes in the theme editor are left out.
+Each path asks for a file path. It can be absolute or start with `~` for your home directory, and `.b3theme` is added if it's missing. The directory must already exist, since it is never created, and an existing file is never overwritten. The theme editor and command palette write the file on the machine running the b3tty server. Only user-defined themes can be exported: everyone already has the built-in ones, and an installed theme belongs to its author. To share your own version of an installed theme, copy it first (see [Installing themes](#installing-themes)). The export contains the saved version of the theme, so unsaved changes in the theme editor are left out.
 
 Every package also records four details about the theme, all required:
 
@@ -358,9 +358,56 @@ theme.json
 assets/background.<ext>   (only when the theme has a background image)
 ```
 
-- `manifest.json` holds `schemaVersion` (currently `1`), the theme's `id` and `name`, its `repo`, `author`, `description`, and `themeVersion`, the `b3ttyVersion` that made it, `createdAt` (UTC, RFC 3339), and `files`, which gives the in-package paths of `themeFile` and, if there is one, `backgroundImage`.
+- `manifest.json` holds `schemaVersion` (currently `1`), `kind` (always `theme`), the theme's `id` and `name`, its `repo`, `author`, `description`, and `themeVersion`, the `b3ttyVersion` that made it, `createdAt` (UTC, RFC 3339), and `files`, which gives the in-package paths of `themeFile` and, if there is one, `backgroundImage`.
 - `theme.json` holds the theme's colors and `backgroundImageTransparency`, in the same JSON shape b3tty's built-in themes use. The background image's path on your machine is not included.
-- If the theme's background image is missing or isn't a supported image, the export fails, and the error explains why.
+- If the theme's background image is missing or isn't a supported image, the export fails, and the error explains why. So does an image too large for the package to stay within the 20 MB import limit.
+
+## Installing themes
+
+A `.b3theme` package someone shared can be installed with the CLI:
+
+```bash
+b3tty theme import ~/Downloads/midnight.b3theme
+b3tty theme set midnight
+```
+
+Installed themes appear in the Theme Selector and can be added to the Themes menu like any other theme, but they can't be edited or exported: an installed theme stays exactly as its author published it. To change one, copy it into a theme of your own, which you can then edit and export (it gets its own package ID, so it's never mistaken for the original):
+
+```bash
+b3tty theme copy midnight my-midnight
+```
+
+An installed theme's background image lives inside its package, so copying the theme saves the image to `~/.config/b3tty/backgrounds/` and points the copy at that file.
+
+When b3tty is running, `import`, `copy`, and `delete` update it right away; otherwise the change is picked up the next time it starts.
+
+### Packages are checked before they're installed
+
+A package is installed only if it is a valid `.b3theme` file of at most 20 MB (also counting its contents uncompressed), holding nothing but a manifest, the theme, and at most one background image (PNG, JPEG, GIF, or WebP). Every color must be valid, the manifest must name an author, version, description, and an `https://` repository, and the package must have been made by a b3tty that writes the `kind` field (re-export older packages). The theme's name can't match any other theme's, whether built-in, installed, or one of your own; rename your own theme first if it clashes.
+
+### Upgrades
+
+Importing a package with the same package ID as an installed theme replaces it with the new version, keeping its place in the Themes menu, and keeping it active if it was. Since anyone can copy a package ID, b3tty asks before replacing, and says so when the new version has a different author or repository than the installed one. Pass `--yes` to skip the question. An upgrade can't rename a theme: a package with an installed theme's ID but a different name is rejected. Importing the exact package that's already installed does nothing.
+
+### Deleting
+
+`b3tty theme delete <name>` asks for confirmation (skip it with `--yes`), then:
+- deletes one of your own themes from the config file,
+- uninstalls an installed theme, which can't be undone without the package file, or
+- removes a built-in theme from the Themes menu; it stays available in the Theme Selector.
+
+If you delete the active theme, b3tty switches to `default-theme`, or to no theme.
+
+### Where installed themes live
+
+Installed packages are kept unchanged in `~/.config/b3tty/plugins/`, one directory per package named after its SHA-256 digest, with `installed.json` listing what's installed. b3tty owns this directory. Background images stay inside their packages and are read only when they're displayed, so installed themes cost almost no memory. Every time the server starts or reloads its themes, it re-checks each package against its digest: a package that changed still loads, but b3tty warns about it, and `b3tty theme list` marks it `(modified)`. Other `b3tty` commands skip this check, so they stay fast however large the installed themes are. To check all packages yourself, and to find leftover directories no installed theme uses, run:
+
+```bash
+b3tty theme verify   # exits with status 1 when anything is wrong
+b3tty theme gc       # removes the leftover directories
+```
+
+`b3tty theme list` shows every theme grouped as your themes, installed, and built-in, with each installed theme's author, version, and repository. `*` marks the active theme and `+` the themes in the Themes menu.
 
 ## Debug mode
 
@@ -398,7 +445,7 @@ The server will only allow connections from localhost or 127.0.0.1 as part of an
 
 By default, when the server starts, the url with a token of 24 randomly generated characters is provided and must be provided to access the b3tty client in the browser. This is to prevent a user without access to the terminal session where b3tty was started from guessing the url. This behavior can be disabled by passing the `--no-auth` flag at start up or setting the `server.no-auth: true` property in the b3tty config.
 
-The token is required on every request except the static client files: the page itself, the WebSocket connection that carries the terminal session (`/ws`), the background image (`/background`), and every API endpoint the browser client and the `b3tty settings set` / `b3tty theme set` commands use to change settings, themes, and profiles. The browser client and the CLI pass it along automatically (the CLI reads it from the running server's lock file, `~/.config/b3tty/b3tty.lock`, which only your user can read). Without it, any program able to reach the port could open a shell, or quietly change what a profile runs or turn authentication off.
+The token is required on every request except the static client files: the page itself, the WebSocket connection that carries the terminal session (`/ws`), the background image (`/background`), and every API endpoint the browser client and the `b3tty settings` / `b3tty theme` commands use to change settings, themes, and profiles. The browser client and the CLI pass it along automatically (the CLI reads it from the running server's lock file, `~/.config/b3tty/b3tty.lock`, which only your user can read). Without it, any program able to reach the port could open a shell, or quietly change what a profile runs or turn authentication off.
 
 Each failed token validation on the page itself incurs an exponential backoff delay before the 403 response is sent: 1s after the first failure, doubling on each subsequent attempt up to a maximum of 30s. The counter resets when a valid token is presented. Backoff is skipped entirely when `--no-auth` is set.
 

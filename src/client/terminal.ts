@@ -16,6 +16,7 @@ import type {
     SettingsConfig,
     TerminalClient,
     PaletteCommand,
+    ThemeLists,
 } from "./types.ts";
 import { DEFAULT_BACKGROUND_IMAGE_TRANSPARENCY } from "./types.ts";
 import { isValidWsProtocol, isValidPort, isValidUri } from "./validators.ts";
@@ -202,6 +203,8 @@ export function buildWsUrl(
  * ArrayBuffer messages are decoded as streaming UTF-8; string messages are written directly.
  * writeCallback, when provided, is passed to term.write and fires after xterm.js has
  * fully parsed and rendered the data — used by debug timing to mark the end of a round-trip.
+ * Text messages are JSON control messages, dispatched by type to onSettings, onTheme
+ * (whose name is "" when the server switched to no theme), and onThemes.
  */
 export function handleSocketMessage(
     event: SocketMessageEvent,
@@ -209,7 +212,8 @@ export function handleSocketMessage(
     term: TerminalLike,
     writeCallback?: () => void,
     onSettings?: (t: TerminalClient) => void,
-    onTheme?: (name: string, theme: ThemeActivateResponse) => void
+    onTheme?: (name: string, theme: ThemeActivateResponse) => void,
+    onThemes?: (lists: ThemeLists) => void
 ): void {
     if (!(event.data instanceof ArrayBuffer)) {
         if (typeof event.data === "string" && event.data.length > 0) {
@@ -219,11 +223,23 @@ export function handleSocketMessage(
                     terminal?: TerminalClient;
                     name?: string;
                     theme?: ThemeActivateResponse;
-                };
+                } & Partial<ThemeLists>;
                 if (msg.type === "settings" && msg.terminal && onSettings) {
                     onSettings(msg.terminal);
-                } else if (msg.type === "theme" && msg.name && msg.theme && onTheme) {
+                } else if (msg.type === "theme" && typeof msg.name === "string" && msg.theme && onTheme) {
                     onTheme(msg.name, msg.theme);
+                } else if (
+                    msg.type === "themes" &&
+                    Array.isArray(msg.themeNames) &&
+                    Array.isArray(msg.allThemeNames) &&
+                    Array.isArray(msg.builtinThemeNames) &&
+                    onThemes
+                ) {
+                    onThemes({
+                        themeNames: msg.themeNames,
+                        allThemeNames: msg.allThemeNames,
+                        builtinThemeNames: msg.builtinThemeNames,
+                    });
                 }
             } catch {}
         }
@@ -367,11 +383,45 @@ export function applyResolvedTheme(
     name: string,
     themeResp: ThemeActivateResponse,
     term: Terminal,
-    activeTheme: { current: string }
+    activeTheme: ActiveTheme
 ): MenuBarColors {
     void applyThemeWithBackground(themeResp, term, themeResp.hasBackgroundImage, name);
     activeTheme.current = name;
-    return menuBarColors(themeResp);
+    activeTheme.colors = menuBarColors(themeResp);
+    return activeTheme.colors;
+}
+
+/**
+ * The active theme as tracked by main(): current is its name ("" for no theme), and
+ * colors the menu bar colors derived from it, set by applyResolvedTheme — absent until
+ * the theme first changes, when config.theme still describes it.
+ */
+export interface ActiveTheme {
+    current: string;
+    colors?: MenuBarColors;
+}
+
+/**
+ * Applies theme name lists pushed by the server in a "themes" control message, sent
+ * when a theme is imported, copied, or deleted, here or from the b3tty theme CLI:
+ * updates config, which the command palette and theme dialogs read, and rebuilds the
+ * menu bar's Themes menu when there is one.
+ */
+export function applyThemeLists(
+    lists: ThemeLists,
+    menuBar: B3ttyMenuBar | null,
+    config: TermConfig,
+    activeTheme: ActiveTheme
+): void {
+    config.themeNames = lists.themeNames;
+    config.allThemeNames = lists.allThemeNames;
+    config.builtinThemeNames = lists.builtinThemeNames;
+    menuBar?.setup(
+        config.themeNames,
+        config.profileNames ?? [],
+        activeTheme.colors ?? menuBarColors(config.theme),
+        menuBarMode(config)
+    );
 }
 
 /**
@@ -927,7 +977,7 @@ export async function main(config: TermConfig): Promise<void> {
     const refit = () => requestAnimationFrame(() => fitAddon?.fit());
 
     let menuBar: (HTMLElement & B3ttyMenuBar) | null = null;
-    const activeTheme = { current: config.activeTheme ?? "" };
+    const activeTheme: ActiveTheme = { current: config.activeTheme ?? "" };
 
     socket.onmessage = (event) => {
         if (socket.readyState !== 1 && config.debug) {
@@ -944,7 +994,8 @@ export async function main(config: TermConfig): Promise<void> {
             },
             (name, themeResp) => {
                 applyThemeBroadcast(name, themeResp, term, menuBar, activeTheme);
-            }
+            },
+            (lists) => applyThemeLists(lists, menuBar, config, activeTheme)
         );
     };
 

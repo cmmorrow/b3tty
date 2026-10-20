@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -22,6 +24,11 @@ const (
 	themePackageImageBase    = "assets/background"
 )
 
+// errThemePackageTooLarge is returned when exporting a theme would make a
+// package that import would refuse: over MAX_THEME_PACKAGE_SIZE, whether
+// compressed or not. In practice only a background image is that large.
+var errThemePackageTooLarge = fmt.Errorf("the theme package would be larger than the %d MB limit; use a smaller background image", MAX_THEME_PACKAGE_SIZE>>20)
+
 // ErrThemePackageExists is returned by ExportThemePackage when the output file
 // already exists. Exports never overwrite a file.
 var ErrThemePackageExists = errors.New("file already exists")
@@ -30,9 +37,12 @@ var ErrThemePackageExists = errors.New("file already exists")
 // ThemeMetadata fields are embedded, so they sit at the top level of the
 // manifest alongside the others.
 type ThemeManifest struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	ID            string `json:"id"`
-	Name          string `json:"name"`
+	SchemaVersion int `json:"schemaVersion"`
+	// Kind is always THEME_PACKAGE_KIND. It lets a loader for more than one
+	// kind of package tell them apart; import rejects any other value.
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
 	ThemeMetadata
 	B3ttyVersion string             `json:"b3ttyVersion"`
 	CreatedAt    string             `json:"createdAt"`
@@ -149,7 +159,8 @@ func ExportUserTheme(configPath, name string, theme Theme, meta ThemeMetadata, o
 // with it. The parent directory must already exist — it is never created — and
 // an existing file is never overwritten (the error wraps
 // ErrThemePackageExists). A configured background image that is missing or not
-// an allowed image fails the export. Nothing is written until every check has
+// an allowed image fails the export, as does a package that import would
+// refuse for its size (see MAX_THEME_PACKAGE_SIZE). Nothing is written until every check has
 // passed.
 func ExportThemePackage(name string, theme Theme, details ThemePackageDetails, outPath, version string, now time.Time) (string, error) {
 	details.ThemeMetadata = details.trimmed()
@@ -177,6 +188,9 @@ func ExportThemePackage(name string, theme Theme, details ThemePackageDetails, o
 	pkg, err := buildThemePackage(name, theme, details, image, imageFile, version, now)
 	if err != nil {
 		return "", err
+	}
+	if len(pkg) > MAX_THEME_PACKAGE_SIZE {
+		return "", errThemePackageTooLarge
 	}
 
 	// O_EXCL makes "doesn't exist yet" and "create it" one atomic step.
@@ -242,6 +256,7 @@ func buildThemePackage(name string, theme Theme, details ThemePackageDetails, im
 	}
 	manifest := ThemeManifest{
 		SchemaVersion: THEME_PACKAGE_SCHEMA_VERSION,
+		Kind:          THEME_PACKAGE_KIND,
 		ID:            details.ID,
 		Name:          name,
 		ThemeMetadata: details.ThemeMetadata,
@@ -260,6 +275,9 @@ func buildThemePackage(name string, theme Theme, details ThemePackageDetails, im
 		name string
 		data []byte
 	}
+	if len(manifestJSON)+len(themeJSON)+len(image) > MAX_THEME_PACKAGE_SIZE {
+		return nil, errThemePackageTooLarge
+	}
 	entries := []entry{{themePackageManifestFile, manifestJSON}, {themePackageThemeFile, themeJSON}}
 	if image != nil {
 		entries = append(entries, entry{imageFile, image})
@@ -277,4 +295,222 @@ func buildThemePackage(name string, theme Theme, details ThemePackageDetails, im
 		return nil, fmt.Errorf("packaging theme: %w", err)
 	}
 	return buf.Bytes(), nil
+}
+
+// ThemePackage is a .b3theme package read and validated by ReadThemePackage.
+type ThemePackage struct {
+	Manifest ThemeManifest
+	// Theme is theme.json, with BackgroundImage always empty: a package's
+	// image is an entry in the package, not a path.
+	Theme Theme
+	// ImageFile is the background image's entry in the package, or "" when
+	// there is none, and ImageExt its lowercased extension, with the dot.
+	ImageFile string
+	ImageExt  string
+	// Image holds the background image's bytes when the package was read
+	// with imageKeep (see readThemePackageZip); otherwise it is nil.
+	Image []byte
+	// Digest is the hex SHA-256 of the package's bytes, which identifies this
+	// version of the theme.
+	Digest string
+}
+
+// validate checks a manifest read from an untrusted package. Its errors are
+// user-facing.
+func (m ThemeManifest) validate() error {
+	switch {
+	case m.Kind == "":
+		return errors.New("manifest.json has no kind; the package was made by an older b3tty and must be exported again")
+	case m.Kind != THEME_PACKAGE_KIND:
+		return fmt.Errorf("manifest.json: kind %q is not a theme", m.Kind)
+	case m.SchemaVersion != THEME_PACKAGE_SCHEMA_VERSION:
+		return fmt.Errorf("manifest.json: unsupported schemaVersion %d", m.SchemaVersion)
+	}
+	if err := validateThemeName(m.Name); err != nil {
+		return fmt.Errorf("manifest.json: %w", err)
+	}
+	details := ThemePackageDetails{ID: m.ID, ThemeMetadata: m.ThemeMetadata.trimmed()}
+	if err := details.validate(); err != nil {
+		return fmt.Errorf("manifest.json: %w", err)
+	}
+	return nil
+}
+
+// errThemePackageOverLimit is the reason a package to import is too large.
+var errThemePackageOverLimit = fmt.Errorf("the package is larger than the %d MB limit", MAX_THEME_PACKAGE_SIZE>>20)
+
+// ReadThemePackage parses and validates the bytes of a .b3theme package,
+// image included. The package is untrusted input, so it is rejected, with a
+// user-facing reason, unless all of these hold:
+//
+//   - it is a zip of at most MAX_THEME_PACKAGE_SIZE bytes, with at most
+//     MAX_THEME_PACKAGE_ENTRIES entries and at most MAX_THEME_PACKAGE_SIZE
+//     bytes uncompressed in total, counted while reading rather than trusted
+//     from the zip's headers
+//   - its entries are exactly manifest.json, theme.json, and at most one
+//     assets/background.<ext> with an allowed image extension; entries are
+//     only ever read by name, never extracted to a path
+//   - the manifest passes ThemeManifest.validate, and its files match the
+//     zip's entries
+//   - theme.json has only Theme's fields and passes ValidateTheme; any
+//     backgroundImage in it is ignored
+//   - the image, if any, passes the background image type checks
+func ReadThemePackage(data []byte) (*ThemePackage, error) {
+	if len(data) > MAX_THEME_PACKAGE_SIZE {
+		return nil, errThemePackageOverLimit
+	}
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, fmt.Errorf("not a valid .b3theme package: %w", err)
+	}
+	pkg, err := readThemePackageZip(zr, imageKeep)
+	if err != nil {
+		return nil, err
+	}
+	pkg.Digest = sha256Hex(data)
+	return pkg, nil
+}
+
+// imageMode says what readThemePackageZip does with a package's background
+// image.
+type imageMode int
+
+const (
+	// imageKeep reads, checks, and keeps the image in ThemePackage.Image.
+	imageKeep imageMode = iota
+	// imageCheck reads the whole image — counting its size and checking its
+	// zip checksum and type — without keeping it, so validating a package
+	// never holds its image in memory.
+	imageCheck
+	// imageSkip doesn't read the image at all; only its entry name and
+	// extension are checked. It is for loading what was already validated
+	// when it was installed, where decompressing a large image every time
+	// would be slow.
+	imageSkip
+)
+
+// readThemePackageZip validates an opened package as ReadThemePackage
+// describes, handling the image as mode says. Digest is left for the caller.
+func readThemePackageZip(zr *zip.Reader, mode imageMode) (*ThemePackage, error) {
+	if len(zr.File) > MAX_THEME_PACKAGE_ENTRIES {
+		return nil, fmt.Errorf("the package has %d files; a theme package has at most %d", len(zr.File), MAX_THEME_PACKAGE_ENTRIES)
+	}
+
+	entries := make(map[string]*zip.File, len(zr.File))
+	var imageFile string
+	for _, f := range zr.File {
+		switch {
+		case f.Name == themePackageManifestFile, f.Name == themePackageThemeFile:
+		case strings.HasPrefix(f.Name, themePackageImageBase) &&
+			slices.Contains(backgroundImageExts, strings.TrimPrefix(f.Name, themePackageImageBase)):
+			if imageFile != "" {
+				return nil, errors.New("the package has more than one background image")
+			}
+			imageFile = f.Name
+		default:
+			return nil, fmt.Errorf("the package contains an unexpected file %q", f.Name)
+		}
+		if _, dup := entries[f.Name]; dup {
+			return nil, fmt.Errorf("the package contains %s more than once", f.Name)
+		}
+		entries[f.Name] = f
+	}
+	for _, name := range []string{themePackageManifestFile, themePackageThemeFile} {
+		if entries[name] == nil {
+			return nil, fmt.Errorf("the package has no %s", name)
+		}
+	}
+
+	// read reads one entry, keeping it all, or only its first 512 bytes (all
+	// http.DetectContentType looks at) when keep is false. Every entry draws
+	// on one budget of uncompressed bytes.
+	remaining := int64(MAX_THEME_PACKAGE_SIZE)
+	read := func(name string, keep bool) ([]byte, error) {
+		rc, err := entries[name].Open()
+		if err != nil {
+			return nil, fmt.Errorf("reading %s: %w", name, err)
+		}
+		defer rc.Close()
+		w := &headBuffer{keepAll: keep}
+		n, err := io.Copy(w, io.LimitReader(rc, remaining+1))
+		if err != nil {
+			return nil, fmt.Errorf("reading %s: %w", name, err)
+		}
+		if n > remaining {
+			return nil, fmt.Errorf("the package is larger than the %d MB limit when uncompressed", MAX_THEME_PACKAGE_SIZE>>20)
+		}
+		remaining -= n
+		return w.buf.Bytes(), nil
+	}
+	decode := func(name string, v any) error {
+		b, err := read(name, true)
+		if err != nil {
+			return err
+		}
+		dec := json.NewDecoder(bytes.NewReader(b))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(v); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		return nil
+	}
+
+	pkg := &ThemePackage{}
+	if err := decode(themePackageManifestFile, &pkg.Manifest); err != nil {
+		return nil, err
+	}
+	m := pkg.Manifest
+	if err := m.validate(); err != nil {
+		return nil, err
+	}
+	if m.Files.ThemeFile != themePackageThemeFile {
+		return nil, fmt.Errorf("manifest.json: files.themeFile is %q, not %q", m.Files.ThemeFile, themePackageThemeFile)
+	}
+	if m.Files.BackgroundImage != imageFile {
+		return nil, fmt.Errorf("manifest.json: files.backgroundImage %q doesn't match the package's contents", m.Files.BackgroundImage)
+	}
+
+	if err := decode(themePackageThemeFile, &pkg.Theme); err != nil {
+		return nil, err
+	}
+	pkg.Theme.BackgroundImage = ""
+	if err := ValidateTheme(&pkg.Theme); err != nil {
+		return nil, fmt.Errorf("theme.json: %w", err)
+	}
+
+	if imageFile != "" {
+		pkg.ImageFile = imageFile
+		pkg.ImageExt = strings.TrimPrefix(imageFile, themePackageImageBase)
+		if mode == imageSkip {
+			return pkg, nil
+		}
+		data, err := read(imageFile, mode == imageKeep)
+		if err != nil {
+			return nil, err
+		}
+		if err := validateBackgroundImageData(pkg.ImageExt, data); err != nil {
+			return nil, fmt.Errorf("%s: %w", imageFile, err)
+		}
+		if mode == imageKeep {
+			pkg.Image = data
+		}
+	}
+	return pkg, nil
+}
+
+// headBuffer is an io.Writer that keeps everything written to it, or, unless
+// keepAll is set, only the first 512 bytes, discarding the rest.
+type headBuffer struct {
+	buf     bytes.Buffer
+	keepAll bool
+}
+
+func (h *headBuffer) Write(p []byte) (int, error) {
+	if h.keepAll {
+		return h.buf.Write(p)
+	}
+	if room := 512 - h.buf.Len(); room > 0 {
+		h.buf.Write(p[:min(room, len(p))])
+	}
+	return len(p), nil
 }

@@ -167,15 +167,13 @@ func saveDefaultThemeConfig(configPath string, themeName string) error {
 	return writeConfigMap(configPath, cfg, "saveDefaultThemeConfig")
 }
 
-// appendAvailableTheme adds name to the end of cfg's available-themes list (the
-// Themes menu) unless it is already there. A config written before that key
-// existed has no list; one is first seeded the way LoadThemeState seeds the
-// menu for such a config — every name in the themes section, sorted — so
-// adding a theme doesn't drop the rest of the menu.
-func appendAvailableTheme(cfg map[string]any, name string) {
-	raw, ok := cfg["available-themes"].([]any)
-	var names []string
-	if ok {
+// availableThemeList returns cfg's available-themes list (the Themes menu). A
+// config written before that key existed has no list; one is seeded the way
+// LoadThemeState seeds the menu for such a config — every name in the themes
+// section, sorted — so changing the menu doesn't drop the rest of it.
+func availableThemeList(cfg map[string]any) []string {
+	names := []string{}
+	if raw, ok := cfg["available-themes"].([]any); ok {
 		for _, v := range raw {
 			if s, ok := v.(string); ok {
 				names = append(names, s)
@@ -188,10 +186,23 @@ func appendAvailableTheme(cfg map[string]any, name string) {
 		}
 		sort.Strings(names)
 	}
+	return names
+}
+
+// appendAvailableTheme adds name to the end of cfg's available-themes list
+// unless it is already there (see availableThemeList).
+func appendAvailableTheme(cfg map[string]any, name string) {
+	names := availableThemeList(cfg)
 	if !slices.Contains(names, name) {
 		names = append(names, name)
 	}
 	cfg["available-themes"] = names
+}
+
+// removeAvailableTheme removes name from cfg's available-themes list (see
+// availableThemeList).
+func removeAvailableTheme(cfg map[string]any, name string) {
+	cfg["available-themes"] = slices.DeleteFunc(availableThemeList(cfg), func(n string) bool { return n == name })
 }
 
 // ActivateThemeInConfig reads the existing config file at configPath (creating
@@ -219,10 +230,8 @@ func ActivateThemeInConfig(configPath string, themeName string) error {
 }
 
 // SaveThemeToConfig reads the existing config file at configPath (creating it if
-// absent), sets the active theme name, and writes theme to the themes section,
-// overwriting any existing entry for that theme name. The entry holds theme's
-// valid colors plus background-image and background-image-transparency when
-// set; an empty or nil value leaves that key out, clearing it.
+// absent), sets the active theme name, and writes theme to the themes section
+// (see putThemeEntry), overwriting any existing entry for that theme name.
 func SaveThemeToConfig(configPath string, themeName string, theme Theme) error {
 	configFileMu.Lock()
 	defer configFileMu.Unlock()
@@ -237,6 +246,42 @@ func SaveThemeToConfig(configPath string, themeName string, theme Theme) error {
 	}
 
 	cfg["theme"] = themeName
+	putThemeEntry(cfg, themeName, theme)
+
+	return writeConfigMap(configPath, cfg, "SaveThemeToConfig")
+}
+
+// AddThemeToConfig writes theme to the themes section of the config file at
+// configPath (creating it if absent) as the new user theme themeName, and adds
+// it to the Themes menu, without activating it. It fails when the themes
+// section already has an entry by that name.
+func AddThemeToConfig(configPath string, themeName string, theme Theme) error {
+	configFileMu.Lock()
+	defer configFileMu.Unlock()
+
+	configPath, err := resolveConfigPath(configPath)
+	if err != nil {
+		return err
+	}
+	cfg, err := loadConfigMap(configPath, "AddThemeToConfig")
+	if err != nil {
+		return err
+	}
+	if themesSection, ok := cfg["themes"].(map[string]any); ok {
+		if _, exists := themesSection[themeName]; exists {
+			return fmt.Errorf("a theme named %q already exists in %s", themeName, configPath)
+		}
+	}
+	putThemeEntry(cfg, themeName, theme)
+
+	return writeConfigMap(configPath, cfg, "AddThemeToConfig")
+}
+
+// putThemeEntry writes theme into cfg's themes section under themeName and adds
+// the name to the Themes menu. The entry holds theme's valid colors plus
+// background-image and background-image-transparency when set; an empty or nil
+// value leaves that key out, clearing it.
+func putThemeEntry(cfg map[string]any, themeName string, theme Theme) {
 	themesSection := getOrCreateSection(cfg, "themes")
 
 	entry := filterValidThemeColors(theme.toColorMap())
@@ -256,8 +301,58 @@ func SaveThemeToConfig(configPath string, themeName string, theme Theme) error {
 	}
 	themesSection[themeName] = entry
 	appendAvailableTheme(cfg, themeName)
+}
 
-	return writeConfigMap(configPath, cfg, "SaveThemeToConfig")
+// DeleteThemeFromConfig removes every mention of the theme themeName from the
+// config file at configPath: its themes entry when it is a user theme, its
+// Themes menu entry, and the theme and default-theme keys when they name it,
+// so the file never names a theme that is gone. A missing file is created
+// empty, like the other writers.
+func DeleteThemeFromConfig(configPath string, themeName string) error {
+	configFileMu.Lock()
+	defer configFileMu.Unlock()
+
+	configPath, err := resolveConfigPath(configPath)
+	if err != nil {
+		return err
+	}
+	cfg, err := loadConfigMap(configPath, "DeleteThemeFromConfig")
+	if err != nil {
+		return err
+	}
+
+	// The menu goes first: seeding it reads the themes section.
+	removeAvailableTheme(cfg, themeName)
+	if themesSection, ok := cfg["themes"].(map[string]any); ok {
+		delete(themesSection, themeName)
+	}
+	for _, key := range []string{"theme", "default-theme"} {
+		if cfg[key] == themeName {
+			delete(cfg, key)
+		}
+	}
+
+	return writeConfigMap(configPath, cfg, "DeleteThemeFromConfig")
+}
+
+// RemoveThemeFromMenuInConfig removes themeName from the Themes menu
+// (available-themes) in the config file at configPath, leaving everything else
+// as it is. It is how a built-in theme is "deleted".
+func RemoveThemeFromMenuInConfig(configPath string, themeName string) error {
+	configFileMu.Lock()
+	defer configFileMu.Unlock()
+
+	configPath, err := resolveConfigPath(configPath)
+	if err != nil {
+		return err
+	}
+	cfg, err := loadConfigMap(configPath, "RemoveThemeFromMenuInConfig")
+	if err != nil {
+		return err
+	}
+	removeAvailableTheme(cfg, themeName)
+
+	return writeConfigMap(configPath, cfg, "RemoveThemeFromMenuInConfig")
 }
 
 // ReadThemePackageDetails returns the package: block of the theme themeName in

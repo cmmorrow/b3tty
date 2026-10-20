@@ -1,6 +1,7 @@
 package src
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -78,10 +79,13 @@ func resolveProfileName(q url.Values, profiles map[string]Profile) string {
 }
 
 // buildConfigJSON serialises a TermConfig derived from the given server, client, theme,
-// and available theme/profile name lists into JSON. The returned bytes are ready to
-// embed in the HTML template.
-func buildConfigJSON(srv *Server, clnt *TerminalClient, thm *Theme, themeNames []string, allThemeNames []string, builtinThemeNames []string, profileNames []string, activeTheme string, showMenubar string) ([]byte, error) {
+// and available theme/profile name lists into JSON. hasBackgroundImage says whether
+// /background serves an image for the active theme, which for an installed theme isn't
+// something thm's BackgroundImage path can tell. The returned bytes are ready to embed
+// in the HTML template.
+func buildConfigJSON(srv *Server, clnt *TerminalClient, thm *Theme, hasBackgroundImage bool, themeNames []string, allThemeNames []string, builtinThemeNames []string, profileNames []string, activeTheme string, showMenubar string) ([]byte, error) {
 	cfg := NewTermConfig(srv, clnt, thm, themeNames, allThemeNames, builtinThemeNames, profileNames, activeTheme, showMenubar)
+	cfg.HasBackgroundImage = hasBackgroundImage
 	return json.Marshal(cfg)
 }
 
@@ -205,10 +209,12 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	profile := ts.Profiles[profileName]
 
 	// themeNames is the Themes menu, in menu order; allThemeNames is every
-	// built-in and user theme, for the in-page theme picker.
+	// theme of any source, for the in-page theme picker; builtinNames is
+	// every theme that can't be edited or exported — the built-in and
+	// installed ones.
 	themeNames := ts.menuThemeNames()
 	allThemeNames := ts.allThemeNames()
-	builtinNames := GetBuiltinThemeNames()
+	builtinNames := ts.readOnlyThemeNames()
 
 	profileNames := make([]string, 0, len(ts.Profiles))
 	for name := range ts.Profiles {
@@ -219,6 +225,7 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	thm := ts.Theme
 	clientCopy := *ts.Client
 	activeTheme := ts.ActiveTheme
+	hasImage := ts.hasBackgroundImage(activeTheme, thm)
 	ts.StateMu.Unlock()
 
 	Debugf("resolved profile name: %s", profileName)
@@ -226,7 +233,7 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	Debugf("All theme names: %s", strings.Join(allThemeNames, ", "))
 	Debugf("Profile names: %s", strings.Join(profileNames, ", "))
 
-	cfgJSON, err := buildConfigJSON(ts.Server, &clientCopy, &thm, themeNames, allThemeNames, builtinNames, profileNames, activeTheme, ts.ShowMenubar)
+	cfgJSON, err := buildConfigJSON(ts.Server, &clientCopy, &thm, hasImage, themeNames, allThemeNames, builtinNames, profileNames, activeTheme, ts.ShowMenubar)
 	if err != nil {
 		Errorf("config serialization error: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -283,6 +290,12 @@ func (ts *TerminalServer) backgroundHandler(w http.ResponseWriter, r *http.Reque
 
 	themeName := r.URL.Query().Get("theme")
 	ts.StateMu.RLock()
+	name := themeName
+	if name == "" {
+		name = ts.ActiveTheme
+	}
+	installed, isInstalled := ts.InstalledThemes[name]
+	isInstalled = isInstalled && !IsBuiltinThemeName(name)
 	configured := ts.Theme.BackgroundImage
 	if themeName != "" {
 		// Built-in themes never carry a background image, so a theme missing
@@ -290,6 +303,10 @@ func (ts *TerminalServer) backgroundHandler(w http.ResponseWriter, r *http.Reque
 		configured = ts.Themes[themeName].BackgroundImage
 	}
 	ts.StateMu.RUnlock()
+	if isInstalled {
+		ts.serveInstalledBackground(w, r, name, installed)
+		return
+	}
 	if configured == "" {
 		reason := "the active theme has no background image configured"
 		if themeName != "" {
@@ -329,6 +346,54 @@ func (ts *TerminalServer) backgroundHandler(w http.ResponseWriter, r *http.Reque
 	// ETag as the only validator. Otherwise a browser's If-Modified-Since for a
 	// previously configured, newer file could draw a 304 for a different image.
 	http.ServeContent(w, r, filepath.Base(imagePath), time.Time{}, f)
+}
+
+// serveInstalledBackground serves an installed theme's background image,
+// read from its package on each request (InstalledTheme.ReadImage) rather than
+// held in memory. The package file's digest, which changes with every version,
+// is the ETag, so a browser revalidating an image it already has gets a 304
+// without the package being read at all. A package file that changed since it
+// was verified is refused (404).
+func (ts *TerminalServer) serveInstalledBackground(w http.ResponseWriter, r *http.Request, name string, t InstalledTheme) {
+	if !t.HasImage() {
+		rejectBackground(w, r, http.StatusNotFound, fmt.Sprintf("installed theme %q has no background image", name))
+		return
+	}
+	if err := t.CheckUnchanged(); err != nil {
+		rejectBackground(w, r, http.StatusNotFound, fmt.Sprintf("installed theme %q: %v", name, err))
+		return
+	}
+	etag := t.ImageETag()
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("ETag", etag)
+	if etagMatches(r.Header.Get("If-None-Match"), etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	data, err := t.ReadImage()
+	if err != nil {
+		status := http.StatusNotFound
+		if errors.Is(err, errUnsupportedBackgroundImage) {
+			status = http.StatusUnsupportedMediaType
+		}
+		rejectBackground(w, r, status, fmt.Sprintf("installed theme %q: %v", name, err))
+		return
+	}
+	Debugf("Serving background image of installed theme %s", name)
+	http.ServeContent(w, r, "background"+t.ImageExt, time.Time{}, bytes.NewReader(data))
+}
+
+// etagMatches reports whether an If-None-Match header value lists etag, or is
+// "*". Weak validators ("W/...") match their strong form, as RFC 9110's weak
+// comparison for If-None-Match requires.
+func etagMatches(header, etag string) bool {
+	for _, candidate := range strings.Split(header, ",") {
+		candidate = strings.TrimPrefix(strings.TrimSpace(candidate), "W/")
+		if candidate == "*" || candidate == etag {
+			return true
+		}
+	}
+	return false
 }
 
 // backgroundImageETag returns a strong ETag identifying the file at path by its

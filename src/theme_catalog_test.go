@@ -37,6 +37,43 @@ func TestResolveTheme(t *testing.T) {
 		_, _, ok := ts.resolveTheme("nope")
 		assert.False(t, ok)
 	})
+
+	t.Run("finds an installed theme, ahead of a user theme", func(t *testing.T) {
+		ts.InstalledThemes = map[string]InstalledTheme{"midnight": {Theme: Theme{Foreground: "#abcdef"}}}
+		ts.Themes["midnight"] = Theme{Foreground: "#000000"}
+		got, src, ok := ts.resolveTheme("midnight")
+		require.True(t, ok)
+		assert.Equal(t, ThemeSourceInstalled, src)
+		assert.Equal(t, "#abcdef", got.Foreground)
+	})
+}
+
+func TestHasBackgroundImage(t *testing.T) {
+	ts := newTestTerminalServer()
+	ts.InstalledThemes = map[string]InstalledTheme{
+		"pictured": {ImageFile: "assets/background.png"},
+		"plain":    {},
+	}
+	assert.True(t, ts.hasBackgroundImage("pictured", Theme{}))
+	assert.False(t, ts.hasBackgroundImage("plain", Theme{}))
+	assert.True(t, ts.hasBackgroundImage("mine", Theme{BackgroundImage: "/bg.png"}))
+	assert.False(t, ts.hasBackgroundImage("mine", Theme{}))
+}
+
+func TestFallBackToDefaultTheme(t *testing.T) {
+	ts := newTestTerminalServer()
+	ts.ActiveTheme, ts.Theme = "gone", Theme{Foreground: "#123456"}
+	ts.DefaultTheme = "one-light"
+	name, resp := ts.fallBackToDefaultTheme()
+	assert.Equal(t, "one-light", name)
+	assert.Equal(t, builtinThemes["one-light"], resp.Theme)
+	assert.Equal(t, "one-light", ts.ActiveTheme)
+
+	ts.DefaultTheme = "also-gone"
+	name, resp = ts.fallBackToDefaultTheme()
+	assert.Equal(t, "", name)
+	assert.Equal(t, Theme{}, resp.Theme)
+	assert.Equal(t, Theme{}, ts.Theme)
 }
 
 func TestThemeNameLists(t *testing.T) {
@@ -64,19 +101,63 @@ func TestThemeNameLists(t *testing.T) {
 		ts.addMenuTheme("dracula")
 		assert.Equal(t, []string{"zzz-mine", "dracula", "one-light"}, ts.AvailableThemes)
 	})
+
+	t.Run("removeMenuTheme removes", func(t *testing.T) {
+		ts.removeMenuTheme("dracula")
+		assert.Equal(t, []string{"zzz-mine", "one-light"}, ts.AvailableThemes)
+	})
+
+	t.Run("installed themes are listed and read-only", func(t *testing.T) {
+		ts.InstalledThemes = map[string]InstalledTheme{"midnight": {}}
+		assert.Contains(t, ts.allThemeNames(), "midnight")
+		assert.Len(t, ts.allThemeNames(), len(builtinThemes)+2)
+		readOnly := ts.readOnlyThemeNames()
+		assert.IsIncreasing(t, readOnly)
+		assert.Contains(t, readOnly, "midnight")
+		assert.Contains(t, readOnly, "dracula")
+		assert.NotContains(t, readOnly, "zzz-mine")
+	})
 }
 
 func TestLoadThemeState(t *testing.T) {
-	load := func(t *testing.T, yamlText string) (ThemeState, string) {
+	loadWith := func(t *testing.T, yamlText string, installed map[string]InstalledTheme) (ThemeState, string) {
 		t.Helper()
 		path := writeTempConfig(t, yamlText)
 		var cfg Config
 		keys, err := LoadConfig(path, &cfg)
 		require.NoError(t, err)
 		var state ThemeState
-		logged := captureLog(func() { state = LoadThemeState(cfg, keys) })
+		logged := captureLog(func() { state = LoadThemeState(cfg, keys, installed) })
 		return state, logged
 	}
+	load := func(t *testing.T, yamlText string) (ThemeState, string) {
+		t.Helper()
+		return loadWith(t, yamlText, nil)
+	}
+
+	t.Run("resolves installed themes, which shadow user themes", func(t *testing.T) {
+		installed := map[string]InstalledTheme{
+			"midnight": {Theme: Theme{Foreground: "#abcdef"}},
+			"dracula":  {Theme: Theme{Foreground: "#000000"}},
+		}
+		state, logged := loadWith(t, `
+theme: midnight
+available-themes: [midnight, mine]
+themes:
+  midnight:
+    foreground: "#111111"
+  mine:
+    foreground: "#222222"
+`, installed)
+		assert.Equal(t, "midnight", state.ActiveName)
+		assert.Equal(t, "#abcdef", state.Active.Foreground)
+		assert.Equal(t, []string{"midnight", "mine"}, state.AvailableThemes)
+		assert.NotContains(t, state.Themes, "midnight")
+		assert.Contains(t, state.Installed, "midnight")
+		assert.NotContains(t, state.Installed, "dracula", "a built-in hides an installed theme")
+		assert.Contains(t, logged, "themes.midnight is ignored: an installed theme")
+		assert.Contains(t, logged, `installed theme "dracula" is hidden`)
+	})
 
 	t.Run("resolves the active theme from either source", func(t *testing.T) {
 		state, logged := load(t, `

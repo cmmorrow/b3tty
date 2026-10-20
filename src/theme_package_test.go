@@ -2,11 +2,13 @@ package src
 
 import (
 	"archive/zip"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,6 +68,7 @@ func TestExportThemePackage(t *testing.T) {
 		require.NoError(t, json.Unmarshal(files["manifest.json"], &manifest))
 		assert.Equal(t, ThemeManifest{
 			SchemaVersion: 1,
+			Kind:          "theme",
 			ID:            testThemeID,
 			Name:          "midnight",
 			ThemeMetadata: testPackageDetails.ThemeMetadata,
@@ -195,6 +198,14 @@ func TestExportThemePackage(t *testing.T) {
 		require.ErrorContains(t, err, "required")
 	})
 
+	t.Run("refuses a package import would refuse for its size", func(t *testing.T) {
+		image := writeTempFile(t, "huge.png", append(pngMagic, make([]byte, MAX_THEME_PACKAGE_SIZE)...))
+		out := filepath.Join(t.TempDir(), "huge.b3theme")
+		_, err := ExportThemePackage("huge", Theme{BackgroundImage: image}, testPackageDetails, out, "", now)
+		require.ErrorContains(t, err, "larger than the 20 MB limit; use a smaller background image")
+		assert.NoFileExists(t, out)
+	})
+
 	t.Run("fails without writing when the background image is invalid", func(t *testing.T) {
 		cases := map[string]string{
 			"missing":   filepath.Join(t.TempDir(), "missing.png"),
@@ -276,4 +287,195 @@ func TestIsBuiltinThemeName(t *testing.T) {
 	assert.True(t, IsBuiltinThemeName("b3tty-dark"))
 	assert.False(t, IsBuiltinThemeName("my-theme"))
 	assert.False(t, IsBuiltinThemeName(""))
+}
+
+// testPackage returns the bytes of a valid package of a theme named name with
+// the given id and version, and a PNG background image when withImage is set.
+func testPackage(t *testing.T, name, id, version string, withImage bool) []byte {
+	t.Helper()
+	details := testPackageDetails
+	details.ID = id
+	details.ThemeVersion = version
+	var image []byte
+	var imageFile string
+	if withImage {
+		image, imageFile = pngMagic, "assets/background.png"
+	}
+	data, err := buildThemePackage(name, Theme{Foreground: "#ffffff", Background: "#101418"}, details, image, imageFile, "1.12.0", time.Now())
+	require.NoError(t, err)
+	return data
+}
+
+// zipEntry is one file of a hand-built zip.
+type zipEntry struct {
+	name string
+	data []byte
+}
+
+// zipOf returns a zip holding entries, in order.
+func zipOf(t *testing.T, entries ...zipEntry) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, e := range entries {
+		w, err := zw.Create(e.name)
+		require.NoError(t, err)
+		_, err = w.Write(e.data)
+		require.NoError(t, err)
+	}
+	require.NoError(t, zw.Close())
+	return buf.Bytes()
+}
+
+// testManifest returns the manifest.json of a valid image-less package, after
+// applying change to it.
+func testManifest(t *testing.T, change func(m map[string]any)) []byte {
+	t.Helper()
+	m := map[string]any{
+		"schemaVersion": 1,
+		"kind":          "theme",
+		"id":            testThemeID,
+		"name":          "midnight",
+		"repo":          "https://github.com/example/themes",
+		"author":        "Chris",
+		"description":   "Soft pastels.",
+		"themeVersion":  "1.0",
+		"b3ttyVersion":  "1.12.0",
+		"createdAt":     "2026-10-04T17:00:00Z",
+		"files":         map[string]any{"themeFile": "theme.json"},
+	}
+	if change != nil {
+		change(m)
+	}
+	data, err := json.Marshal(m)
+	require.NoError(t, err)
+	return data
+}
+
+func TestReadThemePackage(t *testing.T) {
+	themeJSON := []byte(`{"foreground":"#ffffff"}`)
+
+	t.Run("reads what export writes", func(t *testing.T) {
+		data := testPackage(t, "midnight", testThemeID, "1.0", true)
+		pkg, err := ReadThemePackage(data)
+		require.NoError(t, err)
+		assert.Equal(t, "midnight", pkg.Manifest.Name)
+		assert.Equal(t, "theme", pkg.Manifest.Kind)
+		assert.Equal(t, testThemeID, pkg.Manifest.ID)
+		assert.Equal(t, testPackageDetails.Author, pkg.Manifest.Author)
+		assert.Equal(t, "#ffffff", pkg.Theme.Foreground)
+		assert.Equal(t, pngMagic, pkg.Image)
+		assert.Equal(t, ".png", pkg.ImageExt)
+		assert.Equal(t, sha256Hex(data), pkg.Digest)
+	})
+
+	t.Run("accepts a 12 MB background image", func(t *testing.T) {
+		image := append(append([]byte{}, pngMagic...), make([]byte, 12<<20)...)
+		data, err := buildThemePackage("big", Theme{}, testPackageDetails, image, "assets/background.png", "", time.Now())
+		require.NoError(t, err)
+		pkg, err := ReadThemePackage(data)
+		require.NoError(t, err)
+		assert.Len(t, pkg.Image, len(image))
+	})
+
+	t.Run("ignores a backgroundImage path in theme.json", func(t *testing.T) {
+		data := zipOf(t,
+			zipEntry{"manifest.json", testManifest(t, nil)},
+			zipEntry{"theme.json", []byte(`{"foreground":"#fff","backgroundImage":"/etc/passwd"}`)},
+		)
+		pkg, err := ReadThemePackage(data)
+		require.NoError(t, err)
+		assert.Empty(t, pkg.Theme.BackgroundImage)
+	})
+
+	withImage := func(m map[string]any) {
+		m["files"] = map[string]any{"themeFile": "theme.json", "backgroundImage": "assets/background.png"}
+	}
+	cases := map[string]struct {
+		data []byte
+		want string
+	}{
+		"not a zip": {[]byte("hello"), "not a valid .b3theme package"},
+		"too large": {make([]byte, MAX_THEME_PACKAGE_SIZE+1), "larger than the 20 MB limit"},
+		"too many entries": {zipOf(t,
+			zipEntry{"manifest.json", nil}, zipEntry{"theme.json", nil}, zipEntry{"a", nil}, zipEntry{"b", nil}, zipEntry{"c", nil},
+		), "at most 4"},
+		"unexpected entry": {zipOf(t,
+			zipEntry{"manifest.json", testManifest(t, nil)}, zipEntry{"theme.json", themeJSON}, zipEntry{"../evil.sh", nil},
+		), `unexpected file "../evil.sh"`},
+		"svg background": {zipOf(t,
+			zipEntry{"manifest.json", testManifest(t, nil)}, zipEntry{"theme.json", themeJSON}, zipEntry{"assets/background.svg", nil},
+		), "unexpected file"},
+		"two backgrounds": {zipOf(t,
+			zipEntry{"manifest.json", testManifest(t, nil)}, zipEntry{"theme.json", themeJSON},
+			zipEntry{"assets/background.png", pngMagic}, zipEntry{"assets/background.gif", nil},
+		), "more than one background image"},
+		"duplicate entry": {zipOf(t,
+			zipEntry{"manifest.json", testManifest(t, nil)}, zipEntry{"theme.json", themeJSON}, zipEntry{"theme.json", themeJSON},
+		), "more than once"},
+		"no theme.json": {zipOf(t, zipEntry{"manifest.json", testManifest(t, nil)}), "has no theme.json"},
+		"no kind": {zipOf(t,
+			zipEntry{"manifest.json", testManifest(t, func(m map[string]any) { delete(m, "kind") })}, zipEntry{"theme.json", themeJSON},
+		), "exported again"},
+		"another kind": {zipOf(t,
+			zipEntry{"manifest.json", testManifest(t, func(m map[string]any) { m["kind"] = "font" })}, zipEntry{"theme.json", themeJSON},
+		), `kind "font" is not a theme`},
+		"future schema": {zipOf(t,
+			zipEntry{"manifest.json", testManifest(t, func(m map[string]any) { m["schemaVersion"] = 2 })}, zipEntry{"theme.json", themeJSON},
+		), "unsupported schemaVersion 2"},
+		"bad id": {zipOf(t,
+			zipEntry{"manifest.json", testManifest(t, func(m map[string]any) { m["id"] = "midnight" })}, zipEntry{"theme.json", themeJSON},
+		), "invalid theme package id"},
+		"missing author": {zipOf(t,
+			zipEntry{"manifest.json", testManifest(t, func(m map[string]any) { m["author"] = " " })}, zipEntry{"theme.json", themeJSON},
+		), "author is required"},
+		"javascript repo": {zipOf(t,
+			zipEntry{"manifest.json", testManifest(t, func(m map[string]any) { m["repo"] = "javascript:alert(1)" })}, zipEntry{"theme.json", themeJSON},
+		), "https URL"},
+		"name with a slash": {zipOf(t,
+			zipEntry{"manifest.json", testManifest(t, func(m map[string]any) { m["name"] = "a/b" })}, zipEntry{"theme.json", themeJSON},
+		), "can't contain a /"},
+		"unknown manifest field": {zipOf(t,
+			zipEntry{"manifest.json", testManifest(t, func(m map[string]any) { m["script"] = "x" })}, zipEntry{"theme.json", themeJSON},
+		), `unknown field "script"`},
+		"files names a missing image": {zipOf(t,
+			zipEntry{"manifest.json", testManifest(t, withImage)}, zipEntry{"theme.json", themeJSON},
+		), "doesn't match the package's contents"},
+		"files omits a present image": {zipOf(t,
+			zipEntry{"manifest.json", testManifest(t, nil)}, zipEntry{"theme.json", themeJSON}, zipEntry{"assets/background.png", pngMagic},
+		), "doesn't match the package's contents"},
+		"invalid color": {zipOf(t,
+			zipEntry{"manifest.json", testManifest(t, nil)}, zipEntry{"theme.json", []byte(`{"foreground":"url(x)"}`)},
+		), "invalid theme color for foreground"},
+		"unknown theme field": {zipOf(t,
+			zipEntry{"manifest.json", testManifest(t, nil)}, zipEntry{"theme.json", []byte(`{"script":"x"}`)},
+		), `unknown field "script"`},
+		"image that isn't one": {zipOf(t,
+			zipEntry{"manifest.json", testManifest(t, withImage)}, zipEntry{"theme.json", themeJSON},
+			zipEntry{"assets/background.png", []byte("<html>")},
+		), "unsupported background image type"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := ReadThemePackage(tc.data)
+			require.ErrorContains(t, err, tc.want)
+		})
+	}
+
+	t.Run("counts uncompressed bytes as it reads", func(t *testing.T) {
+		// Compresses to a few KB, but is larger than the limit uncompressed.
+		huge := bytes.Repeat([]byte(" "), MAX_THEME_PACKAGE_SIZE+1)
+		data := zipOf(t, zipEntry{"manifest.json", huge}, zipEntry{"theme.json", themeJSON})
+		require.Less(t, len(data), MAX_THEME_PACKAGE_SIZE)
+		_, err := ReadThemePackage(data)
+		require.ErrorContains(t, err, "when uncompressed")
+	})
+}
+
+func TestValidateThemeName(t *testing.T) {
+	assert.NoError(t, validateThemeName("midnight-ops"))
+	assert.NoError(t, validateThemeName("Ocean Breeze 2"))
+	for _, bad := range []string{"", " lead", "trail ", "a/b", "tab\there", strings.Repeat("x", MAX_THEME_NAME_LENGTH+1)} {
+		assert.Error(t, validateThemeName(bad), bad)
+	}
 }

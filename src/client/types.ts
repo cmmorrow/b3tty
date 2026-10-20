@@ -58,6 +58,17 @@ export interface TermConfig {
     showMenubar?: string;
 }
 
+/**
+ * The theme name lists the server pushes to every session in a "themes" control
+ * message when themes are added or removed (see broadcastThemeLists), with the same
+ * meaning as the TermConfig fields of the same names.
+ */
+export interface ThemeLists {
+    themeNames: string[];
+    allThemeNames: string[];
+    builtinThemeNames: string[];
+}
+
 export interface ThemeActivateResponse extends ThemeConfigBase {
     hasBackgroundImage: boolean;
     themeNames?: string[];

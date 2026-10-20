@@ -44,6 +44,7 @@ configuration. For additional security, b3tty supports TLS over https and wss.`,
 		if configLoadErr != nil {
 			src.Fatalf("config validation error: %v", configLoadErr)
 		}
+		loadThemes(true)
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := src.ValidateTheme(&theme); err != nil {
@@ -80,6 +81,8 @@ configuration. For additional security, b3tty supports TLS over https and wss.`,
 			Server:          src.NewServer(&uri, &port, &noAuth, &src.TLS{CertFilePath: certFile, KeyFilePath: keyFile, Enabled: tls}),
 			Profiles:        profiles,
 			Themes:          themes,
+			InstalledThemes: installedThemes,
+			Plugins:         pluginStore,
 			AvailableThemes: availableThemes,
 			DefaultTheme:    defaultThemeName,
 			ProfileName:     "",
