@@ -38,6 +38,11 @@ type TerminalServer struct {
 	Server   *Server
 	Profiles map[string]Profile
 	Themes   map[string]Theme
+	// InstalledThemes holds the themes installed in Plugins, keyed by name.
+	InstalledThemes map[string]InstalledTheme
+	// Plugins is the plugin store installed themes live in. Set once before
+	// Serve() starts accepting requests; nil disables importing.
+	Plugins *PluginStore
 	// AvailableThemes is the Themes menu, in order: names of built-in or user
 	// themes, mirroring the config file's available-themes.
 	AvailableThemes []string
@@ -58,10 +63,10 @@ type TerminalServer struct {
 	WSClientsMu    sync.Mutex
 	// StateMu guards every field above that is read or written by more than one
 	// HTTP handler after startup: Client, Theme, Profiles, Themes,
-	// AvailableThemes, DefaultTheme, ActiveTheme, and ProfileName. Themes holds
-	// user-defined themes only; built-in themes stay in builtinThemes (see
-	// resolveTheme). Server, ConfigFile, StartupProfile, NoBrowser, and
-	// ShowMenubar are set once before Serve() starts accepting requests and
+	// InstalledThemes, AvailableThemes, DefaultTheme, ActiveTheme, and
+	// ProfileName. Themes holds user-defined themes only; built-in themes stay
+	// in builtinThemes (see resolveTheme). Server, ConfigFile, Plugins,
+	// StartupProfile, NoBrowser, and ShowMenubar are set once before Serve() starts accepting requests and
 	// never mutated afterward, so they do not need to be guarded. Callers
 	// should hold StateMu only long enough to read or mutate state into local
 	// variables — never across template execution, JSON encoding, or other
@@ -197,6 +202,10 @@ func (ts *TerminalServer) apiRoutes() map[string]http.HandlerFunc {
 		"/edit-theme":     ts.editThemeHandler,
 		"/export-theme":   ts.exportThemeHandler,
 		"/theme-package":  ts.themePackageHandler,
+		"/import-theme":   ts.importThemeHandler,
+		"/copy-theme":     ts.copyThemeHandler,
+		"/delete-theme":   ts.deleteThemeHandler,
+		"/reload-themes":  ts.reloadThemesHandler,
 		"/save-config":    ts.saveConfigHandler,
 		"/profile-config": ts.profileConfigHandler,
 		"/edit-profile":   ts.editProfileHandler,

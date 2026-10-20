@@ -27,6 +27,17 @@ var themes = make(map[string]src.Theme)
 var availableThemes []string
 var defaultThemeName string
 
+// pluginStore is where installed themes live, set by initConfig (nil when the
+// home directory can't be found), and installedThemes the themes loaded from
+// it by loadThemes.
+var pluginStore *src.PluginStore
+var installedThemes = make(map[string]src.InstalledTheme)
+
+// loadedConfig is the decoded config file, set by initConfig; nil when there
+// is none or it couldn't be decoded. loadThemes derives the theme state from
+// it.
+var loadedConfig *src.Config
+
 // configKeys records which dotted keys the config file actually contained,
 // and configLoadErr the error from decoding it (nil on success, and always
 // nil when no config file was found). Both are populated by initConfig.
@@ -62,6 +73,7 @@ and terminal configuration options:
 		if configLoadErr != nil {
 			cmdLog.Warnf("config validation error: %v", configLoadErr)
 		}
+		loadThemes(false)
 	},
 }
 
@@ -110,6 +122,11 @@ func initConfig() {
 			src.Errorf("error loading config file %s", f)
 			os.Exit(1)
 		}
+	}
+
+	var storeErr error
+	if pluginStore, storeErr = src.DefaultPluginStore(); storeErr != nil {
+		src.Warnf("installed themes are not available: %v", storeErr)
 	}
 
 	configFileFound = viper.ConfigFileUsed() != "" || cfgFile != ""
@@ -190,20 +207,40 @@ func initConfig() {
 	fontFamily = cfg.Terminal.FontFamily
 	fontSize = cfg.Terminal.FontSize
 
-	// Decoding straight into map[string]Theme preserves each theme name's
-	// exact case, which viper.GetStringMap does not. LoadThemeState separates
-	// the user themes from the Themes menu and resolves the active theme,
-	// warning (rather than failing) about entries that name no theme.
-	themeState := src.LoadThemeState(cfg, configKeys)
-	themes = themeState.Themes
-	availableThemes = themeState.AvailableThemes
-	defaultThemeName = themeState.DefaultTheme
-	theme = themeState.Active
-	activeThemeName = themeState.ActiveName
+	// The theme state is derived later, by loadThemes, once it is known
+	// whether the command being run is `start`.
+	loadedConfig = &cfg
 
 	for name, p := range cfg.Profiles {
 		profiles[name] = applyProfileDefaults(p)
 	}
+}
+
+// loadThemes loads the installed themes and derives the theme state from them
+// and the config file. It runs from the PersistentPreRun hooks rather than
+// initConfig because how installed themes load depends on the command:
+// `b3tty start` verifies every package (re-hashing it and checking its
+// background image), while every other command passes verify=false and reads
+// only each package's manifest and theme, so commands stay fast however large
+// the installed themes' images are. `theme list` and `theme verify` check
+// packages themselves.
+func loadThemes(verify bool) {
+	installedThemes = pluginStore.LoadThemes(verify)
+	if loadedConfig == nil {
+		return
+	}
+	// Decoding straight into map[string]Theme preserves each theme name's
+	// exact case, which viper.GetStringMap does not. LoadThemeState separates
+	// the user themes from the Themes menu, drops themes a higher-precedence
+	// source shadows, and resolves the active theme, warning (rather than
+	// failing) about entries that name no theme.
+	themeState := src.LoadThemeState(*loadedConfig, configKeys, installedThemes)
+	themes = themeState.Themes
+	installedThemes = themeState.Installed
+	availableThemes = themeState.AvailableThemes
+	defaultThemeName = themeState.DefaultTheme
+	theme = themeState.Active
+	activeThemeName = themeState.ActiveName
 }
 
 // applyProfileDefaults fills in a default for every profile field the config

@@ -680,6 +680,76 @@ themes:
 // SaveProfileToConfig
 // ---------------------------------------------------------------------------
 
+func TestAddThemeToConfig(t *testing.T) {
+	readConfig, cfgPath := setupUpdateThemeTest(t)
+	writeInitialConfig(t, "theme: dracula\navailable-themes: [dracula]\n")
+
+	require.NoError(t, AddThemeToConfig(cfgPath, "copy", Theme{Foreground: "#ffffff", BackgroundImage: "/bg.png"}))
+	out := readConfig()
+	assert.Equal(t, "dracula", out["theme"], "a copy is not activated")
+	assert.Equal(t, []any{"dracula", "copy"}, out["available-themes"])
+	entry := out["themes"].(map[string]any)["copy"].(map[string]any)
+	assert.Equal(t, "#ffffff", entry["foreground"])
+	assert.Equal(t, "/bg.png", entry["background-image"])
+
+	require.ErrorContains(t, AddThemeToConfig(cfgPath, "copy", Theme{}), "already exists")
+}
+
+func TestDeleteThemeFromConfig(t *testing.T) {
+	t.Run("removes the definition, menu entry, and keys naming it", func(t *testing.T) {
+		readConfig, cfgPath := setupUpdateThemeTest(t)
+		writeInitialConfig(t, `theme: mine
+default-theme: mine
+available-themes: [dracula, mine]
+themes:
+  mine:
+    foreground: "#ffffff"
+  other:
+    foreground: "#000000"
+`)
+		require.NoError(t, DeleteThemeFromConfig(cfgPath, "mine"))
+		out := readConfig()
+		assert.NotContains(t, out, "theme")
+		assert.NotContains(t, out, "default-theme")
+		assert.Equal(t, []any{"dracula"}, out["available-themes"])
+		assert.Equal(t, map[string]any{"other": map[string]any{"foreground": "#000000"}}, out["themes"])
+	})
+
+	t.Run("seeds the menu first in a config without available-themes", func(t *testing.T) {
+		readConfig, cfgPath := setupUpdateThemeTest(t)
+		writeInitialConfig(t, "themes:\n  b:\n    foreground: \"#fff\"\n  a:\n    foreground: \"#000\"\n")
+		require.NoError(t, DeleteThemeFromConfig(cfgPath, "a"))
+		assert.Equal(t, []any{"b"}, readConfig()["available-themes"])
+	})
+
+	t.Run("leaves keys naming other themes alone", func(t *testing.T) {
+		readConfig, cfgPath := setupUpdateThemeTest(t)
+		writeInitialConfig(t, "theme: dracula\ndefault-theme: b3tty-dark\navailable-themes: [dracula, midnight]\n")
+		require.NoError(t, DeleteThemeFromConfig(cfgPath, "midnight"))
+		out := readConfig()
+		assert.Equal(t, "dracula", out["theme"])
+		assert.Equal(t, "b3tty-dark", out["default-theme"])
+		assert.Equal(t, []any{"dracula"}, out["available-themes"])
+	})
+
+	t.Run("an emptied menu stays an explicit empty list", func(t *testing.T) {
+		readConfig, cfgPath := setupUpdateThemeTest(t)
+		writeInitialConfig(t, "available-themes: [midnight]\n")
+		require.NoError(t, DeleteThemeFromConfig(cfgPath, "midnight"))
+		assert.Equal(t, []any{}, readConfig()["available-themes"])
+	})
+}
+
+func TestRemoveThemeFromMenuInConfig(t *testing.T) {
+	readConfig, cfgPath := setupUpdateThemeTest(t)
+	writeInitialConfig(t, "theme: dracula\ndefault-theme: dracula\navailable-themes: [dracula, one-light]\n")
+	require.NoError(t, RemoveThemeFromMenuInConfig(cfgPath, "dracula"))
+	out := readConfig()
+	assert.Equal(t, []any{"one-light"}, out["available-themes"])
+	assert.Equal(t, "dracula", out["theme"], "a built-in stays active")
+	assert.Equal(t, "dracula", out["default-theme"])
+}
+
 func TestSaveProfileToConfig(t *testing.T) {
 	readConfig := func(path string) map[string]any {
 		t.Helper()

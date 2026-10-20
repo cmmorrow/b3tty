@@ -19,6 +19,8 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 var (
@@ -99,8 +101,8 @@ func ValidateTheme(t *Theme) error {
 // returned as-is. It does not check that path is absolute or a regular file.
 func validateBackgroundImage(path string) error {
 	ext := strings.ToLower(filepath.Ext(path))
-	if !slices.Contains(backgroundImageExts, ext) {
-		return fmt.Errorf("%w: extension %q is not one of %s", errUnsupportedBackgroundImage, ext, strings.Join(backgroundImageExts, ", "))
+	if err := checkBackgroundImageExt(ext); err != nil {
+		return err
 	}
 
 	f, err := os.Open(path)
@@ -116,9 +118,55 @@ func validateBackgroundImage(path string) error {
 	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
 		return err
 	}
-	contentType := http.DetectContentType(buf[:n])
+	return checkBackgroundImageContent(buf[:n])
+}
+
+// validateBackgroundImageData is validateBackgroundImage for an image held in
+// memory, such as one read from a theme package: ext is its lowercased file
+// extension, with the dot.
+func validateBackgroundImageData(ext string, data []byte) error {
+	if err := checkBackgroundImageExt(ext); err != nil {
+		return err
+	}
+	return checkBackgroundImageContent(data)
+}
+
+// checkBackgroundImageExt checks a lowercased extension against
+// backgroundImageExts.
+func checkBackgroundImageExt(ext string) error {
+	if !slices.Contains(backgroundImageExts, ext) {
+		return fmt.Errorf("%w: extension %q is not one of %s", errUnsupportedBackgroundImage, ext, strings.Join(backgroundImageExts, ", "))
+	}
+	return nil
+}
+
+// checkBackgroundImageContent checks that http.DetectContentType, which looks
+// at no more than the first 512 bytes, finds an allowed image type in data.
+func checkBackgroundImageContent(data []byte) error {
+	contentType := http.DetectContentType(data)
 	if !slices.Contains(backgroundImageTypes, contentType) {
 		return fmt.Errorf("%w: contents detected as %q", errUnsupportedBackgroundImage, contentType)
+	}
+	return nil
+}
+
+// validateThemeName checks a theme name that b3tty didn't get from its own
+// config file: the name in a theme package's manifest, or the name of a copy.
+// It must be non-empty, at most MAX_THEME_NAME_LENGTH characters, without
+// surrounding whitespace, a "/", or control characters. Its errors are
+// user-facing.
+func validateThemeName(name string) error {
+	switch {
+	case name == "":
+		return errors.New("a theme name is required")
+	case strings.TrimSpace(name) != name:
+		return fmt.Errorf("theme name %q has leading or trailing spaces", name)
+	case utf8.RuneCountInString(name) > MAX_THEME_NAME_LENGTH:
+		return fmt.Errorf("theme name %q is longer than %d characters", name, MAX_THEME_NAME_LENGTH)
+	case strings.Contains(name, "/"):
+		return fmt.Errorf("theme name %q can't contain a /", name)
+	case strings.IndexFunc(name, unicode.IsControl) >= 0:
+		return fmt.Errorf("theme name %q can't contain control characters", name)
 	}
 	return nil
 }

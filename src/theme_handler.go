@@ -45,10 +45,9 @@ var gruvboxLightThemeJSON []byte
 var defaultDarkTheme = mustUnmarshalTheme(defaultDarkThemeJSON)
 var defaultLightTheme = mustUnmarshalTheme(defaultLightThemeJSON)
 
-// builtinThemes maps each built-in theme name to its decoded Theme. All
-// entries are available via themePaletteHandler and are registered into
-// ts.Themes at startup so the menu bar can switch between them without any
-// conf.yaml entry.
+// builtinThemes maps each built-in theme name to its decoded Theme. They are
+// never copied into ts.Themes or the config file; every handler finds them
+// through resolveTheme.
 var builtinThemes = map[string]Theme{
 	"b3tty-dark":       defaultDarkTheme,
 	"b3tty-light":      defaultLightTheme,
@@ -109,7 +108,7 @@ func (ts *TerminalServer) themePaletteHandler(w http.ResponseWriter, r *http.Req
 // GET returns the full theme color config and hasBackgroundImage flag without
 // side effects.
 //
-// The name may be a built-in or user theme (see resolveTheme).
+// The name may be a theme of any source (see resolveTheme).
 //
 // POST additionally activates the named theme on the server (updating
 // ts.Theme) so that the /background endpoint immediately serves the correct
@@ -137,6 +136,7 @@ func (ts *TerminalServer) themeConfigHandler(w http.ResponseWriter, r *http.Requ
 	}
 	ts.StateMu.RLock()
 	theme, _, ok := ts.resolveTheme(name)
+	hasImage := ts.hasBackgroundImage(name, theme)
 	ts.StateMu.RUnlock()
 	if !ok {
 		http.NotFound(w, r)
@@ -156,7 +156,7 @@ func (ts *TerminalServer) themeConfigHandler(w http.ResponseWriter, r *http.Requ
 	}
 	resp := themeConfigResponse{
 		Theme:              theme,
-		HasBackgroundImage: theme.BackgroundImage != "",
+		HasBackgroundImage: hasImage,
 	}
 	if r.Method == "POST" {
 		ts.broadcastTheme(name, resp)
@@ -166,7 +166,7 @@ func (ts *TerminalServer) themeConfigHandler(w http.ResponseWriter, r *http.Requ
 
 // addThemeHandler activates a theme chosen in the theme picker and adds it to
 // the Themes menu, in memory and in conf.yaml (ActivateThemeInConfig). The
-// theme may be built-in or user-defined; built-in themes are referenced by
+// theme may be of any source; built-in and installed themes are referenced by
 // name, never copied into the themes section or ts.Themes. It returns the
 // theme plus themeNames, the updated menu, so the client can rebuild it.
 // POST /add-theme  body: {"theme":"<name>"}
@@ -202,6 +202,7 @@ func (ts *TerminalServer) addThemeHandler(w http.ResponseWriter, r *http.Request
 	ts.ActiveTheme = req.Theme
 	ts.addMenuTheme(req.Theme)
 	themeNames := ts.menuThemeNames()
+	hasImage := ts.hasBackgroundImage(req.Theme, theme)
 	ts.StateMu.Unlock()
 
 	if err := ActivateThemeInConfig(ts.ConfigFile, req.Theme); err != nil {
@@ -213,7 +214,7 @@ func (ts *TerminalServer) addThemeHandler(w http.ResponseWriter, r *http.Request
 	Debugf("added theme %q", req.Theme)
 	resp := themeConfigResponse{
 		Theme:              theme,
-		HasBackgroundImage: theme.BackgroundImage != "",
+		HasBackgroundImage: hasImage,
 		ThemeNames:         themeNames,
 	}
 	writeJSON(w, resp, "add-theme")
@@ -221,8 +222,8 @@ func (ts *TerminalServer) addThemeHandler(w http.ResponseWriter, r *http.Request
 
 // editThemeHandler creates or overwrites a user-defined theme, activates it,
 // and adds it to the Themes menu; the response's themeNames is the updated
-// menu. A built-in theme's name is refused (400), since built-in themes can't
-// be redefined.
+// menu. A built-in or installed theme's name is refused (400), since those
+// themes can't be edited.
 // POST /edit-theme  body: {"name":"<name>","theme":{...Theme fields...}}
 func (ts *TerminalServer) editThemeHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
@@ -251,9 +252,16 @@ func (ts *TerminalServer) editThemeHandler(w http.ResponseWriter, r *http.Reques
 	}
 	// Validation errors go back in the response body so the theme editor can
 	// show the user what to fix.
-	if IsBuiltinThemeName(req.Name) {
-		Warnf("%s %s: bad request: built-in theme %q", r.Method, r.URL.Path, req.Name)
-		http.Error(w, fmt.Sprintf("%q is a built-in theme and can't be edited; save your changes under a new name", req.Name), http.StatusBadRequest)
+	ts.StateMu.RLock()
+	_, source, _ := ts.resolveTheme(req.Name)
+	ts.StateMu.RUnlock()
+	if source == ThemeSourceBuiltin || source == ThemeSourceInstalled {
+		Warnf("%s %s: bad request: %s theme %q", r.Method, r.URL.Path, source, req.Name)
+		kind := "a built-in"
+		if source == ThemeSourceInstalled {
+			kind = "an installed"
+		}
+		http.Error(w, fmt.Sprintf("%q is %s theme and can't be edited; save your changes under a new name", req.Name, kind), http.StatusBadRequest)
 		return
 	}
 	if err := ValidateTheme(&req.Theme); err != nil {
@@ -300,8 +308,9 @@ func (ts *TerminalServer) editThemeHandler(w http.ResponseWriter, r *http.Reques
 // (repo, author, description, themeVersion) and writes the saved user-defined
 // theme as a .b3theme package to path via ExportUserTheme, which also records
 // the export in the theme's package: block in the config file. It returns
-// { "path": "<file written>" }. Built-in themes are refused (400) and unknown
-// names are 404; an existing file is 409, any other export failure (including
+// { "path": "<file written>" }. Built-in and installed themes are refused
+// (400) — an installed theme is exported only by copying it to a user theme
+// first, which gets its own package id — and unknown names are 404; an existing file is 409, any other export failure (including
 // missing or invalid metadata) 400, and a written package whose details could
 // not be saved 500, each with the reason as a plain-text body for the export
 // dialog to show.
@@ -338,8 +347,14 @@ func (ts *TerminalServer) exportThemeHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	ts.StateMu.RLock()
+	_, source, _ := ts.resolveTheme(req.Name)
 	theme, ok := ts.Themes[req.Name]
 	ts.StateMu.RUnlock()
+	if source == ThemeSourceInstalled {
+		Warnf("%s %s: bad request: installed theme %q", r.Method, r.URL.Path, req.Name)
+		http.Error(w, fmt.Sprintf("%q is an installed theme and can't be exported; copy it to make your own", req.Name), http.StatusBadRequest)
+		return
+	}
 	if !ok {
 		Warnf("%s %s: theme %q not found", r.Method, r.URL.Path, req.Name)
 		http.Error(w, fmt.Sprintf("theme %q not found", req.Name), http.StatusNotFound)
@@ -378,7 +393,7 @@ func (ts *TerminalServer) exportThemeHandler(w http.ResponseWriter, r *http.Requ
 // metadata recorded by the user theme's last export, read from the config
 // file's package: block, so the export dialog can fill in its fields — or {}
 // when the theme has never been exported. The package id is never sent. A
-// built-in name is 400.
+// built-in or installed name is 400.
 func (ts *TerminalServer) themePackageHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "GET" {
 		Warnf("%s %s: method not allowed: %s", r.Method, r.URL.Path, r.Method)
@@ -386,8 +401,11 @@ func (ts *TerminalServer) themePackageHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 	name := r.URL.Query().Get("name")
-	if name == "" || IsBuiltinThemeName(name) {
-		Warnf("%s %s: bad request: missing or built-in name %q", r.Method, r.URL.Path, name)
+	ts.StateMu.RLock()
+	_, source, _ := ts.resolveTheme(name)
+	ts.StateMu.RUnlock()
+	if name == "" || source == ThemeSourceBuiltin || source == ThemeSourceInstalled {
+		Warnf("%s %s: bad request: missing, built-in, or installed name %q", r.Method, r.URL.Path, name)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
