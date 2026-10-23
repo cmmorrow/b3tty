@@ -59,9 +59,16 @@ import {
     MAX_UINT16,
 } from "./validators.ts";
 import { isB3ttyDialog, isB3ttyMenuBar } from "./components.ts";
-import { apiFetch, getSettings } from "./api.ts";
+import {
+    apiFetch,
+    getSettings,
+    postCopyTheme,
+    postDeleteTheme,
+    postImportTheme,
+    ThemeUpgradeRequiredError,
+} from "./api.ts";
 import { isThemeActivateResponse } from "./types.ts";
-import type { TermConfig } from "./types.ts";
+import type { TermConfig, ThemeEntry, ThemeLists } from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Shared mock factories
@@ -808,8 +815,10 @@ describe("handleSocketMessage", () => {
         const onThemes = mock((_lists: unknown) => {});
         const lists = {
             themeNames: ["dracula"],
-            allThemeNames: ["dracula", "midnight"],
-            builtinThemeNames: ["midnight"],
+            themes: [
+                { name: "dracula", source: "builtin", inMenu: true },
+                { name: "midnight", source: "installed", inMenu: false, author: "Jane" },
+            ],
         };
         const payload = JSON.stringify({ type: "themes", ...lists });
         handleSocketMessage({ data: payload }, decoder, term, undefined, undefined, undefined, onThemes);
@@ -819,7 +828,7 @@ describe("handleSocketMessage", () => {
 
     it("does not call onThemes when a list is missing", () => {
         const onThemes = mock((_lists: unknown) => {});
-        const payload = JSON.stringify({ type: "themes", themeNames: [], allThemeNames: [] });
+        const payload = JSON.stringify({ type: "themes", themeNames: [] });
         handleSocketMessage({ data: payload }, decoder, term, undefined, undefined, undefined, onThemes);
         expect(onThemes).not.toHaveBeenCalled();
     });
@@ -830,10 +839,12 @@ describe("handleSocketMessage", () => {
 // ---------------------------------------------------------------------------
 
 describe("applyThemeLists", () => {
-    const lists = {
+    const lists: ThemeLists = {
         themeNames: ["midnight"],
-        allThemeNames: ["dracula", "midnight"],
-        builtinThemeNames: ["dracula", "midnight"],
+        themes: [
+            { name: "dracula", source: "builtin", inMenu: false },
+            { name: "midnight", source: "installed", inMenu: true },
+        ],
     };
 
     function makeConfig(): TermConfig {
@@ -857,8 +868,7 @@ describe("applyThemeLists", () => {
         const colors = { bg: "#111111", fg: "#eeeeee" };
         applyThemeLists(lists, menuBar, config, { current: "midnight", colors });
         expect(config.themeNames).toEqual(["midnight"]);
-        expect(config.allThemeNames).toEqual(["dracula", "midnight"]);
-        expect(config.builtinThemeNames).toEqual(["dracula", "midnight"]);
+        expect(config.themes).toEqual(lists.themes);
         expect(menuBar.setup).toHaveBeenCalledTimes(1);
         expect(menuBar.setup.mock.calls[0]![0]).toEqual(["midnight"]);
         expect(menuBar.setup.mock.calls[0]![1]).toEqual(["default", "work"]);
@@ -875,7 +885,7 @@ describe("applyThemeLists", () => {
     it("still updates config without a menu bar", () => {
         const config = makeConfig();
         applyThemeLists(lists, null, config, { current: "" });
-        expect(config.allThemeNames).toEqual(["dracula", "midnight"]);
+        expect(config.themes).toEqual(lists.themes);
     });
 });
 
@@ -2509,7 +2519,7 @@ describe("handleThemeSelected", () => {
     }
 
     function makePicker() {
-        return { open: mock((_names: string[]) => {}), close: mock(() => {}) };
+        return { open: mock((_themes: ThemeEntry[]) => {}), close: mock(() => {}) };
     }
 
     function makeConfig(overrides: Record<string, unknown> = {}) {
@@ -2787,7 +2797,7 @@ describe("handleThemeEdited", () => {
             theme: {},
             themeNames: ["b3tty-dark"],
             profileNames: [],
-            allThemeNames: ["b3tty-dark"],
+            themes: [{ name: "b3tty-dark", source: "builtin", inMenu: true }] as ThemeEntry[],
             ...overrides,
         };
     }
@@ -2887,41 +2897,123 @@ describe("handleThemeEdited", () => {
         expect(config.themeNames).toEqual(["b3tty-dark", "my-theme"]);
     });
 
-    it("adds new theme name to config.allThemeNames when not already present", async () => {
+    it("records the response's themes list in config", async () => {
         const { doc } = makeDomStub();
         (globalThis as Record<string, unknown>)["document"] = doc;
-        const config = makeConfig({ allThemeNames: ["b3tty-dark"], themeNames: ["b3tty-dark"] });
+        const config = makeConfig({ themeNames: ["b3tty-dark"] });
+        const themes: ThemeEntry[] = [
+            { name: "b3tty-dark", source: "builtin", inMenu: true },
+            { name: "my-theme", source: "user", inMenu: true },
+        ];
         await handleThemeEdited(
-            makeEditedEvent("my-theme", { themeNames: ["b3tty-dark", "my-theme"] }),
+            makeEditedEvent("my-theme", { themeNames: ["b3tty-dark", "my-theme"], themes }),
             terminalFactory(makeConfig()),
             makeMenuBar(),
             config,
             { current: "b3tty-dark" }
         );
-        expect(config.allThemeNames).toContain("my-theme");
+        expect(config.themes).toEqual(themes);
     });
 
-    it("does not duplicate name in config.allThemeNames if already present", async () => {
+    it("keeps config's themes list when the response has none", async () => {
         const { doc } = makeDomStub();
         (globalThis as Record<string, unknown>)["document"] = doc;
-        const config = makeConfig({
-            allThemeNames: ["b3tty-dark", "my-theme"],
-            themeNames: ["b3tty-dark", "my-theme"],
-        });
+        const config = makeConfig();
+        const before = config.themes;
         await handleThemeEdited(
-            makeEditedEvent("my-theme", { themeNames: ["b3tty-dark", "my-theme"] }),
+            makeEditedEvent("b3tty-dark", {}),
             terminalFactory(makeConfig()),
             makeMenuBar(),
             config,
             { current: "b3tty-dark" }
         );
-        expect(config.allThemeNames!.filter((n) => n === "my-theme").length).toBe(1);
+        expect(config.themes).toBe(before);
     });
 });
 
 // ---------------------------------------------------------------------------
 // apiFetch
 // ---------------------------------------------------------------------------
+
+describe("theme management API helpers", () => {
+    let savedFetch: unknown;
+    let fetchMock: ReturnType<typeof mock>;
+    const respond = (body: string, status = 200) => {
+        fetchMock = mock(() => Promise.resolve(new Response(body, { status })));
+        (globalThis as Record<string, unknown>)["fetch"] = fetchMock;
+    };
+    const sent = () => {
+        const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+        return { url, method: init.method, body: JSON.parse(init.body as string) as unknown };
+    };
+    const lists = { themeNames: ["midnight"], themes: [{ name: "midnight", source: "installed", inMenu: true }] };
+
+    beforeEach(() => {
+        savedFetch = globalThis.fetch;
+    });
+    afterEach(() => {
+        (globalThis as Record<string, unknown>)["fetch"] = savedFetch;
+    });
+
+    it("postImportTheme posts the path and replace flag and returns the response", async () => {
+        const response = {
+            ...lists,
+            name: "midnight",
+            theme: { hasBackgroundImage: true },
+            upgraded: false,
+            unchanged: false,
+        };
+        respond(JSON.stringify(response));
+        expect(await postImportTheme("~/midnight.b3theme")).toEqual(response as never);
+        expect(sent()).toEqual({
+            url: "/import-theme",
+            method: "POST",
+            body: { path: "~/midnight.b3theme", replace: false },
+        });
+    });
+
+    it("postImportTheme turns a 409 into ThemeUpgradeRequiredError carrying the server's text", async () => {
+        respond("midnight 1.0 is installed; this package is version 2.0.", 409);
+        const err = await postImportTheme("/x.b3theme").catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(ThemeUpgradeRequiredError);
+        expect((err as Error).message).toBe("midnight 1.0 is installed; this package is version 2.0.");
+    });
+
+    it("postImportTheme throws the server's reason for any other failure", async () => {
+        respond("the package has no theme.json", 400);
+        const err = await postImportTheme("/x.b3theme", true).catch((e: unknown) => e);
+        expect(err).not.toBeInstanceOf(ThemeUpgradeRequiredError);
+        expect((err as Error).message).toBe("the package has no theme.json");
+        expect((sent().body as { replace: boolean }).replace).toBe(true);
+    });
+
+    it("postCopyTheme posts both names", async () => {
+        respond(JSON.stringify({ hasBackgroundImage: false, ...lists }));
+        const response = await postCopyTheme("dracula", "my-dracula");
+        expect(response.themeNames).toEqual(["midnight"]);
+        expect(sent()).toEqual({
+            url: "/copy-theme",
+            method: "POST",
+            body: { name: "dracula", newName: "my-dracula" },
+        });
+    });
+
+    it("postCopyTheme throws the server's reason", async () => {
+        respond(`a theme named "one-light" already exists`, 400);
+        await expect(postCopyTheme("dracula", "one-light")).rejects.toThrow(`a theme named "one-light" already exists`);
+    });
+
+    it("postDeleteTheme posts the name and returns the updated lists", async () => {
+        respond(JSON.stringify(lists));
+        expect(await postDeleteTheme("old")).toEqual(lists as never);
+        expect(sent()).toEqual({ url: "/delete-theme", method: "POST", body: { name: "old" } });
+    });
+
+    it("postDeleteTheme rejects a response without the lists", async () => {
+        respond("{}");
+        await expect(postDeleteTheme("old")).rejects.toThrow("Unexpected delete-theme response shape");
+    });
+});
 
 describe("apiFetch", () => {
     let savedWindow: unknown;
@@ -3074,6 +3166,8 @@ describe("buildPaletteCommands", () => {
             openThemeEditor: mock(() => {}),
             openThemeImport: mock(() => {}),
             openThemeExport: mock(() => {}),
+            openThemeCopy: mock(() => {}),
+            openThemeDelete: mock(() => {}),
             openProfileEditor: mock(() => {}),
             openSettings: mock(() => {}),
             openAbout: mock(() => {}),
@@ -3089,6 +3183,8 @@ describe("buildPaletteCommands", () => {
             "open:theme-editor",
             "open:theme-import",
             "open:theme-export",
+            "open:theme-copy",
+            "open:theme-delete",
             "open:profile-editor",
             "open:settings",
             "open:about",
@@ -3102,6 +3198,8 @@ describe("buildPaletteCommands", () => {
             "edit:theme",
             "import:theme",
             "export:theme",
+            "copy:theme",
+            "delete:theme",
             "edit:profile",
             "b3tty:settings",
             "b3tty:about",
@@ -3116,6 +3214,8 @@ describe("buildPaletteCommands", () => {
         run("open:theme-editor");
         run("open:theme-import");
         run("open:theme-export");
+        run("open:theme-copy");
+        run("open:theme-delete");
         run("open:profile-editor");
         run("open:settings");
         run("open:about");
@@ -3123,6 +3223,8 @@ describe("buildPaletteCommands", () => {
         expect(actions.openThemeEditor).toHaveBeenCalledTimes(1);
         expect(actions.openThemeImport).toHaveBeenCalledTimes(1);
         expect(actions.openThemeExport).toHaveBeenCalledTimes(1);
+        expect(actions.openThemeCopy).toHaveBeenCalledTimes(1);
+        expect(actions.openThemeDelete).toHaveBeenCalledTimes(1);
         expect(actions.openProfileEditor).toHaveBeenCalledTimes(1);
         expect(actions.openSettings).toHaveBeenCalledTimes(1);
         expect(actions.openAbout).toHaveBeenCalledTimes(1);

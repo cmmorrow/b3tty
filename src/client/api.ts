@@ -1,6 +1,15 @@
-import { isThemeActivateResponse, isEditProfileResponse, isExportThemeResponse, isSettingsConfig } from "./types.ts";
+import {
+    isThemeActivateResponse,
+    isEditProfileResponse,
+    isExportThemeResponse,
+    isImportThemeResponse,
+    isSettingsConfig,
+    isThemeLists,
+} from "./types.ts";
 import type {
+    ImportThemeResponse,
     ThemeActivateResponse,
+    ThemeLists,
     Palette,
     ProfileConfig,
     EditProfileResponse,
@@ -245,4 +254,80 @@ export async function postExportTheme(
     const parsed: unknown = await res.json();
     if (!isExportThemeResponse(parsed)) throw new Error(`Unexpected export-theme response shape`);
     return parsed;
+}
+
+/**
+ * Thrown by postImportTheme when the package is a new version of an installed theme
+ * and replacing it wasn't approved (409). The message is the server's description of
+ * the upgrade, which says when the author or repository changed; call postImportTheme
+ * again with replace = true to go ahead.
+ */
+export class ThemeUpgradeRequiredError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "ThemeUpgradeRequiredError";
+    }
+}
+
+/** Throws the response's plain-text reason when there is one, else fallback. */
+async function throwResponseReason(res: Response, fallback: string): Promise<never> {
+    const reason = (await res.text().catch(() => "")).trim();
+    throw new Error(reason || `${fallback}: ${res.status}`);
+}
+
+/**
+ * POSTs to /import-theme to install the .b3theme package at `path` on the server's
+ * filesystem. The theme is installed, not activated. A new version of an installed
+ * theme throws ThemeUpgradeRequiredError unless `replace` is true; any other failure
+ * throws the server's reason.
+ */
+export async function postImportTheme(path: string, replace = false): Promise<ImportThemeResponse> {
+    const res = await apiFetch("/import-theme", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path, replace }),
+    });
+    if (res.status === 409) {
+        throw new ThemeUpgradeRequiredError(
+            (await res.text().catch(() => "")).trim() || "This theme is already installed."
+        );
+    }
+    if (!res.ok) await throwResponseReason(res, "Failed to import theme");
+    const parsed: unknown = await res.json();
+    if (!isImportThemeResponse(parsed)) throw new Error(`Unexpected import-theme response shape`);
+    return parsed;
+}
+
+/**
+ * POSTs to /copy-theme to save a copy of the theme `name`, of any source, as the new
+ * user theme `newName`. The copy is added to the Themes menu but not activated.
+ * Throws the server's reason on failure (e.g. the name is taken).
+ */
+export async function postCopyTheme(name: string, newName: string): Promise<ThemeActivateResponse> {
+    const res = await apiFetch("/copy-theme", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, newName }),
+    });
+    if (!res.ok) await throwResponseReason(res, `Failed to copy theme "${name}"`);
+    const parsed: unknown = await res.json();
+    if (!isThemeActivateResponse(parsed)) throw new Error(`Unexpected copy-theme response shape`);
+    return parsed;
+}
+
+/**
+ * POSTs to /delete-theme to permanently delete the theme `name`: a user theme is
+ * deleted, an installed one uninstalled, and a built-in one removed from the Themes
+ * menu. Resolves to the updated theme lists; throws the server's reason on failure.
+ */
+export async function postDeleteTheme(name: string): Promise<ThemeLists> {
+    const res = await apiFetch("/delete-theme", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+    });
+    if (!res.ok) await throwResponseReason(res, `Failed to delete theme "${name}"`);
+    const parsed: unknown = await res.json();
+    if (!isThemeLists(parsed)) throw new Error(`Unexpected delete-theme response shape`);
+    return { themeNames: parsed.themeNames, themes: parsed.themes };
 }

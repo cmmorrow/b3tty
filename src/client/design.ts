@@ -135,6 +135,7 @@ export const BASE_STYLES = `
  *   .field-desc    — secondary help text under a field
  *   .field-error   — inline validation/save error, hidden until `.visible`
  *   .warning-note  — boxed caution message (e.g. unsaved changes), hidden until `.visible`
+ *   .badge         — small pill flagging a state (e.g. an installed theme's "Modified")
  */
 export const TEXT_STYLES = `
     .modal-title {
@@ -165,6 +166,14 @@ export const TEXT_STYLES = `
         font-size: var(--font-size-sm); line-height: var(--line-height-body);
     }
     .warning-note.visible { display: block; }
+    /* A small pill flagging a state, e.g. an installed theme's "Modified". */
+    .badge {
+        display: inline-block; padding: 0 var(--space-2xs);
+        border: 1px solid var(--color-warning-border); border-radius: var(--radius-full);
+        background: var(--color-warning-bg); color: var(--color-warning);
+        font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold);
+        line-height: var(--line-height-body); white-space: nowrap;
+    }
 `;
 
 /** OK, Cancel, and Delete button styles. */

@@ -202,6 +202,7 @@ func (ts *TerminalServer) addThemeHandler(w http.ResponseWriter, r *http.Request
 	ts.ActiveTheme = req.Theme
 	ts.addMenuTheme(req.Theme)
 	themeNames := ts.menuThemeNames()
+	themes := ts.themeEntries()
 	hasImage := ts.hasBackgroundImage(req.Theme, theme)
 	ts.StateMu.Unlock()
 
@@ -216,6 +217,7 @@ func (ts *TerminalServer) addThemeHandler(w http.ResponseWriter, r *http.Request
 		Theme:              theme,
 		HasBackgroundImage: hasImage,
 		ThemeNames:         themeNames,
+		Themes:             themes,
 	}
 	writeJSON(w, resp, "add-theme")
 }
@@ -286,6 +288,7 @@ func (ts *TerminalServer) editThemeHandler(w http.ResponseWriter, r *http.Reques
 	ts.ActiveTheme = req.Name
 	ts.addMenuTheme(req.Name)
 	themeNames := ts.menuThemeNames()
+	themes := ts.themeEntries()
 	ts.StateMu.Unlock()
 
 	if err := SaveThemeToConfig(ts.ConfigFile, req.Name, req.Theme); err != nil {
@@ -299,6 +302,7 @@ func (ts *TerminalServer) editThemeHandler(w http.ResponseWriter, r *http.Reques
 		Theme:              req.Theme,
 		HasBackgroundImage: req.Theme.BackgroundImage != "",
 		ThemeNames:         themeNames,
+		Themes:             themes,
 	}
 	writeJSON(w, resp, "edit-theme")
 }

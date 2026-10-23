@@ -82,11 +82,31 @@ func TestThemeNameLists(t *testing.T) {
 	ts.Themes["dracula"] = Theme{}
 	ts.AvailableThemes = []string{"zzz-mine", "dracula"}
 
-	t.Run("allThemeNames lists built-in and user themes once, sorted", func(t *testing.T) {
-		names := ts.allThemeNames()
+	entryNames := func(entries []ThemeEntry) []string {
+		names := make([]string, len(entries))
+		for i, e := range entries {
+			names[i] = e.Name
+		}
+		return names
+	}
+	entry := func(name string) ThemeEntry {
+		for _, e := range ts.themeEntries() {
+			if e.Name == name {
+				return e
+			}
+		}
+		t.Fatalf("no entry for %q", name)
+		return ThemeEntry{}
+	}
+
+	t.Run("themeEntries lists every theme once, sorted, as resolveTheme resolves it", func(t *testing.T) {
+		names := entryNames(ts.themeEntries())
 		assert.IsIncreasing(t, names)
-		assert.Contains(t, names, "zzz-mine")
 		assert.Len(t, names, len(builtinThemes)+1)
+		assert.Equal(t, ThemeEntry{Name: "zzz-mine", Source: ThemeSourceUser, InMenu: true}, entry("zzz-mine"))
+		assert.Equal(t, ThemeEntry{Name: "dracula", Source: ThemeSourceBuiltin, InMenu: true}, entry("dracula"),
+			"the user copy of a built-in is shadowed")
+		assert.Equal(t, ThemeEntry{Name: "one-light", Source: ThemeSourceBuiltin}, entry("one-light"))
 	})
 
 	t.Run("menuThemeNames is a copy in menu order", func(t *testing.T) {
@@ -107,15 +127,16 @@ func TestThemeNameLists(t *testing.T) {
 		assert.Equal(t, []string{"zzz-mine", "one-light"}, ts.AvailableThemes)
 	})
 
-	t.Run("installed themes are listed and read-only", func(t *testing.T) {
-		ts.InstalledThemes = map[string]InstalledTheme{"midnight": {}}
-		assert.Contains(t, ts.allThemeNames(), "midnight")
-		assert.Len(t, ts.allThemeNames(), len(builtinThemes)+2)
-		readOnly := ts.readOnlyThemeNames()
-		assert.IsIncreasing(t, readOnly)
-		assert.Contains(t, readOnly, "midnight")
-		assert.Contains(t, readOnly, "dracula")
-		assert.NotContains(t, readOnly, "zzz-mine")
+	t.Run("installed entries carry their package details", func(t *testing.T) {
+		ts.InstalledThemes = map[string]InstalledTheme{"midnight": {
+			Manifest: ThemeManifest{ThemeMetadata: ThemeMetadata{Author: "Jane", ThemeVersion: "1.2", Repo: "https://github.com/jane/midnight"}},
+			Modified: true,
+		}}
+		assert.Len(t, ts.themeEntries(), len(builtinThemes)+2)
+		assert.Equal(t, ThemeEntry{
+			Name: "midnight", Source: ThemeSourceInstalled,
+			Author: "Jane", ThemeVersion: "1.2", Repo: "https://github.com/jane/midnight", Modified: true,
+		}, entry("midnight"))
 	})
 }
 

@@ -133,23 +133,21 @@ func (ts *TerminalServer) settingsHandler(w http.ResponseWriter, r *http.Request
 	}, "settings")
 }
 
-// broadcastThemeLists pushes the theme name lists to every open session, as a
-// { type: "themes", themeNames, allThemeNames, builtinThemeNames } message, so
-// the Themes menu and theme dialogs pick up themes added or removed elsewhere
-// (another tab, or the b3tty theme CLI through POST /reload-themes). The lists
-// have the same meaning as in the page config (see displayTermHandler).
+// broadcastThemeLists pushes the theme lists to every open session, as a
+// { type: "themes", themeNames, themes } message, so the Themes menu and theme
+// dialogs pick up themes added or removed elsewhere (another tab, or the b3tty
+// theme CLI through POST /reload-themes). The lists have the same meaning as
+// in the page config (see displayTermHandler).
 func (ts *TerminalServer) broadcastThemeLists() {
 	ts.StateMu.RLock()
 	msg := struct {
-		Type              string   `json:"type"`
-		ThemeNames        []string `json:"themeNames"`
-		AllThemeNames     []string `json:"allThemeNames"`
-		BuiltinThemeNames []string `json:"builtinThemeNames"`
+		Type       string       `json:"type"`
+		ThemeNames []string     `json:"themeNames"`
+		Themes     []ThemeEntry `json:"themes"`
 	}{
-		Type:              "themes",
-		ThemeNames:        ts.menuThemeNames(),
-		AllThemeNames:     ts.allThemeNames(),
-		BuiltinThemeNames: ts.readOnlyThemeNames(),
+		Type:       "themes",
+		ThemeNames: ts.menuThemeNames(),
+		Themes:     ts.themeEntries(),
 	}
 	ts.StateMu.RUnlock()
 	ts.broadcastJSON(msg)

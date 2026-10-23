@@ -52,37 +52,52 @@ func (ts *TerminalServer) hasBackgroundImage(name string, t Theme) bool {
 	return t.HasBackgroundImage()
 }
 
-// allThemeNames returns the names of every built-in, installed, and user
-// theme, sorted — the themes the theme picker offers. Callers must hold
-// ts.StateMu.
-func (ts *TerminalServer) allThemeNames() []string {
-	names := GetBuiltinThemeNames()
-	for name := range ts.InstalledThemes {
-		if !IsBuiltinThemeName(name) {
-			names = append(names, name)
-		}
-	}
-	for name := range ts.Themes {
-		if _, source, _ := ts.resolveTheme(name); source == ThemeSourceUser {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	return names
+// ThemeEntry describes one theme for the browser: its name and source,
+// whether it is in the Themes menu, and, for an installed theme, what its
+// package says about it. Author, ThemeVersion, and Repo are set only for
+// installed themes; Repo was validated as an https URL when the package was
+// read, so the client can render it as a link.
+type ThemeEntry struct {
+	Name         string      `json:"name"`
+	Source       ThemeSource `json:"source"`
+	InMenu       bool        `json:"inMenu"`
+	Author       string      `json:"author,omitempty"`
+	ThemeVersion string      `json:"themeVersion,omitempty"`
+	Repo         string      `json:"repo,omitempty"`
+	// Modified is true for an installed theme whose package changed since it
+	// was installed.
+	Modified bool `json:"modified,omitempty"`
 }
 
-// readOnlyThemeNames returns the names of the built-in and installed themes,
-// sorted: the themes that can't be edited or exported. Callers must hold
-// ts.StateMu.
-func (ts *TerminalServer) readOnlyThemeNames() []string {
+// themeEntries returns an entry for every theme of every source, sorted by
+// name — the list the theme picker and editor group by source. A name that a
+// higher-precedence source shadows appears once, as resolveTheme resolves it.
+// Callers must hold ts.StateMu.
+func (ts *TerminalServer) themeEntries() []ThemeEntry {
 	names := GetBuiltinThemeNames()
 	for name := range ts.InstalledThemes {
-		if !IsBuiltinThemeName(name) {
-			names = append(names, name)
-		}
+		names = append(names, name)
+	}
+	for name := range ts.Themes {
+		names = append(names, name)
 	}
 	sort.Strings(names)
-	return names
+	names = slices.Compact(names)
+
+	entries := make([]ThemeEntry, 0, len(names))
+	for _, name := range names {
+		_, source, _ := ts.resolveTheme(name)
+		entry := ThemeEntry{Name: name, Source: source, InMenu: slices.Contains(ts.AvailableThemes, name)}
+		if source == ThemeSourceInstalled {
+			it := ts.InstalledThemes[name]
+			entry.Author = it.Manifest.Author
+			entry.ThemeVersion = it.Manifest.ThemeVersion
+			entry.Repo = it.Manifest.Repo
+			entry.Modified = it.Modified
+		}
+		entries = append(entries, entry)
+	}
+	return entries
 }
 
 // menuThemeNames returns a copy of the Themes menu (ts.AvailableThemes), in

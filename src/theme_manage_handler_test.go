@@ -89,6 +89,27 @@ func nextBroadcast(t *testing.T, ch <-chan map[string]any, typ string) map[strin
 	}
 }
 
+// broadcastThemeNames returns the names in a "themes" broadcast's themes list.
+func broadcastThemeNames(msg map[string]any) []string {
+	var names []string
+	list, _ := msg["themes"].([]any)
+	for _, e := range list {
+		if entry, ok := e.(map[string]any); ok {
+			names = append(names, entry["name"].(string))
+		}
+	}
+	return names
+}
+
+// entryNames returns the names of entries, in order.
+func entryNames(entries []ThemeEntry) []string {
+	names := make([]string, len(entries))
+	for i, e := range entries {
+		names[i] = e.Name
+	}
+	return names
+}
+
 // postJSON calls handler with a POST of body and returns the response.
 func postJSON(handler http.HandlerFunc, path, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
@@ -128,8 +149,9 @@ func TestImportThemeHandler(t *testing.T) {
 		assert.Contains(t, ts.InstalledThemes, "midnight")
 		assert.Equal(t, "", ts.ActiveTheme)
 		msg := nextBroadcast(t, messages, "themes")
-		assert.Contains(t, msg["allThemeNames"], "midnight")
-		assert.Contains(t, msg["builtinThemeNames"], "midnight")
+		assert.Contains(t, broadcastThemeNames(msg), "midnight")
+		assert.Equal(t, []string{"dracula"}, resp.ThemeNames)
+		assert.Contains(t, entryNames(resp.Themes), "midnight")
 	})
 
 	t.Run("asks before upgrading, then applies the new version to the active theme", func(t *testing.T) {
@@ -205,6 +227,7 @@ func TestCopyThemeHandler(t *testing.T) {
 		var resp themeConfigResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.Equal(t, []string{"dracula", "my midnight"}, resp.ThemeNames)
+		assert.Contains(t, resp.Themes, ThemeEntry{Name: "my midnight", Source: ThemeSourceUser, InMenu: true})
 		assert.True(t, resp.HasBackgroundImage)
 
 		home, _ := os.UserHomeDir()
@@ -285,10 +308,11 @@ themes:
 		var resp themeNamesResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.Equal(t, []string{"one-light"}, resp.ThemeNames)
+		assert.NotContains(t, entryNames(resp.Themes), "mine")
 		assert.NotContains(t, ts.Themes, "mine")
 		assert.Equal(t, "one-light", ts.ActiveTheme)
 		assert.Equal(t, "one-light", nextBroadcast(t, messages, "theme")["name"])
-		assert.NotContains(t, nextBroadcast(t, messages, "themes")["allThemeNames"], "mine")
+		assert.NotContains(t, broadcastThemeNames(nextBroadcast(t, messages, "themes")), "mine")
 
 		out := readTestConfig(t)
 		assert.NotContains(t, out, "theme")
@@ -350,14 +374,20 @@ func TestReloadThemesHandler(t *testing.T) {
 
 		w := postJSON(ts.reloadThemesHandler, "/reload-themes", "")
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-		assert.Equal(t, `{"themeNames":["midnight"]}`, strings.TrimSpace(w.Body.String()))
+		var resp themeNamesResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, []string{"midnight"}, resp.ThemeNames)
+		assert.Contains(t, resp.Themes, ThemeEntry{
+			Name: "midnight", Source: ThemeSourceInstalled, InMenu: true,
+			Author: "Chris", ThemeVersion: "1.0", Repo: "https://github.com/example/themes",
+		})
 		assert.Contains(t, ts.InstalledThemes, "midnight")
 		assert.Equal(t, "midnight", ts.ActiveTheme)
 
 		msg := nextBroadcast(t, messages, "theme")
 		assert.Equal(t, "midnight", msg["name"])
 		assert.Equal(t, true, msg["theme"].(map[string]any)["hasBackgroundImage"])
-		assert.Contains(t, nextBroadcast(t, messages, "themes")["allThemeNames"], "midnight")
+		assert.Contains(t, broadcastThemeNames(nextBroadcast(t, messages, "themes")), "midnight")
 	})
 
 	t.Run("doesn't re-send an unchanged active theme", func(t *testing.T) {
@@ -453,6 +483,7 @@ func TestDisplayTermHandlerInstalledTheme(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	body := w.Body.String()
 	assert.Contains(t, body, `"backgroundImage":true`)
-	assert.Regexp(t, `"builtinThemeNames":\[[^\]]*"midnight"`, body)
-	assert.Regexp(t, `"allThemeNames":\[[^\]]*"midnight"`, body)
+	assert.Contains(t, body, `{"name":"midnight","source":"installed","inMenu":false}`)
+	assert.NotContains(t, body, "allThemeNames")
+	assert.NotContains(t, body, "builtinThemeNames")
 }

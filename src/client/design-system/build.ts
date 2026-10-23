@@ -29,6 +29,7 @@ const COMPONENTS = [
     "ThemeSelector",
     "ThemePicker",
     "ThemeEditor",
+    "ThemeImportDialog",
     "ProfileEditor",
     "SettingsEditor",
 ];

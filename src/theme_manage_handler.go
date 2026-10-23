@@ -11,9 +11,11 @@ import (
 )
 
 // themeNamesResponse is returned by the endpoints that change which themes
-// exist without returning one: themeNames is the updated Themes menu.
+// exist without returning one: themeNames is the updated Themes menu, and
+// themes every theme of every source (see themeEntries).
 type themeNamesResponse struct {
-	ThemeNames []string `json:"themeNames"`
+	ThemeNames []string     `json:"themeNames"`
+	Themes     []ThemeEntry `json:"themes"`
 }
 
 // importThemeResponse is returned by POST /import-theme.
@@ -21,6 +23,7 @@ type importThemeResponse struct {
 	Name       string              `json:"name"`
 	Theme      themeConfigResponse `json:"theme"`
 	ThemeNames []string            `json:"themeNames"`
+	Themes     []ThemeEntry        `json:"themes"`
 	// Upgraded is true when the package replaced an installed version of the
 	// theme, and Unchanged when that exact package was already installed.
 	Upgraded  bool `json:"upgraded"`
@@ -93,6 +96,7 @@ func (ts *TerminalServer) importThemeHandler(w http.ResponseWriter, r *http.Requ
 		ts.Theme = installed.Theme
 	}
 	themeNames := ts.menuThemeNames()
+	themes := ts.themeEntries()
 	ts.StateMu.Unlock()
 
 	if !result.Unchanged {
@@ -106,6 +110,7 @@ func (ts *TerminalServer) importThemeHandler(w http.ResponseWriter, r *http.Requ
 		Name:       name,
 		Theme:      themeResp,
 		ThemeNames: themeNames,
+		Themes:     themes,
 		Upgraded:   result.Upgraded,
 		Unchanged:  result.Unchanged,
 	}, "import-theme")
@@ -176,6 +181,7 @@ func (ts *TerminalServer) copyThemeHandler(w http.ResponseWriter, r *http.Reques
 	ts.Themes[req.NewName] = theme
 	ts.addMenuTheme(req.NewName)
 	themeNames := ts.menuThemeNames()
+	themes := ts.themeEntries()
 	ts.StateMu.Unlock()
 
 	ts.broadcastThemeLists()
@@ -184,6 +190,7 @@ func (ts *TerminalServer) copyThemeHandler(w http.ResponseWriter, r *http.Reques
 		Theme:              theme,
 		HasBackgroundImage: theme.HasBackgroundImage(),
 		ThemeNames:         themeNames,
+		Themes:             themes,
 	}, "copy-theme")
 }
 
@@ -246,6 +253,7 @@ func (ts *TerminalServer) deleteThemeHandler(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	themeNames := ts.menuThemeNames()
+	themes := ts.themeEntries()
 	ts.StateMu.Unlock()
 
 	if fellBack {
@@ -253,7 +261,7 @@ func (ts *TerminalServer) deleteThemeHandler(w http.ResponseWriter, r *http.Requ
 	}
 	ts.broadcastThemeLists()
 	Infof("deleted %s theme %q", source, req.Name)
-	writeJSON(w, themeNamesResponse{ThemeNames: themeNames}, "delete-theme")
+	writeJSON(w, themeNamesResponse{ThemeNames: themeNames, Themes: themes}, "delete-theme")
 }
 
 // reloadThemesHandler handles POST /reload-themes, which the b3tty theme CLI
@@ -302,6 +310,7 @@ func (ts *TerminalServer) reloadThemesHandler(w http.ResponseWriter, r *http.Req
 	activeName := ts.ActiveTheme
 	activeResp := themeConfigResponse{Theme: ts.Theme, HasBackgroundImage: ts.hasBackgroundImage(ts.ActiveTheme, ts.Theme)}
 	themeNames := ts.menuThemeNames()
+	themes := ts.themeEntries()
 	ts.StateMu.Unlock()
 
 	if changed {
@@ -309,7 +318,7 @@ func (ts *TerminalServer) reloadThemesHandler(w http.ResponseWriter, r *http.Req
 	}
 	ts.broadcastThemeLists()
 	Debugf("reloaded themes")
-	writeJSON(w, themeNamesResponse{ThemeNames: themeNames}, "reload-themes")
+	writeJSON(w, themeNamesResponse{ThemeNames: themeNames, Themes: themes}, "reload-themes")
 }
 
 // sameThemeDefinition reports whether a and b look the same, ignoring the

@@ -439,13 +439,13 @@ func TestBuildConfigJSON(t *testing.T) {
 	thm := &Theme{Foreground: "#ffffff", Background: "#000000"}
 
 	t.Run("returns valid JSON", func(t *testing.T) {
-		data, err := buildConfigJSON(srv, clnt, thm, thm.HasBackgroundImage(), nil, nil, nil, nil, "", "")
+		data, err := buildConfigJSON(srv, clnt, thm, thm.HasBackgroundImage(), nil, nil, nil, "", "")
 		require.NoError(t, err)
 		assert.True(t, json.Valid(data))
 	})
 
 	t.Run("JSON contains expected scalar fields", func(t *testing.T) {
-		data, err := buildConfigJSON(srv, clnt, thm, thm.HasBackgroundImage(), nil, nil, nil, nil, "", "")
+		data, err := buildConfigJSON(srv, clnt, thm, thm.HasBackgroundImage(), nil, nil, nil, "", "")
 		require.NoError(t, err)
 
 		var result map[string]any
@@ -461,7 +461,7 @@ func TestBuildConfigJSON(t *testing.T) {
 	})
 
 	t.Run("JSON embeds theme colours", func(t *testing.T) {
-		data, err := buildConfigJSON(srv, clnt, thm, thm.HasBackgroundImage(), nil, nil, nil, nil, "", "")
+		data, err := buildConfigJSON(srv, clnt, thm, thm.HasBackgroundImage(), nil, nil, nil, "", "")
 		require.NoError(t, err)
 
 		var result map[string]any
@@ -475,7 +475,7 @@ func TestBuildConfigJSON(t *testing.T) {
 
 	t.Run("TLS enabled is reflected in JSON", func(t *testing.T) {
 		tlsSrv := &Server{URL: url.URL{Scheme: "https", Host: "example.com:8443"}, TLS: TLS{Enabled: true}}
-		data, err := buildConfigJSON(tlsSrv, clnt, thm, thm.HasBackgroundImage(), nil, nil, nil, nil, "", "")
+		data, err := buildConfigJSON(tlsSrv, clnt, thm, thm.HasBackgroundImage(), nil, nil, nil, "", "")
 		require.NoError(t, err)
 
 		var result map[string]any
@@ -485,13 +485,13 @@ func TestBuildConfigJSON(t *testing.T) {
 
 	t.Run("empty theme produces valid JSON", func(t *testing.T) {
 		emptyTheme := &Theme{}
-		data, err := buildConfigJSON(srv, clnt, emptyTheme, emptyTheme.HasBackgroundImage(), nil, nil, nil, nil, "", "")
+		data, err := buildConfigJSON(srv, clnt, emptyTheme, emptyTheme.HasBackgroundImage(), nil, nil, nil, "", "")
 		require.NoError(t, err)
 		assert.True(t, json.Valid(data))
 	})
 
 	t.Run("showMenubar is reflected in JSON", func(t *testing.T) {
-		data, err := buildConfigJSON(srv, clnt, thm, thm.HasBackgroundImage(), nil, nil, nil, nil, "", "visible")
+		data, err := buildConfigJSON(srv, clnt, thm, thm.HasBackgroundImage(), nil, nil, nil, "", "visible")
 		require.NoError(t, err)
 
 		var result map[string]any
@@ -2225,6 +2225,8 @@ func TestAddThemeHandler(t *testing.T) {
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.Equal(t, builtinThemes["dracula"].Foreground, resp.Foreground)
 		assert.Equal(t, []string{"mine", "dracula"}, resp.ThemeNames)
+		assert.Contains(t, resp.Themes, ThemeEntry{Name: "dracula", Source: ThemeSourceBuiltin, InMenu: true})
+		assert.Contains(t, resp.Themes, ThemeEntry{Name: "mine", Source: ThemeSourceUser, InMenu: true})
 
 		assert.Equal(t, "dracula", ts.ActiveTheme)
 		assert.Equal(t, builtinThemes["dracula"], ts.Theme)
