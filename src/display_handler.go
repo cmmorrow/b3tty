@@ -83,8 +83,8 @@ func resolveProfileName(q url.Values, profiles map[string]Profile) string {
 // /background serves an image for the active theme, which for an installed theme isn't
 // something thm's BackgroundImage path can tell. The returned bytes are ready to embed
 // in the HTML template.
-func buildConfigJSON(srv *Server, clnt *TerminalClient, thm *Theme, hasBackgroundImage bool, themeNames []string, allThemeNames []string, builtinThemeNames []string, profileNames []string, activeTheme string, showMenubar string) ([]byte, error) {
-	cfg := NewTermConfig(srv, clnt, thm, themeNames, allThemeNames, builtinThemeNames, profileNames, activeTheme, showMenubar)
+func buildConfigJSON(srv *Server, clnt *TerminalClient, thm *Theme, hasBackgroundImage bool, themeNames []string, themes []ThemeEntry, profileNames []string, activeTheme string, showMenubar string) ([]byte, error) {
+	cfg := NewTermConfig(srv, clnt, thm, themeNames, themes, profileNames, activeTheme, showMenubar)
 	cfg.HasBackgroundImage = hasBackgroundImage
 	return json.Marshal(cfg)
 }
@@ -208,13 +208,10 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 	profileName := ts.ProfileName
 	profile := ts.Profiles[profileName]
 
-	// themeNames is the Themes menu, in menu order; allThemeNames is every
-	// theme of any source, for the in-page theme picker; builtinNames is
-	// every theme that can't be edited or exported — the built-in and
-	// installed ones.
+	// themeNames is the Themes menu, in menu order; themes describes every
+	// theme of every source, for the theme picker and editor.
 	themeNames := ts.menuThemeNames()
-	allThemeNames := ts.allThemeNames()
-	builtinNames := ts.readOnlyThemeNames()
+	themes := ts.themeEntries()
 
 	profileNames := make([]string, 0, len(ts.Profiles))
 	for name := range ts.Profiles {
@@ -230,10 +227,9 @@ func (ts *TerminalServer) displayTermHandler(w http.ResponseWriter, r *http.Requ
 
 	Debugf("resolved profile name: %s", profileName)
 	Debugf("Theme names: %s", strings.Join(themeNames, ", "))
-	Debugf("All theme names: %s", strings.Join(allThemeNames, ", "))
 	Debugf("Profile names: %s", strings.Join(profileNames, ", "))
 
-	cfgJSON, err := buildConfigJSON(ts.Server, &clientCopy, &thm, hasImage, themeNames, allThemeNames, builtinNames, profileNames, activeTheme, ts.ShowMenubar)
+	cfgJSON, err := buildConfigJSON(ts.Server, &clientCopy, &thm, hasImage, themeNames, themes, profileNames, activeTheme, ts.ShowMenubar)
 	if err != nil {
 		Errorf("config serialization error: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)

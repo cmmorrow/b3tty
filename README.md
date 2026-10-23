@@ -272,6 +272,7 @@ Press **Ctrl+Shift+;** in the terminal to open the command palette, a keyboard-d
 Each command's label starts with its kind, so commands that open a dialog are easy to tell apart from ones that act right away:
 - `select:theme`, `edit:theme`, `edit:profile`, `b3tty:settings`, and `b3tty:about` open the same dialogs as the menu bar
 - `export:theme` exports the active theme as a `.b3theme` package (see [Sharing themes](#sharing-themes)), and `import:theme` opens the theme import dialog
+- `copy:theme` and `delete:theme` open the Theme Editor on the active theme and go straight to its **Copy…** or **Delete…** (see [Theme Editor](#theme-editor))
 - `theme:<name>` (for example `theme:solarized-dark`), one per theme in the Themes menu, switches to that theme
 - `profile:<name>`, one per non-default profile, opens that profile in a new browser tab
 
@@ -289,7 +290,7 @@ Click **Select Theme…** at the top of the Themes menu in the menu bar. The ove
 
 ### Browsing themes
 
-The overlay displays a card for each available theme. Each card shows the theme name and a row of color swatches drawn from the theme's palette, so you can preview the color scheme before applying it.
+The overlay displays a card for each available theme, grouped as **Your themes**, **Installed**, and **Built-in** (a group with no themes is left out). Each card shows the theme name and a row of color swatches drawn from the theme's palette, so you can preview the color scheme before applying it. An installed theme's card also shows its author and version, its name links to the theme's repository, and a **Modified** badge appears when its package has changed since it was installed.
 
 Click a card to select it. The **OK** button becomes active once a card is selected.
 
@@ -320,6 +321,16 @@ b3tty ships with the following built-in themes, all available in the Theme Selec
 | Gruvbox Light | Light |
 
 Installed themes and user-defined themes from the `themes` section of the config file also appear in the Theme Selector alongside the built-in ones.
+
+## Theme Editor
+
+**Themes → Edit Theme…** (or `edit:theme` in the command palette) opens the Theme Editor. Its left panel starts with **Create new theme** and **Import theme…**, then lists every theme grouped as **Your themes**, **Installed**, and **Built-in**.
+
+- **Your themes** can be edited: select one, change its colors or background image, and click **OK** to save and apply it. Its **Export…** button saves it as a `.b3theme` package (see [Sharing themes](#sharing-themes)).
+- **Installed and built-in themes** are shown read-only, with every field disabled and a note saying to copy the theme to make your own.
+- **Copy…** at the bottom of the left panel copies the selected theme, of any kind, into a new theme of your own, asking for its name (`<name>-copy` by default). The copy is selected right away so you can edit it. An installed theme's background image is saved to `~/.config/b3tty/backgrounds/` for the copy.
+- **Delete…** asks for confirmation, then deletes one of your themes, uninstalls an installed one, or removes a built-in theme from the Themes menu (it stays in the Theme Selector). It's unavailable for a built-in theme that isn't in the menu. None of this can be undone. If you delete the active theme, b3tty switches to `default-theme`, or to no theme.
+- **Import theme…** installs a `.b3theme` package from a path on the server (see [Installing themes](#installing-themes)); the new theme is then selected under **Installed**.
 
 ## Sharing themes
 
@@ -364,14 +375,16 @@ assets/background.<ext>   (only when the theme has a background image)
 
 ## Installing themes
 
-A `.b3theme` package someone shared can be installed with the CLI:
+A `.b3theme` package someone shared can be installed from the Theme Editor's **Import theme…** (or `import:theme` in the command palette) by entering its path on the machine running b3tty, or with the CLI:
 
 ```bash
 b3tty theme import ~/Downloads/midnight.b3theme
 b3tty theme set midnight
 ```
 
-Installed themes appear in the Theme Selector and can be added to the Themes menu like any other theme, but they can't be edited or exported: an installed theme stays exactly as its author published it. To change one, copy it into a theme of your own, which you can then edit and export (it gets its own package ID, so it's never mistaken for the original):
+Either way the theme is installed but not applied; select it in the Theme Selector, or with `b3tty theme set`, to use it.
+
+Installed themes appear in the Theme Selector and can be added to the Themes menu like any other theme, but they can't be edited or exported: an installed theme stays exactly as its author published it. To change one, copy it into a theme of your own with the Theme Editor's **Copy…** or the CLI, then edit and export the copy (it gets its own package ID, so it's never mistaken for the original):
 
 ```bash
 b3tty theme copy midnight my-midnight
@@ -379,7 +392,7 @@ b3tty theme copy midnight my-midnight
 
 An installed theme's background image lives inside its package, so copying the theme saves the image to `~/.config/b3tty/backgrounds/` and points the copy at that file.
 
-When b3tty is running, `import`, `copy`, and `delete` update it right away; otherwise the change is picked up the next time it starts.
+When b3tty is running, the CLI's `import`, `copy`, and `delete` update it right away, including any open browser tabs; otherwise the change is picked up the next time it starts.
 
 ### Packages are checked before they're installed
 
@@ -387,11 +400,11 @@ A package is installed only if it is a valid `.b3theme` file of at most 20 MB (a
 
 ### Upgrades
 
-Importing a package with the same package ID as an installed theme replaces it with the new version, keeping its place in the Themes menu, and keeping it active if it was. Since anyone can copy a package ID, b3tty asks before replacing, and says so when the new version has a different author or repository than the installed one. Pass `--yes` to skip the question. An upgrade can't rename a theme: a package with an installed theme's ID but a different name is rejected. Importing the exact package that's already installed does nothing.
+Importing a package with the same package ID as an installed theme replaces it with the new version, keeping its place in the Themes menu, and keeping it active if it was. Since anyone can copy a package ID, b3tty asks before replacing, and says so when the new version has a different author or repository than the installed one: the import dialog shows the details and turns **Import** into **Replace**, and the CLI asks unless you pass `--yes`. An upgrade can't rename a theme: a package with an installed theme's ID but a different name is rejected. Importing the exact package that's already installed does nothing.
 
 ### Deleting
 
-`b3tty theme delete <name>` asks for confirmation (skip it with `--yes`), then:
+The Theme Editor's **Delete…** and `b3tty theme delete <name>` ask for confirmation (skip it in the CLI with `--yes`), then:
 - deletes one of your own themes from the config file,
 - uninstalls an installed theme, which can't be undone without the package file, or
 - removes a built-in theme from the Themes menu; it stays available in the Theme Selector.

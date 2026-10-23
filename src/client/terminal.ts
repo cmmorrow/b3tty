@@ -28,6 +28,7 @@ import type {
     MenuBarColors,
     ThemeExportRequest,
     ThemeImportRequest,
+    ThemeImportedDetail,
 } from "./components.ts";
 
 export const THEME_KEYS = [
@@ -231,15 +232,10 @@ export function handleSocketMessage(
                 } else if (
                     msg.type === "themes" &&
                     Array.isArray(msg.themeNames) &&
-                    Array.isArray(msg.allThemeNames) &&
-                    Array.isArray(msg.builtinThemeNames) &&
+                    Array.isArray(msg.themes) &&
                     onThemes
                 ) {
-                    onThemes({
-                        themeNames: msg.themeNames,
-                        allThemeNames: msg.allThemeNames,
-                        builtinThemeNames: msg.builtinThemeNames,
-                    });
+                    onThemes({ themeNames: msg.themeNames, themes: msg.themes });
                 }
             } catch {}
         }
@@ -402,10 +398,10 @@ export interface ActiveTheme {
 }
 
 /**
- * Applies theme name lists pushed by the server in a "themes" control message, sent
- * when a theme is imported, copied, or deleted, here or from the b3tty theme CLI:
- * updates config, which the command palette and theme dialogs read, and rebuilds the
- * menu bar's Themes menu when there is one.
+ * Applies theme lists pushed by the server in a "themes" control message, sent when a
+ * theme is imported, copied, or deleted, here or from the b3tty theme CLI, or returned
+ * by those requests: updates config, which the command palette and theme dialogs read,
+ * and rebuilds the menu bar's Themes menu when there is one.
  */
 export function applyThemeLists(
     lists: ThemeLists,
@@ -414,8 +410,7 @@ export function applyThemeLists(
     activeTheme: ActiveTheme
 ): void {
     config.themeNames = lists.themeNames;
-    config.allThemeNames = lists.allThemeNames;
-    config.builtinThemeNames = lists.builtinThemeNames;
+    config.themes = lists.themes;
     menuBar?.setup(
         config.themeNames,
         config.profileNames ?? [],
@@ -685,6 +680,7 @@ export function handleProfileChange(e: Event): void {
  * Refreshes the menu bar after a theme change that may have added a new theme to
  * the Themes menu. When the response includes an updated themeNames list, config
  * and the menu bar are rebuilt with it; otherwise only the menu bar colors are updated.
+ * An updated themes list (a newly created theme) is recorded in config either way.
  * config is updated even when menuBar is null (menu bar disabled), since the command
  * palette builds its theme list from it.
  */
@@ -694,6 +690,7 @@ function refreshMenuBarThemeNames(
     config: TermConfig,
     colors: MenuBarColors
 ): void {
+    if (newTheme.themes) config.themes = newTheme.themes;
     if (newTheme.themeNames) {
         config.themeNames = newTheme.themeNames;
         menuBar?.setup(config.themeNames, config.profileNames ?? [], colors, menuBarMode(config));
@@ -758,9 +755,6 @@ export async function handleThemeEdited(
 
     const colors = applyResolvedTheme(name, newTheme, term, activeTheme);
 
-    if (newTheme.themeNames && !config.allThemeNames?.includes(name)) {
-        config.allThemeNames = [...(config.allThemeNames ?? []), name].sort();
-    }
     refreshMenuBarThemeNames(newTheme, menuBar, config, colors);
 }
 
@@ -820,6 +814,10 @@ export interface PaletteActions {
     openThemeEditor(): void;
     openThemeImport(): void;
     openThemeExport(): void;
+    /** Opens the theme editor on the active theme and starts Copy…. */
+    openThemeCopy(): void;
+    /** Opens the theme editor on the active theme and starts Delete…. */
+    openThemeDelete(): void;
     openProfileEditor(): void;
     openSettings(): void;
     openAbout(): void;
@@ -832,7 +830,7 @@ export interface PaletteActions {
  * open, so themes and profiles added since page load (which the theme/profile handlers
  * record in config) are always listed. Themes come from config.themeNames (the Themes
  * menu); profiles exclude "default", matching the Profiles menu. Labels are prefixed by
- * kind (select:/edit:/import:/export:/b3tty: for commands that open a dialog,
+ * kind (select:/edit:/import:/export:/copy:/delete:/b3tty: for commands that open a dialog,
  * theme:/profile: for ones that act directly) so the two are easy to tell apart.
  */
 export function buildPaletteCommands(
@@ -844,6 +842,8 @@ export function buildPaletteCommands(
         { id: "open:theme-editor", label: "edit:theme", group: "Themes", run: actions.openThemeEditor },
         { id: "open:theme-import", label: "import:theme", group: "Themes", run: actions.openThemeImport },
         { id: "open:theme-export", label: "export:theme", group: "Themes", run: actions.openThemeExport },
+        { id: "open:theme-copy", label: "copy:theme", group: "Themes", run: actions.openThemeCopy },
+        { id: "open:theme-delete", label: "delete:theme", group: "Themes", run: actions.openThemeDelete },
         { id: "open:profile-editor", label: "edit:profile", group: "Profiles", run: actions.openProfileEditor },
         { id: "open:settings", label: "b3tty:settings", group: "b3tty", run: actions.openSettings },
         { id: "open:about", label: "b3tty:about", group: "b3tty", run: actions.openAbout },
@@ -1042,15 +1042,16 @@ export async function main(config: TermConfig): Promise<void> {
     const exportDialog = getOverlay("theme-export-dialog", components.isB3ttyThemeExportDialog);
     const palette = getOverlay("command-palette", components.isB3ttyCommandPalette);
 
+    // The source of the active theme, which decides what can be done with it.
+    const activeSource = () => config.themes?.find((t) => t.name === activeTheme.current)?.source;
     const actions: PaletteActions = {
-        openThemePicker: () => picker?.open(config.allThemeNames ?? []),
-        openThemeEditor: () => editor?.open(config.allThemeNames ?? [], config.builtinThemeNames ?? []),
+        openThemePicker: () => picker?.open(config.themes ?? []),
+        openThemeEditor: () => editor?.open(config.themes ?? []),
         openThemeImport: () => importDialog?.open(),
         // From the palette there is no editor open, so the saved active theme is exported.
-        openThemeExport: () =>
-            exportDialog?.open(activeTheme.current, {
-                builtin: (config.builtinThemeNames ?? []).includes(activeTheme.current),
-            }),
+        openThemeExport: () => exportDialog?.open(activeTheme.current, { source: activeSource() }),
+        openThemeCopy: () => editor?.open(config.themes ?? [], { select: activeTheme.current, action: "copy" }),
+        openThemeDelete: () => editor?.open(config.themes ?? [], { select: activeTheme.current, action: "delete" }),
         openProfileEditor: () => profileEditor?.open((config.profileNames ?? []).filter((n) => n !== "default")),
         openSettings: () => {
             void getSettings().then((settings) => {
@@ -1087,6 +1088,11 @@ export async function main(config: TermConfig): Promise<void> {
             { signal }
         );
         editor.addEventListener(
+            "b3tty-themes-changed",
+            (e) => applyThemeLists((e as CustomEvent<ThemeLists>).detail, menuBar, config, activeTheme),
+            { signal }
+        );
+        editor.addEventListener(
             "b3tty-open-theme-export",
             (e) => {
                 const { name, unsavedChanges, opener } = (e as CustomEvent<ThemeExportRequest>).detail;
@@ -1095,6 +1101,18 @@ export async function main(config: TermConfig): Promise<void> {
             { signal }
         );
     }
+    // After an import the theme editor shows the new theme: refreshed in place when the
+    // import was started from it, opened on it otherwise (from the command palette).
+    importDialog?.addEventListener(
+        "b3tty-theme-imported",
+        (e) => {
+            const { response, opener } = (e as CustomEvent<ThemeImportedDetail>).detail;
+            applyThemeLists(response, menuBar, config, activeTheme);
+            if (opener && editor?.hasAttribute("open")) void editor.refresh(response.themes, response.name);
+            else editor?.open(response.themes, { select: response.name });
+        },
+        { signal }
+    );
     if (profileEditor) {
         profileEditor.addEventListener("b3tty-profile-edited", (e) => handleProfileEdited(e, menuBar, config), {
             signal,

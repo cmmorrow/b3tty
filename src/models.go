@@ -240,14 +240,14 @@ type TermConfig struct {
 	Debug              bool     `json:"debug"`
 	HasBackgroundImage bool     `json:"backgroundImage"`
 	ThemeNames         []string `json:"themeNames"`
-	AllThemeNames      []string `json:"allThemeNames"`
-	BuiltinThemeNames  []string `json:"builtinThemeNames"`
-	ProfileNames       []string `json:"profileNames"`
-	ActiveTheme        string   `json:"activeTheme"`
-	ShowMenubar        string   `json:"showMenubar"`
+	// Themes is every theme of every source (see themeEntries).
+	Themes       []ThemeEntry `json:"themes"`
+	ProfileNames []string     `json:"profileNames"`
+	ActiveTheme  string       `json:"activeTheme"`
+	ShowMenubar  string       `json:"showMenubar"`
 }
 
-func NewTermConfig(srv *Server, clnt *TerminalClient, thm *Theme, themeNames []string, allThemeNames []string, builtinThemeNames []string, profileNames []string, activeTheme string, showMenubar string) *TermConfig {
+func NewTermConfig(srv *Server, clnt *TerminalClient, thm *Theme, themeNames []string, themes []ThemeEntry, profileNames []string, activeTheme string, showMenubar string) *TermConfig {
 	return &TermConfig{
 		TLS:                srv.TLS.Enabled,
 		FontFamily:         clnt.FontFamily,
@@ -261,8 +261,7 @@ func NewTermConfig(srv *Server, clnt *TerminalClient, thm *Theme, themeNames []s
 		Debug:              debugEnabled.Load(),
 		HasBackgroundImage: thm.HasBackgroundImage(),
 		ThemeNames:         themeNames,
-		AllThemeNames:      allThemeNames,
-		BuiltinThemeNames:  builtinThemeNames,
+		Themes:             themes,
 		ProfileNames:       profileNames,
 		ActiveTheme:        activeTheme,
 		ShowMenubar:        showMenubar,
@@ -287,6 +286,9 @@ type themeConfigResponse struct {
 	Theme
 	HasBackgroundImage bool     `json:"hasBackgroundImage"`
 	ThemeNames         []string `json:"themeNames,omitempty"`
+	// Themes accompanies ThemeNames: every theme of every source, after the
+	// change (see themeEntries).
+	Themes []ThemeEntry `json:"themes,omitempty"`
 }
 
 // editProfileResponse is returned by POST /edit-profile and POST /delete-profile.

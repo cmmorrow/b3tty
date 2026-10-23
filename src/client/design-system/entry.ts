@@ -1,12 +1,12 @@
 /**
  * Entry point of the design system bundle (see build.ts). Importing
- * ../components.ts defines all ten b3tty-* custom elements; this module then
+ * ../components.ts defines all twelve b3tty-* custom elements; this module then
  * assigns window.B3tty with the helpers and fixture data the previews use.
  */
 import "../components.ts";
 import * as styles from "../design.ts";
 import THEMES from "b3tty:builtin-themes";
-import { PROFILE_NAMES, SAMPLE_SETTINGS, USER_THEMES, paletteOf } from "./mock-api.ts";
+import { PROFILE_NAMES, SAMPLE_SETTINGS, USER_THEMES, paletteOf, themeEntries } from "./mock-api.ts";
 
 // Every custom property DESIGN_TOKENS declares, in source order.
 const TOKEN_NAMES = [...styles.DESIGN_TOKENS.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1] ?? "");
@@ -48,6 +48,9 @@ function mountStyled(host: HTMLElement, fragments: string[], html: string, css =
     mountStyled,
     themes: THEMES,
     userThemeNames: Object.keys(USER_THEMES),
+    // Every theme of every source, as the page config's `themes`: open the picker or
+    // editor with it, e.g. picker.open(B3tty.themeEntries()).
+    themeEntries,
     profileNames: PROFILE_NAMES,
     sampleSettings: SAMPLE_SETTINGS,
     paletteOf,

@@ -9,8 +9,22 @@ import {
     postEditProfile,
     postDeleteProfile,
     postSettings,
+    postImportTheme,
+    postCopyTheme,
+    postDeleteTheme,
+    ThemeUpgradeRequiredError,
 } from "./api.ts";
-import type { Palette, PaletteCommand, ProfileConfig, SettingsConfig, ThemeMetadata } from "./types.ts";
+import type {
+    ImportThemeResponse,
+    Palette,
+    PaletteCommand,
+    ProfileConfig,
+    SettingsConfig,
+    ThemeEntry,
+    ThemeLists,
+    ThemeMetadata,
+    ThemeSource,
+} from "./types.ts";
 import { searchCommands, splitLabel, type CommandMatch } from "./command-search.ts";
 import { DEFAULT_BACKGROUND_IMAGE_TRANSPARENCY } from "./types.ts";
 import { isValidBackgroundImageTransparency, isValidRepoUrl, isValidThemeColor } from "./validators.ts";
@@ -69,16 +83,41 @@ export interface B3ttyMenuBar {
  * Interface for the b3tty-theme-picker web component.
  */
 export interface B3ttyThemePicker {
-    open(themeNames: string[]): void;
+    open(themes: ThemeEntry[]): void;
     close(): void;
 }
 
 /**
- * Interface for the b3tty-theme-editor web component.
+ * Options for B3ttyThemeEditor.open(): `select` names a theme to select once the list
+ * has loaded, and `action` then starts that theme's Copy… or Delete… right away (the
+ * command palette's copy:theme and delete:theme).
+ */
+export interface ThemeEditorOpenOptions {
+    select?: string;
+    action?: "copy" | "delete";
+}
+
+/**
+ * Interface for the b3tty-theme-editor web component. refresh() rebuilds the theme
+ * list of an open editor, e.g. after an import, and selects `select` when given.
+ * After a copy or delete it dispatches b3tty-themes-changed (bubbles + composed) with
+ * the updated ThemeLists.
  */
 export interface B3ttyThemeEditor {
-    open(themeNames: string[], builtinThemeNames?: string[]): void;
+    open(themes: ThemeEntry[], options?: ThemeEditorOpenOptions): void;
+    refresh(themes: ThemeEntry[], select?: string): Promise<void>;
     close(): void;
+}
+
+/**
+ * Optional extras on a palette card, used for installed themes: `subtitle` is a muted
+ * line under the name, `href` makes the name a link (only an https URL, opened in a new
+ * tab, and clicking it doesn't select the card), and `badge` is a small pill after it.
+ */
+export interface PaletteCardDetails {
+    subtitle?: string;
+    href?: string;
+    badge?: string;
 }
 
 /**
@@ -101,7 +140,7 @@ export interface B3ttyThemeEditor {
  *   --palette-card-terminal-min-width (default: 196px)
  */
 export interface B3ttyPaletteCard {
-    setup(value: string, label: string, palette: Palette): void;
+    setup(value: string, label: string, palette: Palette, details?: PaletteCardDetails): void;
     readonly selected: boolean;
     readonly value: string;
 }
@@ -204,9 +243,20 @@ export interface ThemeExportRequest {
 }
 
 /**
+ * Detail of the b3tty-theme-imported event the import dialog dispatches (bubbles +
+ * composed) after a successful import: the server's response, and the element the
+ * dialog was opened from (the theme editor's Import card), or null.
+ */
+export interface ThemeImportedDetail {
+    response: ImportThemeResponse;
+    opener: HTMLElement | null;
+}
+
+/**
  * Interface for the b3tty-theme-import-dialog web component. `opener` is the
  * element to return focus to on close; without one, closing dispatches
- * b3tty-overlay-close like the other overlays.
+ * b3tty-overlay-close like the other overlays. A new version of an installed theme
+ * shows the server's description of the upgrade and turns Import into Replace.
  */
 export interface B3ttyThemeImportDialog {
     open(opener?: HTMLElement | null): void;
@@ -222,18 +272,20 @@ export function isB3ttyThemeImportDialog(el: Element): el is HTMLElement & B3tty
 
 /**
  * Options for B3ttyThemeExportDialog.open(). `unsavedChanges` shows a note that the
- * saved version is what gets exported; `builtin` marks themeName as a built-in theme,
- * which can't be exported; `opener` is as for the import dialog.
+ * saved version is what gets exported; `source` is themeName's source (default
+ * "user"), since only user themes can be exported; `opener` is as for the import
+ * dialog.
  */
 export interface ThemeExportOptions {
     unsavedChanges?: boolean;
-    builtin?: boolean;
+    source?: ThemeSource;
     opener?: HTMLElement | null;
 }
 
 /**
  * Interface for the b3tty-theme-export-dialog web component. An empty themeName
- * (no active theme) or a built-in one shows a message and leaves Export disabled.
+ * (no active theme) or a built-in or installed one shows a message and leaves Export
+ * disabled.
  */
 export interface B3ttyThemeExportDialog {
     open(themeName: string, options?: ThemeExportOptions): void;
@@ -277,25 +329,63 @@ function formatThemeName(name: string): string {
         .join(" ");
 }
 
-function fetchPaletteCards(
-    themeNames: string[]
-): Promise<Array<{ card: HTMLElement; name: string; palette: Palette }>> {
+/**
+ * The palette card extras for a theme: an installed theme shows its author and
+ * version, links its name to its repository, and is badged when its package was
+ * modified. Other themes have none.
+ */
+function cardDetails(entry: ThemeEntry): PaletteCardDetails | undefined {
+    if (entry.source !== "installed") return undefined;
+    const subtitle = [entry.author ? `by ${entry.author}` : "", entry.themeVersion ? `v${entry.themeVersion}` : ""]
+        .filter(Boolean)
+        .join(" · ");
+    return {
+        subtitle: subtitle || undefined,
+        href: entry.repo && isValidRepoUrl(entry.repo) ? entry.repo : undefined,
+        badge: entry.modified ? "Modified" : undefined,
+    };
+}
+
+/** The theme list sections, in display order. */
+const THEME_SECTIONS: Array<{ source: ThemeSource; title: string }> = [
+    { source: "user", title: "Your themes" },
+    { source: "installed", title: "Installed" },
+    { source: "builtin", title: "Built-in" },
+];
+
+/** A loaded palette card for one theme. */
+interface PaletteCardEntry {
+    card: HTMLElement;
+    entry: ThemeEntry;
+    palette: Palette;
+}
+
+/**
+ * Fetches every theme's palette in parallel and builds its card, keeping the order of
+ * `themes`. A theme whose palette can't be fetched is left out.
+ */
+function fetchPaletteCards(themes: ThemeEntry[]): Promise<PaletteCardEntry[]> {
     return Promise.all(
-        themeNames.map((name) =>
-            getThemePalette(name)
-                .then((p) => ({ name, palette: p as Palette | null }))
-                .catch(() => ({ name, palette: null as Palette | null }))
+        themes.map((entry) =>
+            getThemePalette(entry.name)
+                .then((p) => ({ entry, palette: p as Palette | null }))
+                .catch(() => ({ entry, palette: null as Palette | null }))
         )
     ).then((results) => {
-        const entries: Array<{ card: HTMLElement; name: string; palette: Palette }> = [];
-        for (const { name, palette } of results) {
+        const cards: PaletteCardEntry[] = [];
+        for (const { entry, palette } of results) {
             if (palette) {
                 const card = document.createElement("b3tty-palette-card");
-                (card as unknown as B3ttyPaletteCard).setup(name, formatThemeName(name), palette);
-                entries.push({ card, name, palette });
+                (card as unknown as B3ttyPaletteCard).setup(
+                    entry.name,
+                    formatThemeName(entry.name),
+                    palette,
+                    cardDetails(entry)
+                );
+                cards.push({ card, entry, palette });
             }
         }
-        return entries;
+        return cards;
     });
 }
 
@@ -360,6 +450,7 @@ if (typeof HTMLElement !== "undefined") {
             style.textContent = `
                 ${DESIGN_TOKENS}
                 ${BASE_STYLES}
+                ${TEXT_STYLES}
                 :host {
                     display: flex;
                     flex-direction: column;
@@ -375,6 +466,16 @@ if (typeof HTMLElement !== "undefined") {
                     box-sizing: border-box;
                 }
                 :host([selected]) { border-color: var(--color-accent); }
+                .card-name { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+                .card-name > :first-child, .card-subtitle {
+                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                }
+                .card-name a { color: inherit; text-decoration: none; }
+                .card-name a:hover, .card-name a:focus-visible { text-decoration: underline; }
+                .card-subtitle {
+                    font-size: var(--font-size-xs); font-weight: var(--font-weight-regular);
+                    color: var(--color-text-subtle);
+                }
                 .card-header {
                     display: flex; align-items: center; gap: var(--space-xs);
                     padding: var(--palette-card-header-padding, 0);
@@ -416,7 +517,7 @@ if (typeof HTMLElement !== "undefined") {
             });
         }
 
-        setup(value: string, label: string, palette: Palette): void {
+        setup(value: string, label: string, palette: Palette, details?: PaletteCardDetails): void {
             this.#value = value;
 
             const style = this.#shadow.querySelector("style")!;
@@ -433,10 +534,37 @@ if (typeof HTMLElement !== "undefined") {
             radio.value = value;
             radio.checked = this.hasAttribute("selected");
             this.#radio = radio;
-            const labelSpan = document.createElement("span");
-            labelSpan.textContent = label;
+            const nameBlock = document.createElement("div");
+            nameBlock.className = "card-name";
+            let nameEl: HTMLElement;
+            if (details?.href && isValidRepoUrl(details.href)) {
+                const link = document.createElement("a");
+                link.href = details.href;
+                link.target = "_blank";
+                link.rel = "noopener noreferrer";
+                link.title = details.href;
+                // Following the link shouldn't also select the card.
+                link.addEventListener("click", (e) => e.stopPropagation());
+                nameEl = link;
+            } else {
+                nameEl = document.createElement("span");
+            }
+            nameEl.textContent = label;
+            nameBlock.appendChild(nameEl);
+            if (details?.subtitle) {
+                const subtitle = document.createElement("span");
+                subtitle.className = "card-subtitle";
+                subtitle.textContent = details.subtitle;
+                nameBlock.appendChild(subtitle);
+            }
             header.appendChild(radio);
-            header.appendChild(labelSpan);
+            header.appendChild(nameBlock);
+            if (details?.badge) {
+                const badge = document.createElement("span");
+                badge.className = "badge";
+                badge.textContent = details.badge;
+                header.appendChild(badge);
+            }
 
             const terminal = document.createElement("div");
             terminal.className = "terminal";
@@ -1026,8 +1154,10 @@ if (typeof HTMLElement !== "undefined") {
 
     class B3ttyThemePickerImpl extends HTMLElement implements B3ttyThemePicker {
         #shadow: ShadowRoot;
-        #cards: HTMLDivElement;
+        #sections: HTMLDivElement;
         #okBtn: HTMLButtonElement;
+        /** Bumped on every open, so palettes fetched for an earlier open are ignored. */
+        #openId = 0;
 
         constructor() {
             super();
@@ -1045,17 +1175,22 @@ if (typeof HTMLElement !== "undefined") {
                     max-height: 85vh; max-width: 1000px; width: 100%;
                     overflow: hidden;
                 }
+                .sections {
+                    display: flex; flex-direction: column; gap: var(--space-xl);
+                    overflow-y: auto; flex: 1; min-height: 0;
+                    padding: var(--space-2xs) var(--space-3xs);
+                }
+                .section { display: flex; flex-direction: column; gap: var(--space-sm); }
+                .section > .section-title { margin: 0; }
                 .cards {
                     display: grid;
                     grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
                     gap: var(--space-lg);
-                    overflow-y: auto; flex: 1; min-height: 0;
-                    padding: var(--space-2xs) var(--space-3xs);
                 }
                 ${PALETTE_CARD_VARS}
                 .loading {
                     font-size: var(--font-size-md); color: var(--color-text-subtle);
-                    text-align: center; padding: var(--space-2xl); grid-column: 1 / -1;
+                    text-align: center; padding: var(--space-2xl);
                 }
                 ${BUTTON_STYLES}
             `;
@@ -1071,12 +1206,8 @@ if (typeof HTMLElement !== "undefined") {
             title.className = "modal-title";
             title.textContent = "Select a Theme";
 
-            this.#cards = document.createElement("div");
-            this.#cards.className = "cards";
-            const loading = document.createElement("div");
-            loading.className = "loading";
-            loading.textContent = "Loading themes\u2026";
-            this.#cards.appendChild(loading);
+            this.#sections = document.createElement("div");
+            this.#sections.className = "sections";
 
             const actions = document.createElement("div");
             actions.className = "actions";
@@ -1091,16 +1222,16 @@ if (typeof HTMLElement !== "undefined") {
             actions.appendChild(this.#okBtn);
 
             modal.appendChild(title);
-            modal.appendChild(this.#cards);
+            modal.appendChild(this.#sections);
             modal.appendChild(actions);
             overlay.appendChild(modal);
             this.#shadow.appendChild(style);
             this.#shadow.appendChild(overlay);
 
             // b3tty-card-select is composed, so it crosses the palette card's
-            // shadow boundary and bubbles up to this listener on #cards.
-            this.#cards.addEventListener("b3tty-card-select", (e: Event) => {
-                for (const card of Array.from(this.#cards.querySelectorAll("b3tty-palette-card"))) {
+            // shadow boundary and bubbles up to this listener on #sections.
+            this.#sections.addEventListener("b3tty-card-select", (e: Event) => {
+                for (const card of Array.from(this.#sections.querySelectorAll("b3tty-palette-card"))) {
                     if (card !== e.target) card.removeAttribute("selected");
                 }
                 this.#okBtn.disabled = false;
@@ -1108,7 +1239,7 @@ if (typeof HTMLElement !== "undefined") {
 
             cancelBtn.addEventListener("click", () => this.close());
             this.#okBtn.addEventListener("click", () => {
-                const selected = this.#cards.querySelector<HTMLElement>("b3tty-palette-card[selected]");
+                const selected = this.#sections.querySelector<HTMLElement>("b3tty-palette-card[selected]");
                 if (!selected) return;
                 this.dispatchEvent(
                     new CustomEvent("b3tty-theme-selected", {
@@ -1120,18 +1251,33 @@ if (typeof HTMLElement !== "undefined") {
             });
         }
 
-        open(themeNames: string[]): void {
+        /** Shows every theme, grouped into Your themes, Installed, and Built-in. */
+        open(themes: ThemeEntry[]): void {
+            const openId = ++this.#openId;
             this.#okBtn.disabled = true;
-            this.#cards.innerHTML = "";
             const loading = document.createElement("div");
             loading.className = "loading";
             loading.textContent = "Loading themes\u2026";
-            this.#cards.appendChild(loading);
+            this.#sections.replaceChildren(loading);
             this.setAttribute("open", "");
 
-            fetchPaletteCards(themeNames).then((entries) => {
-                this.#cards.innerHTML = "";
-                for (const { card } of entries) this.#cards.appendChild(card);
+            void fetchPaletteCards(themes).then((cards) => {
+                if (openId !== this.#openId) return;
+                this.#sections.replaceChildren();
+                for (const { source, title } of THEME_SECTIONS) {
+                    const inSection = cards.filter((c) => c.entry.source === source);
+                    if (inSection.length === 0) continue;
+                    const section = document.createElement("section");
+                    section.className = "section";
+                    const heading = document.createElement("h3");
+                    heading.className = "section-title";
+                    heading.textContent = title;
+                    const grid = document.createElement("div");
+                    grid.className = "cards";
+                    for (const { card } of inSection) grid.appendChild(card);
+                    section.append(heading, grid);
+                    this.#sections.appendChild(section);
+                }
             });
         }
 
@@ -1143,11 +1289,195 @@ if (typeof HTMLElement !== "undefined") {
 
     customElements.define("b3tty-theme-picker", B3ttyThemePickerImpl);
 
+    /** Options for PromptLayer.ask(). */
+    interface PromptOptions {
+        title: string;
+        message: Array<string | Node>;
+        /** A text field to ask for a value; validate returns why a value is unusable, or null. */
+        input?: { label: string; value: string; validate(value: string): string | null };
+        actionLabel: string;
+        /** Styles the action button as destructive (.delete-btn). */
+        destructive?: boolean;
+        /** Runs the action with the field's value; a thrown error is shown and the prompt stays open. */
+        submit(value: string): Promise<void>;
+        /** Where focus returns when the prompt closes. */
+        opener: HTMLElement | null;
+    }
+
+    /** A small modal that asks for a value or a confirmation; see buildPromptLayer. */
+    interface PromptLayer {
+        /** Resolves true once submit succeeded, or false when the prompt was cancelled. */
+        ask(options: PromptOptions): Promise<boolean>;
+    }
+
+    /**
+     * Styles for buildPromptLayer. The host also needs OVERLAY_STYLES (.modal, .actions),
+     * TEXT_STYLES, FORM_INPUT_STYLES, BUTTON_STYLES, and SAVE_ERROR_STYLES.
+     */
+    const PROMPT_STYLES = `
+        .prompt-overlay {
+            position: fixed; inset: 0; z-index: var(--z-overlay-stacked);
+            display: none; align-items: center; justify-content: center;
+            background: var(--color-overlay);
+            padding: var(--space-2xl); box-sizing: border-box;
+        }
+        .prompt-overlay.open { display: flex; }
+        /* .modal.prompt outranks the host's own .modal rule (the theme editor's is a
+           fixed-height row), so the prompt sizes to its content like the import dialog. */
+        .modal.prompt {
+            width: min(460px, 100%); height: auto; overflow: visible; padding: var(--space-2xl);
+            display: flex; flex-direction: column; gap: var(--space-lg);
+        }
+        .prompt-message {
+            margin: 0; font-size: var(--font-size-md); line-height: var(--line-height-body);
+            overflow-wrap: anywhere;
+        }
+        .prompt-field { display: flex; flex-direction: column; gap: var(--space-2xs); }
+        .prompt-field[hidden] { display: none; }
+        .prompt .field-input { width: 100%; }
+        .prompt .delete-btn { margin-right: 0; }
+        .prompt .delete-btn:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
+    `;
+
+    /**
+     * Builds a prompt modal into a component's shadow root, stacked above the component's
+     * own overlay: a title, a message, an optional text field with an inline validation
+     * error, and an actions row of a .save-error, Cancel, and the action button. Enter in
+     * the field submits; Escape cancels. The theme editor uses it for Copy… and Delete….
+     */
+    function buildPromptLayer(root: ShadowRoot): PromptLayer {
+        const overlay = document.createElement("div");
+        overlay.className = "prompt-overlay";
+        const box = document.createElement("div");
+        box.className = "modal prompt";
+        box.setAttribute("role", "alertdialog");
+        box.setAttribute("aria-modal", "true");
+        const heading = document.createElement("h2");
+        heading.className = "modal-title";
+        const message = document.createElement("p");
+        message.className = "prompt-message";
+
+        const field = document.createElement("label");
+        field.className = "prompt-field";
+        const fieldLabel = document.createElement("span");
+        fieldLabel.className = "field-label strong";
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "field-input";
+        input.spellcheck = false;
+        input.autocomplete = "off";
+        const fieldError = document.createElement("span");
+        fieldError.className = "field-error";
+        field.append(fieldLabel, input, fieldError);
+
+        const actions = document.createElement("div");
+        actions.className = "actions";
+        const saveError = document.createElement("span");
+        saveError.className = "save-error";
+        const cancelBtn = document.createElement("button");
+        cancelBtn.className = "cancel-btn";
+        cancelBtn.textContent = "Cancel";
+        const actionBtn = document.createElement("button");
+        actions.append(saveError, cancelBtn, actionBtn);
+
+        box.append(heading, message, field, actions);
+        overlay.appendChild(box);
+        root.appendChild(overlay);
+
+        let current: { options: PromptOptions; resolve(ok: boolean): void } | null = null;
+        let busy = false;
+
+        const update = (): void => {
+            const validate = current?.options.input?.validate;
+            const reason = validate ? validate(input.value) : null;
+            // An empty field is unusable but not yet an error worth showing.
+            fieldError.textContent = reason ?? "";
+            fieldError.classList.toggle("visible", !!reason && input.value !== "");
+            actionBtn.disabled = busy || !!reason;
+            cancelBtn.disabled = busy;
+        };
+        const finish = (ok: boolean): void => {
+            const c = current;
+            current = null;
+            overlay.classList.remove("open");
+            c?.options.opener?.focus();
+            c?.resolve(ok);
+        };
+        const submit = async (): Promise<void> => {
+            if (!current || actionBtn.disabled) return;
+            busy = true;
+            saveError.classList.remove("visible");
+            update();
+            try {
+                await current.options.submit(input.value);
+                busy = false;
+                finish(true);
+            } catch (err) {
+                busy = false;
+                saveError.textContent = err instanceof Error ? err.message : String(err);
+                saveError.classList.add("visible");
+                update();
+            }
+        };
+
+        input.addEventListener("input", () => {
+            saveError.classList.remove("visible");
+            update();
+        });
+        cancelBtn.addEventListener("click", () => finish(false));
+        actionBtn.addEventListener("click", () => void submit());
+        box.addEventListener("keydown", (e) => {
+            if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!busy) finish(false);
+            } else if (e.key === "Enter" && e.target === input) {
+                e.preventDefault();
+                void submit();
+            }
+        });
+
+        return {
+            ask(options: PromptOptions): Promise<boolean> {
+                if (current) finish(false);
+                heading.textContent = options.title;
+                message.replaceChildren(...options.message);
+                field.hidden = !options.input;
+                fieldLabel.textContent = options.input?.label ?? "";
+                input.value = options.input?.value ?? "";
+                actionBtn.textContent = options.actionLabel;
+                actionBtn.className = options.destructive ? "delete-btn" : "ok-btn";
+                saveError.classList.remove("visible");
+                busy = false;
+                return new Promise((resolve) => {
+                    current = { options, resolve };
+                    overlay.classList.add("open");
+                    update();
+                    if (options.input) {
+                        input.focus();
+                        input.select();
+                    } else {
+                        // A confirmation starts on Cancel, so Enter doesn't confirm by accident.
+                        cancelBtn.focus();
+                    }
+                });
+            },
+        };
+    }
+
+    /** The read-only note shown when a theme of each non-editable source is selected. */
+    const READ_ONLY_NOTES: Partial<Record<ThemeSource, string>> = {
+        builtin: "Built-in themes can't be edited. Copy it to make your own.",
+        installed: "Installed themes can't be edited. Copy it to make your own.",
+    };
+
     class B3ttyThemeEditorImpl extends HTMLElement implements B3ttyThemeEditor {
         #shadow: ShadowRoot;
         #leftPanel: HTMLDivElement;
+        #themeList: HTMLDivElement;
         #nameInput: HTMLInputElement;
         #nameError: HTMLSpanElement;
+        #readOnlyNote: HTMLDivElement;
         #saveError: HTMLSpanElement;
         #colorInputs: Map<string, HTMLInputElement> = new Map();
         #swatches: Map<string, HTMLSpanElement> = new Map();
@@ -1158,6 +1488,9 @@ if (typeof HTMLElement !== "undefined") {
         #bgTransparencyError: HTMLSpanElement;
         #okBtn: HTMLButtonElement;
         #exportBtn: HTMLButtonElement;
+        #copyBtn: HTMLButtonElement;
+        #deleteBtn: HTMLButtonElement;
+        #prompt: PromptLayer;
         // The selected theme's inputs as loaded, to tell whether the form has unsaved
         // changes; null when no saved theme is loaded.
         #savedSnapshot: string | null = null;
@@ -1168,7 +1501,12 @@ if (typeof HTMLElement !== "undefined") {
         #createCard: HTMLDivElement;
         #createRadio: HTMLInputElement;
         #isLoading = false;
-        #builtinThemeNames: Set<string> = new Set();
+        /** Every theme, by name, as last passed to open() or refresh(). */
+        #entries: Map<string, ThemeEntry> = new Map();
+        /** True while a built-in or installed theme is selected. */
+        #readOnly = false;
+        /** Bumped on every refresh, so palettes fetched for an earlier one are ignored. */
+        #refreshId = 0;
 
         constructor() {
             super();
@@ -1187,7 +1525,25 @@ if (typeof HTMLElement !== "undefined") {
                     overflow: hidden;
                 }
                 ${SPLIT_PANEL_STYLES}
-                .left-panel { width: 240px; }
+                .left-panel { width: 240px; overflow: hidden; }
+                .theme-list {
+                    flex: 1; min-height: 0; overflow-y: auto;
+                    display: flex; flex-direction: column; gap: var(--space-xs);
+                }
+                .list-section { display: flex; flex-direction: column; gap: var(--space-xs); }
+                .list-section .section-title { margin: var(--space-xs) 0 0; }
+                .list-footer {
+                    flex-shrink: 0; display: flex; gap: var(--space-xs);
+                    padding-top: var(--space-md); border-top: 1px solid var(--color-border-inner);
+                }
+                /* Same size as the actions row's Cancel and OK. */
+                .list-footer .cancel-btn {
+                    flex: 1; padding-left: var(--space-sm); padding-right: var(--space-sm);
+                }
+                .list-footer .cancel-btn:disabled {
+                    opacity: var(--opacity-disabled); cursor: not-allowed;
+                    background: var(--color-surface-2);
+                }
                 ${EDITOR_CARD_STYLES}
                 ${PALETTE_CARD_VARS}
                 b3tty-palette-card { flex-shrink: 0; }
@@ -1206,6 +1562,7 @@ if (typeof HTMLElement !== "undefined") {
                     display: flex; flex-direction: column; gap: var(--space-2xs);
                 }
                 .color-form .section-title { padding: var(--space-xs) 0 var(--space-3xs); }
+                .color-form input:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
                 .field-row {
                     display: grid;
                     grid-template-columns: 140px 1fr 22px;
@@ -1227,6 +1584,7 @@ if (typeof HTMLElement !== "undefined") {
                 .swatch.visible { visibility: visible; }
                 ${BUTTON_STYLES}
                 ${SAVE_ERROR_STYLES}
+                ${PROMPT_STYLES}
             `;
 
             const overlay = document.createElement("div");
@@ -1270,6 +1628,29 @@ if (typeof HTMLElement !== "undefined") {
             });
             this.#leftPanel.appendChild(importCard);
 
+            // The theme cards, grouped by source (see #renderList); scrolls between the
+            // cards above and the footer below.
+            this.#themeList = document.createElement("div");
+            this.#themeList.className = "theme-list";
+            this.#leftPanel.appendChild(this.#themeList);
+
+            // Copy… and Delete… act on the selected theme, so both are disabled while
+            // "Create new theme" is selected.
+            const footer = document.createElement("div");
+            footer.className = "list-footer";
+            this.#copyBtn = document.createElement("button");
+            this.#copyBtn.className = "cancel-btn";
+            this.#copyBtn.textContent = "Copy…";
+            this.#copyBtn.disabled = true;
+            this.#copyBtn.addEventListener("click", () => void this.#copySelected());
+            this.#deleteBtn = document.createElement("button");
+            this.#deleteBtn.className = "cancel-btn";
+            this.#deleteBtn.textContent = "Delete…";
+            this.#deleteBtn.disabled = true;
+            this.#deleteBtn.addEventListener("click", () => void this.#deleteSelected());
+            footer.append(this.#copyBtn, this.#deleteBtn);
+            this.#leftPanel.appendChild(footer);
+
             // --- Right panel ---
             const rightPanel = document.createElement("div");
             rightPanel.className = "right-panel";
@@ -1287,15 +1668,15 @@ if (typeof HTMLElement !== "undefined") {
             this.#nameInput.placeholder = "Enter theme name";
             this.#nameError = document.createElement("span");
             this.#nameError.className = "name-error field-error";
-            this.#nameError.textContent = "Cannot use a built-in theme name";
-            // Exports the selected saved theme, so it is disabled while
-            // "Create new theme" is selected.
+            this.#nameError.textContent = "Cannot use a built-in or installed theme name";
+            // Exports the selected saved user theme, so it is disabled while "Create
+            // new theme" or a built-in or installed theme is selected.
             this.#exportBtn = document.createElement("button");
             this.#exportBtn.className = "inline-btn";
             this.#exportBtn.textContent = "Export…";
             this.#exportBtn.disabled = true;
             this.#exportBtn.addEventListener("click", () => {
-                if (!this.#selectedName) return;
+                if (!this.#selectedName || this.#readOnly) return;
                 const detail: ThemeExportRequest = {
                     name: this.#selectedName,
                     unsavedChanges: this.#hasUnsavedChanges(),
@@ -1310,6 +1691,11 @@ if (typeof HTMLElement !== "undefined") {
             nameRow.appendChild(this.#exportBtn);
             nameSection.appendChild(nameRow);
             nameSection.appendChild(this.#nameError);
+            this.#readOnlyNote = document.createElement("div");
+            this.#readOnlyNote.className = "field-desc";
+            this.#readOnlyNote.setAttribute("role", "status");
+            this.#readOnlyNote.hidden = true;
+            nameSection.appendChild(this.#readOnlyNote);
 
             const colorForm = document.createElement("div");
             colorForm.className = "color-form";
@@ -1446,43 +1832,15 @@ if (typeof HTMLElement !== "undefined") {
             overlay.appendChild(modal);
             this.#shadow.appendChild(style);
             this.#shadow.appendChild(overlay);
+            this.#prompt = buildPromptLayer(this.#shadow);
 
             // Listeners
             this.#nameInput.addEventListener("input", () => this.#validateForm());
 
-            this.#createCard.addEventListener("click", () => {
-                for (const card of Array.from(this.#leftPanel.querySelectorAll("b3tty-palette-card"))) {
-                    card.removeAttribute("selected");
-                }
-                this.#createCard.setAttribute("selected", "");
-                this.#createRadio.checked = true;
-                this.#restoreSelectedCard();
-                this.#selectedName = null;
-                this.#exportBtn.disabled = true;
-                this.#nameInput.value = "";
-                this.#clearInputs();
-                this.#isLoading = false;
-                this.#validateForm();
-            });
+            this.#createCard.addEventListener("click", () => this.#selectCreate());
 
             this.#leftPanel.addEventListener("b3tty-card-select", (e: Event) => {
-                const target = e.target as HTMLElement;
-                for (const card of Array.from(this.#leftPanel.querySelectorAll("b3tty-palette-card"))) {
-                    if (card !== target) card.removeAttribute("selected");
-                }
-                this.#createCard.removeAttribute("selected");
-                this.#createRadio.checked = false;
-                const name = (target as unknown as B3ttyPaletteCard).value;
-                this.#restoreSelectedCard();
-                this.#selectedName = name;
-                this.#exportBtn.disabled = false;
-                this.#selectedCard = target;
-                this.#selectedPalette = this.#paletteCache.get(name) ?? null;
-                this.#nameInput.value = name;
-                this.#isLoading = true;
-                this.#okBtn.disabled = true;
-                this.#clearInputs();
-                this.#loadThemeColors(name);
+                this.#selectCard(e.target as HTMLElement);
             });
 
             cancelBtn.addEventListener("click", () => this.close());
@@ -1543,8 +1901,14 @@ if (typeof HTMLElement !== "undefined") {
             }
         }
 
+        /** Whether name belongs to a built-in or installed theme, which a user theme can't use. */
+        #isReadOnlyName(name: string): boolean {
+            const entry = this.#entries.get(name);
+            return !!entry && entry.source !== "user";
+        }
+
         #validateForm(): void {
-            if (this.#isLoading) {
+            if (this.#isLoading || this.#readOnly) {
                 this.#okBtn.disabled = true;
                 this.#nameError.classList.remove("visible");
                 this.#bgTransparencyError.classList.remove("visible");
@@ -1559,7 +1923,7 @@ if (typeof HTMLElement !== "undefined") {
                 this.#nameError.classList.remove("visible");
                 return;
             }
-            if (this.#builtinThemeNames.has(name)) {
+            if (this.#isReadOnlyName(name)) {
                 this.#okBtn.disabled = true;
                 this.#nameError.classList.add("visible");
                 return;
@@ -1574,14 +1938,41 @@ if (typeof HTMLElement !== "undefined") {
             this.#okBtn.disabled = !transparencyValid;
         }
 
+        /**
+         * Puts the right panel in or out of its read-only state: a built-in or installed
+         * theme is shown with every field disabled and a note saying to copy it.
+         */
+        #setReadOnly(source: ThemeSource | null): void {
+            const note = source ? READ_ONLY_NOTES[source] : undefined;
+            this.#readOnly = !!note;
+            for (const input of this.#colorInputs.values()) input.disabled = this.#readOnly;
+            this.#bgImageInput.disabled = this.#readOnly;
+            this.#bgTransparencyInput.disabled = this.#readOnly;
+            this.#nameInput.readOnly = this.#readOnly;
+            this.#readOnlyNote.textContent = note ?? "";
+            this.#readOnlyNote.hidden = !note;
+        }
+
+        /** Enables Copy…, Delete…, and Export… for the selected theme. */
+        #updateButtons(): void {
+            const entry = this.#selectedName ? this.#entries.get(this.#selectedName) : undefined;
+            this.#copyBtn.disabled = !entry;
+            // A built-in can only be removed from the menu, so there's nothing to do
+            // when it isn't in it.
+            this.#deleteBtn.disabled = !entry || (entry.source === "builtin" && !entry.inMenu);
+            this.#exportBtn.disabled = !entry || entry.source !== "user";
+        }
+
         #restoreSelectedCard(): void {
             if (!this.#selectedCard || !this.#selectedName) return;
             const original = this.#paletteCache.get(this.#selectedName);
+            const entry = this.#entries.get(this.#selectedName);
             if (original) {
                 (this.#selectedCard as unknown as B3ttyPaletteCard).setup(
                     this.#selectedName,
                     formatThemeName(this.#selectedName),
-                    original
+                    original,
+                    entry ? cardDetails(entry) : undefined
                 );
             }
             this.#selectedCard = null;
@@ -1620,10 +2011,12 @@ if (typeof HTMLElement !== "undefined") {
             if (!this.#selectedCard || !this.#selectedName || !this.#selectedPalette) return;
             const palette = this.#buildPreviewPalette();
             if (!palette) return;
+            const entry = this.#entries.get(this.#selectedName);
             (this.#selectedCard as unknown as B3ttyPaletteCard).setup(
                 this.#selectedName,
                 formatThemeName(this.#selectedName),
-                palette
+                palette,
+                entry ? cardDetails(entry) : undefined
             );
         }
 
@@ -1649,9 +2042,179 @@ if (typeof HTMLElement !== "undefined") {
             this.#bgTransparencyError.classList.remove("visible");
         }
 
+        /** Selects "Create new theme": an empty, editable form. */
+        #selectCreate(): void {
+            for (const card of Array.from(this.#leftPanel.querySelectorAll("b3tty-palette-card"))) {
+                card.removeAttribute("selected");
+            }
+            this.#createCard.setAttribute("selected", "");
+            this.#createRadio.checked = true;
+            this.#restoreSelectedCard();
+            this.#selectedName = null;
+            this.#setReadOnly(null);
+            this.#updateButtons();
+            this.#nameInput.value = "";
+            this.#clearInputs();
+            this.#isLoading = false;
+            this.#validateForm();
+        }
+
+        /** Selects a theme's card and loads the theme into the right panel. */
+        #selectCard(target: HTMLElement): void {
+            for (const card of Array.from(this.#leftPanel.querySelectorAll("b3tty-palette-card"))) {
+                if (card !== target) card.removeAttribute("selected");
+            }
+            target.setAttribute("selected", "");
+            this.#createCard.removeAttribute("selected");
+            this.#createRadio.checked = false;
+            const name = (target as unknown as B3ttyPaletteCard).value;
+            this.#restoreSelectedCard();
+            this.#selectedName = name;
+            this.#selectedCard = target;
+            this.#selectedPalette = this.#paletteCache.get(name) ?? null;
+            this.#setReadOnly(this.#entries.get(name)?.source ?? null);
+            this.#updateButtons();
+            this.#nameInput.value = name;
+            this.#isLoading = true;
+            this.#okBtn.disabled = true;
+            this.#clearInputs();
+            void this.#loadThemeColors(name);
+        }
+
+        /**
+         * Rebuilds the theme list from #entries' cards: Your themes, Installed, and
+         * Built-in, each left out when empty.
+         */
+        #renderList(cards: PaletteCardEntry[]): void {
+            this.#themeList.replaceChildren();
+            for (const { source, title } of THEME_SECTIONS) {
+                const inSection = cards.filter((c) => c.entry.source === source);
+                if (inSection.length === 0) continue;
+                const section = document.createElement("div");
+                section.className = "list-section";
+                const body = document.createElement("div");
+                body.className = "list-section";
+                for (const { card } of inSection) body.appendChild(card);
+                const heading = document.createElement("div");
+                heading.className = "section-title";
+                heading.textContent = title;
+                section.append(heading, body);
+                this.#themeList.appendChild(section);
+            }
+        }
+
+        async refresh(themes: ThemeEntry[], select?: string): Promise<void> {
+            const refreshId = ++this.#refreshId;
+            this.#entries = new Map(themes.map((e) => [e.name, e]));
+            const cards = await fetchPaletteCards(themes);
+            if (refreshId !== this.#refreshId) return;
+            this.#restoreSelectedCard();
+            this.#paletteCache.clear();
+            for (const { entry, palette } of cards) this.#paletteCache.set(entry.name, palette);
+            this.#renderList(cards);
+            const target = select ? cards.find((c) => c.entry.name === select)?.card : undefined;
+            if (target) {
+                this.#selectCard(target);
+                target.scrollIntoView({ block: "nearest" });
+            } else {
+                this.#selectCreate();
+            }
+        }
+
+        /** Tells terminal.ts that themes were added or removed, with the updated lists. */
+        #themesChanged(lists: ThemeLists): void {
+            this.dispatchEvent(
+                new CustomEvent("b3tty-themes-changed", { detail: lists, bubbles: true, composed: true })
+            );
+        }
+
+        /** A name for a copy of name that no theme has yet: name-copy, name-copy-2, … */
+        #copyName(name: string): string {
+            let candidate = `${name}-copy`;
+            for (let i = 2; this.#entries.has(candidate); i++) candidate = `${name}-copy-${i}`;
+            return candidate;
+        }
+
+        /** Why newName can't name a copy, or null; mirrors validateThemeName on the server. */
+        #copyNameProblem(newName: string): string | null {
+            if (!newName) return "Enter a name.";
+            if (newName.trim() !== newName) return "The name can't start or end with a space.";
+            if (newName.includes("/")) return "The name can't contain a /.";
+            if (newName.length > 64) return "The name can't be longer than 64 characters.";
+            if (this.#entries.has(newName)) return "A theme with this name already exists.";
+            return null;
+        }
+
+        async #copySelected(): Promise<void> {
+            const name = this.#selectedName;
+            if (!name || this.#copyBtn.disabled) return;
+            const bold = document.createElement("b");
+            bold.textContent = name;
+            await this.#prompt.ask({
+                title: "Copy Theme",
+                message: ["Save a copy of ", bold, " as a theme of your own, which you can edit and export."],
+                input: {
+                    label: "New theme name",
+                    value: this.#copyName(name),
+                    validate: (value) => this.#copyNameProblem(value),
+                },
+                actionLabel: "Copy",
+                opener: this.#copyBtn,
+                submit: async (newName) => {
+                    const response = await postCopyTheme(name, newName);
+                    const lists = { themeNames: response.themeNames ?? [], themes: response.themes ?? [] };
+                    this.#themesChanged(lists);
+                    await this.refresh(lists.themes, newName);
+                },
+            });
+        }
+
+        async #deleteSelected(): Promise<void> {
+            const entry = this.#selectedName ? this.#entries.get(this.#selectedName) : undefined;
+            if (!entry || this.#deleteBtn.disabled) return;
+            const bold = document.createElement("b");
+            bold.textContent = entry.name;
+            const prompts: Record<ThemeSource, { title: string; message: Array<string | Node>; action: string }> = {
+                user: {
+                    title: "Delete Theme",
+                    message: ["Delete ", bold, "? This can't be undone."],
+                    action: "Delete",
+                },
+                installed: {
+                    title: "Uninstall Theme",
+                    message: [
+                        "Uninstall ",
+                        bold,
+                        "? This can't be undone; you'll need the package file to install it again.",
+                    ],
+                    action: "Uninstall",
+                },
+                builtin: {
+                    title: "Remove from Themes Menu",
+                    message: ["Remove ", bold, " from the Themes menu? It stays available in Select Theme."],
+                    action: "Remove",
+                },
+            };
+            const { title, message, action } = prompts[entry.source];
+            await this.#prompt.ask({
+                title,
+                message,
+                actionLabel: action,
+                destructive: true,
+                opener: this.#deleteBtn,
+                submit: async () => {
+                    const lists = await postDeleteTheme(entry.name);
+                    this.#themesChanged(lists);
+                    // A built-in is still there, just no longer in the menu.
+                    await this.refresh(lists.themes, entry.source === "builtin" ? entry.name : undefined);
+                },
+            });
+        }
+
         async #loadThemeColors(name: string): Promise<void> {
             try {
                 const config = await getThemeConfig(name);
+                if (this.#selectedName !== name) return;
                 const data = config as unknown as Record<string, string>;
                 for (const [key, input] of this.#colorInputs) {
                     const value = data[key] ?? "";
@@ -1666,14 +2229,16 @@ if (typeof HTMLElement !== "undefined") {
             } catch {
                 // leave inputs as-is on failure
             } finally {
-                this.#isLoading = false;
-                this.#validateForm();
+                if (this.#selectedName === name) {
+                    this.#isLoading = false;
+                    this.#validateForm();
+                }
             }
         }
 
         async #handleOk(): Promise<void> {
             const name = this.#nameInput.value.trim();
-            if (!name) return;
+            if (!name || this.#readOnly) return;
             const themeData: Record<string, string | number> = {};
             for (const [key, input] of this.#colorInputs) {
                 if (input.value) themeData[key] = input.value;
@@ -1704,34 +2269,19 @@ if (typeof HTMLElement !== "undefined") {
             }
         }
 
-        open(themeNames: string[], builtinThemeNames: string[] = []): void {
-            this.#builtinThemeNames = new Set(builtinThemeNames);
-            this.#selectedName = null;
+        open(themes: ThemeEntry[], options: ThemeEditorOpenOptions = {}): void {
             this.#selectedCard = null;
             this.#selectedPalette = null;
-            this.#paletteCache.clear();
-            this.#isLoading = false;
-            this.#nameInput.value = "";
             this.#nameError.classList.remove("visible");
             this.#saveError.classList.remove("visible");
-            this.#clearInputs();
-            this.#okBtn.disabled = true;
-            this.#exportBtn.disabled = true;
-
-            // rebuild card list (keep create-card)
-            const existingCards = Array.from(this.#leftPanel.querySelectorAll("b3tty-palette-card"));
-            for (const card of existingCards) card.remove();
-            this.#createCard.setAttribute("selected", "");
-            this.#createRadio.checked = true;
-
+            this.#themeList.replaceChildren();
+            this.#selectCreate();
             this.setAttribute("open", "");
 
-            fetchPaletteCards(themeNames).then((entries) => {
-                for (const c of Array.from(this.#leftPanel.querySelectorAll("b3tty-palette-card"))) c.remove();
-                for (const { card, name, palette } of entries) {
-                    this.#paletteCache.set(name, palette);
-                    this.#leftPanel.appendChild(card);
-                }
+            void this.refresh(themes, options.select).then(() => {
+                if (!options.action || !options.select || this.#selectedName !== options.select) return;
+                if (options.action === "copy") void this.#copySelected();
+                else void this.#deleteSelected();
             });
         }
 
@@ -2867,20 +3417,27 @@ if (typeof HTMLElement !== "undefined") {
     class B3ttyThemeImportDialogImpl extends HTMLElement implements B3ttyThemeImportDialog {
         #parts: ThemeFileDialogParts;
         #opener: HTMLElement | null = null;
+        /** Set once the server said the package upgrades an installed theme. */
+        #replace = false;
 
         constructor() {
             super();
             this.#parts = buildThemeFileDialog(this, "Import Theme", "Import");
-            this.#parts.intro.textContent = "Add a theme from a .b3theme package. It will appear in your Themes menu.";
+            this.#parts.intro.textContent =
+                "Install a theme from a .b3theme package. It will appear in Select Theme, ready to use or copy.";
             this.#parts.input.placeholder = "~/Downloads/theme.b3theme";
             this.#parts.hint.textContent = "An absolute path, or one starting with ~ for your home directory.";
-            // The Import button is wired up along with the .b3theme import path.
+            // A different path is a different package, so any pending Replace is undone.
+            this.#parts.input.addEventListener("input", () => this.#setReplace(false));
+            this.#parts.actionBtn.addEventListener("click", () => void this.#import());
         }
 
         open(opener: HTMLElement | null = null): void {
             this.#opener = opener;
             const { input, saveError, actionBtn } = this.#parts;
             input.value = "";
+            input.disabled = false;
+            this.#setReplace(false);
             actionBtn.disabled = true;
             saveError.classList.remove("visible");
             this.setAttribute("open", "");
@@ -2892,6 +3449,45 @@ if (typeof HTMLElement !== "undefined") {
             const opener = this.#opener;
             this.#opener = null;
             closeStackedOverlay(this, opener);
+        }
+
+        /**
+         * Switches between importing and replacing an installed version, which shows
+         * the server's description of the upgrade (including any change of author or
+         * repository) and relabels the action button.
+         */
+        #setReplace(replace: boolean, message = ""): void {
+            this.#replace = replace;
+            const { warning, actionBtn } = this.#parts;
+            warning.textContent = replace ? `${message} Replace the installed version?` : "";
+            warning.classList.toggle("visible", replace);
+            actionBtn.textContent = replace ? "Replace" : "Import";
+        }
+
+        async #import(): Promise<void> {
+            const { input, saveError, actionBtn } = this.#parts;
+            const path = input.value.trim();
+            if (!path) return;
+            saveError.classList.remove("visible");
+            input.disabled = true;
+            actionBtn.disabled = true;
+            try {
+                const response = await postImportTheme(path, this.#replace);
+                const opener = this.#opener;
+                this.close();
+                const detail: ThemeImportedDetail = { response, opener };
+                this.dispatchEvent(new CustomEvent("b3tty-theme-imported", { detail, bubbles: true, composed: true }));
+            } catch (err) {
+                if (err instanceof ThemeUpgradeRequiredError) {
+                    this.#setReplace(true, err.message);
+                } else {
+                    saveError.textContent = err instanceof Error ? err.message : String(err);
+                    saveError.classList.add("visible");
+                }
+            } finally {
+                input.disabled = false;
+                actionBtn.disabled = !input.value.trim();
+            }
         }
     }
 
@@ -2990,7 +3586,8 @@ if (typeof HTMLElement !== "undefined") {
 
         open(themeName: string, options: ThemeExportOptions = {}): void {
             this.#opener = options.opener ?? null;
-            const exportable = !!themeName && !options.builtin;
+            const source = options.source ?? "user";
+            const exportable = !!themeName && source === "user";
             this.#themeName = exportable ? themeName : "";
             this.#lastVersion = "";
             for (const el of this.#detailInputs()) el.value = "";
@@ -3003,9 +3600,11 @@ if (typeof HTMLElement !== "undefined") {
                 input.value = `~/${themeName}.b3theme`;
                 input.placeholder = `~/${themeName}.b3theme`;
             } else {
-                intro.textContent = themeName
-                    ? "Built-in themes can't be exported. Select or create a user-defined theme to export."
-                    : "There is no active theme to export.";
+                intro.textContent = !themeName
+                    ? "There is no active theme to export."
+                    : source === "installed"
+                      ? "Installed themes can't be exported. Copy it to make your own version, then export that."
+                      : "Built-in themes can't be exported. Select or create a user-defined theme to export.";
                 input.value = "";
                 input.placeholder = "";
             }

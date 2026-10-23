@@ -2,6 +2,7 @@
 b3tty
 b3tty.exe
 *.yaml
+*.b3theme
 TODO*
 src/index.html
 .zed

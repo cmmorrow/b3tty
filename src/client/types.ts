@@ -50,28 +50,71 @@ export interface TermConfig {
     theme: ThemeConfig;
     debug?: boolean;
     backgroundImage?: boolean;
+    /** The Themes menu, in menu order. */
     themeNames?: string[];
-    allThemeNames?: string[];
-    builtinThemeNames?: string[];
+    /** Every theme of every source, sorted by name. */
+    themes?: ThemeEntry[];
     profileNames?: string[];
     activeTheme?: string;
     showMenubar?: string;
 }
 
+/** Where a theme comes from: built into b3tty, installed from a package, or the user's own. */
+export type ThemeSource = "builtin" | "installed" | "user";
+
 /**
- * The theme name lists the server pushes to every session in a "themes" control
- * message when themes are added or removed (see broadcastThemeLists), with the same
- * meaning as the TermConfig fields of the same names.
+ * One theme as the server describes it (ThemeEntry in src/theme_catalog.go). author,
+ * themeVersion, and repo are set only for installed themes; repo was validated as an
+ * https URL on import. modified marks an installed theme whose package changed since
+ * it was installed. Only user themes can be edited or exported.
+ */
+export interface ThemeEntry {
+    name: string;
+    source: ThemeSource;
+    inMenu: boolean;
+    author?: string;
+    themeVersion?: string;
+    repo?: string;
+    modified?: boolean;
+}
+
+/**
+ * The theme lists the server pushes to every session in a "themes" control message
+ * when themes are added or removed (see broadcastThemeLists), and returns from the
+ * endpoints that change them, with the same meaning as the TermConfig fields of the
+ * same names.
  */
 export interface ThemeLists {
     themeNames: string[];
-    allThemeNames: string[];
-    builtinThemeNames: string[];
+    themes: ThemeEntry[];
 }
 
 export interface ThemeActivateResponse extends ThemeConfigBase {
     hasBackgroundImage: boolean;
     themeNames?: string[];
+    themes?: ThemeEntry[];
+}
+
+/** Response of POST /import-theme. */
+export interface ImportThemeResponse extends ThemeLists {
+    name: string;
+    theme: ThemeActivateResponse;
+    upgraded: boolean;
+    unchanged: boolean;
+}
+
+/** Runtime type guard for ThemeLists, and so for the delete-theme and reload-themes responses. */
+export function isThemeLists(val: unknown): val is ThemeLists {
+    if (typeof val !== "object" || val === null) return false;
+    const r = val as Record<string, unknown>;
+    return Array.isArray(r["themeNames"]) && Array.isArray(r["themes"]);
+}
+
+/** Runtime type guard for ImportThemeResponse. */
+export function isImportThemeResponse(val: unknown): val is ImportThemeResponse {
+    if (!isThemeLists(val)) return false;
+    const r = val as unknown as Record<string, unknown>;
+    return typeof r["name"] === "string" && isThemeActivateResponse(r["theme"]);
 }
 
 /**
