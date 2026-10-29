@@ -24,40 +24,46 @@
 /** CSS custom properties shared across all b3tty web components. */
 export const DESIGN_TOKENS = `
     :host {
-        /* Color: surfaces */
-        --color-surface-1: #e0e0e0;
-        --color-surface-2: #c8c8c8;
-        --color-surface-3: #f5f5f5;
-        --color-surface-ro: #e8e8e8;
-        --color-surface-card: #cecece;
-        --color-surface-hover: #bbb;
-        --color-surface-selected: #b8b8b8;
-        /* Color: borders */
-        --color-border: #aaa;
-        --color-border-panel: #c0c0c0;
-        --color-border-inner: #c8c8c8;
-        --color-border-subtle: rgba(0,0,0,0.2);
-        /* Color: accent */
-        --color-accent: #444;
-        --color-accent-hover: #222;
-        --color-on-accent: #fff;
+        /* Color: surfaces (warm ivory) */
+        --color-surface-1: #fbf9f3;
+        --color-surface-2: #f1ede3;
+        --color-surface-3: #fffefa;
+        --color-surface-ro: #f4f0e7;
+        --color-surface-card: #f1ede3;
+        --color-surface-hover: #e8e2d5;
+        --color-surface-selected: #e2dbcc;
+        /* Color: borders. --color-border outlines controls (inputs, Cancel), so it
+           keeps 3:1 against every surface it sits on; the panel/inner borders are
+           decorative dividers. */
+        --color-border: #8f8572;
+        --color-border-strong: #6b6355;
+        --color-border-panel: #e6e0d2;
+        --color-border-inner: #e6e0d2;
+        --color-border-subtle: rgba(60,45,20,0.15);
+        /* Color: accent (navy) */
+        --color-accent: #0b1a5c;
+        --color-accent-hover: #1c2d78;
+        --color-on-accent: #fffdf7;
         /* Color: text */
-        --color-text: #222;
-        --color-text-subtle: #555;
-        --color-muted: #666;
-        --color-text-faint: #888;
-        /* Color: destructive */
-        --color-destructive: #c00;
-        --color-destructive-bg: #f5d5d5;
-        --color-destructive-border: #c44;
-        --color-destructive-hover: #f0b8b8;
+        --color-text: #2a2723;
+        --color-text-subtle: #575045;
+        --color-muted: #6b6355;
+        --color-text-label: #48423a;
+        --color-text-faint: #787061;
+        /* Color: destructive. --color-destructive is error text; the solid pair
+           fills every Delete button. */
+        --color-destructive: #8a2216;
+        --color-destructive-solid: #a3271c;
+        --color-destructive-solid-hover: #8a2216;
+        --color-on-destructive: #fff;
         /* Color: warning */
         --color-warning: #7a4f00;
         --color-warning-bg: #fbecc4;
         --color-warning-border: #d9a83a;
         /* Color: misc */
         --color-overlay: rgba(0,0,0,0.72);
-        --color-handle: #808080;
+        --color-handle: #8f8572;
+        --color-focus-ring: #0b1a5c;
 
         /* Typography */
         --font-family-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -117,20 +123,21 @@ export const DESIGN_TOKENS = `
 /**
  * Base styles every component includes right after DESIGN_TOKENS: the UI font
  * and text color on :host (inherited by everything inside the shadow root),
- * font inheritance for form controls (which don't inherit by default), and the
- * shared radio-button look.
+ * font inheritance for form controls (which don't inherit by default), the
+ * shared radio-button look, and the keyboard focus ring.
  */
 export const BASE_STYLES = `
     :host { font-family: var(--font-family-ui); color: var(--color-text); }
     button, input, select, textarea { font-family: inherit; }
     input[type=radio] { cursor: pointer; accent-color: var(--color-accent); }
+    :focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
 `;
 
 /**
  * Shared text roles. Elements opt in by adding the class alongside any
  * component-specific class name.
  *   .modal-title   — dialog heading
- *   .field-label   — form field label (add .strong for the bolder settings variant)
+ *   .field-label   — form field label, the same in every form
  *   .section-title — uppercase group heading within a form
  *   .field-desc    — secondary help text under a field
  *   .field-error   — inline validation/save error, hidden until `.visible`
@@ -142,8 +149,7 @@ export const TEXT_STYLES = `
         margin: 0; font-size: var(--font-size-xl); font-weight: var(--font-weight-semibold);
         color: var(--color-text);
     }
-    .field-label { font-size: var(--font-size-sm); color: var(--color-accent); }
-    .field-label.strong { font-weight: var(--font-weight-semibold); color: var(--color-text); }
+    .field-label { font-size: var(--font-size-sm); color: var(--color-text-label); }
     .section-title {
         font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold);
         text-transform: uppercase; letter-spacing: var(--letter-spacing-caps);
@@ -184,32 +190,34 @@ export const BUTTON_STYLES = `
         transition: background var(--transition);
     }
     .cancel-btn {
-        border: 1px solid var(--color-border); background: var(--color-surface-2);
+        border: 1px solid var(--color-border); background: var(--color-surface-3);
         color: var(--color-text);
     }
-    .cancel-btn:hover { background: var(--color-surface-hover); }
+    .cancel-btn:hover { background: var(--color-surface-2); border-color: var(--color-border-strong); }
     .ok-btn {
         padding-left: var(--space-3xl); padding-right: var(--space-3xl);
         border: none; background: var(--color-accent); color: var(--color-on-accent);
     }
-    .ok-btn:disabled { background: var(--color-border); cursor: not-allowed; }
+    .ok-btn:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
     .ok-btn:not(:disabled):hover { background: var(--color-accent-hover); }
     .delete-btn {
         margin-right: auto;
         padding-left: var(--space-xl); padding-right: var(--space-xl);
-        border: 1px solid var(--color-destructive-border); background: var(--color-destructive-bg);
-        color: var(--color-destructive);
+        border: 1px solid var(--color-destructive-solid); background: var(--color-destructive-solid);
+        color: var(--color-on-destructive);
     }
-    .delete-btn:hover { background: var(--color-destructive-hover); }
+    .delete-btn:hover {
+        border-color: var(--color-destructive-solid-hover); background: var(--color-destructive-solid-hover);
+    }
     /* Compact secondary button for use inline with form fields. */
     .inline-btn {
         padding: var(--space-xs) var(--space-md); border-radius: var(--radius-md);
         font-size: var(--font-size-md); white-space: nowrap; cursor: pointer;
-        border: 1px solid var(--color-border); background: var(--color-surface-2);
+        border: 1px solid var(--color-border); background: var(--color-surface-3);
         color: var(--color-text);
         transition: background var(--transition);
     }
-    .inline-btn:not(:disabled):hover { background: var(--color-surface-hover); }
+    .inline-btn:not(:disabled):hover { background: var(--color-surface-2); border-color: var(--color-border-strong); }
     .inline-btn:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
 `;
 

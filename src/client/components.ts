@@ -1360,7 +1360,7 @@ if (typeof HTMLElement !== "undefined") {
         const field = document.createElement("label");
         field.className = "prompt-field";
         const fieldLabel = document.createElement("span");
-        fieldLabel.className = "field-label strong";
+        fieldLabel.className = "field-label";
         const input = document.createElement("input");
         input.type = "text";
         input.className = "field-input";
@@ -3079,7 +3079,7 @@ if (typeof HTMLElement !== "undefined") {
             const group = document.createElement("div");
             group.className = "field-group";
             const lbl = document.createElement("div");
-            lbl.className = "field-label strong";
+            lbl.className = "field-label";
             lbl.textContent = label;
             const row = document.createElement("div");
             row.className = "field-row";
@@ -3370,7 +3370,7 @@ if (typeof HTMLElement !== "undefined") {
         const field = document.createElement("label");
         field.className = "field";
         const label = document.createElement("span");
-        label.className = "field-label strong";
+        label.className = "field-label";
         label.textContent = "File Path";
         const input = document.createElement("input");
         input.type = "text";
@@ -3634,7 +3634,7 @@ if (typeof HTMLElement !== "undefined") {
             const field = document.createElement("label");
             field.className = "field";
             const text = document.createElement("span");
-            text.className = "field-label strong";
+            text.className = "field-label";
             text.textContent = label;
             field.append(text, control);
             return field;
