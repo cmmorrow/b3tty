@@ -470,7 +470,8 @@ if (typeof HTMLElement !== "undefined") {
                 .card-name > :first-child, .card-subtitle {
                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
                 }
-                .card-name a { color: inherit; text-decoration: none; }
+                /* Size the link to its text so the rest of the header still selects the card. */
+                .card-name a { color: inherit; text-decoration: none; align-self: flex-start; max-width: 100%; }
                 .card-name a:hover, .card-name a:focus-visible { text-decoration: underline; }
                 .card-subtitle {
                     font-size: var(--font-size-xs); font-weight: var(--font-weight-regular);
@@ -663,102 +664,73 @@ if (typeof HTMLElement !== "undefined") {
     customElements.define("b3tty-dialog", B3ttyDialogImpl);
 
     class B3ttyThemeSelectorImpl extends HTMLElement {
+        #palettesRequested = false;
+        #options: HTMLDivElement;
+
         constructor() {
             super();
             const shadow = this.attachShadow({ mode: "open" });
 
-            const skipCard = (): HTMLLabelElement => {
-                const card = document.createElement("label");
-                card.className = "card skip-card";
-                const header = document.createElement("div");
-                header.className = "card-header";
-                const radio = document.createElement("input");
-                radio.type = "radio";
-                radio.name = "theme";
-                radio.id = "skip";
-                radio.value = "skip";
-                const labelSpan = document.createElement("span");
-                labelSpan.textContent = "No theme";
-                header.appendChild(radio);
-                header.appendChild(labelSpan);
-                const note = document.createElement("p");
-                note.className = "skip-note";
-                note.textContent = "Configure a theme later in conf.yaml.";
-                card.appendChild(header);
-                card.appendChild(note);
-                return card;
-            };
-
-            const style = document.createElement("style");
-            style.textContent = `
-                ${DESIGN_TOKENS}
-                ${BASE_STYLES}
-                ${OVERLAY_STYLES}
-                ${BUTTON_STYLES}
-                /* Always shown on the first-run setup page, never toggled via [open]. */
-                :host { display: block; }
-                .modal {
-                    padding: var(--space-3xl);
-                    display: flex; flex-direction: column; align-items: center;
-                    gap: var(--space-2xl);
-                }
-                .subtitle { margin: 0; font-size: var(--font-size-md); color: var(--color-text-subtle); text-align: center; }
-                .options { display: flex; gap: var(--space-lg); flex-wrap: wrap; justify-content: center; }
-                .card {
-                    display: flex; flex-direction: column; gap: var(--space-md);
-                    padding: var(--space-lg); border-radius: var(--radius-lg);
-                    border: 2px solid transparent;
-                    background: var(--color-surface-card);
-                    cursor: pointer;
-                    transition: border-color var(--transition);
-                    user-select: none;
-                }
-                .card:has(input:checked) { border-color: var(--color-accent); }
-                .card-header {
-                    display: flex; align-items: center; gap: var(--space-xs);
-                    font-size: var(--font-size-md); font-weight: var(--font-weight-semibold);
-                }
-                .skip-card { justify-content: center; min-width: 196px; }
-                .skip-note {
-                    margin: 0; font-size: var(--font-size-sm); color: var(--color-muted);
-                    max-width: 180px; line-height: var(--line-height-body);
-                }
+            shadow.innerHTML = `
+                <style>
+                    ${DESIGN_TOKENS}
+                    ${BASE_STYLES}
+                    ${OVERLAY_STYLES}
+                    ${BUTTON_STYLES}
+                    /* Always shown on the first-run setup page, never toggled via [open]. */
+                    :host { display: block; }
+                    .modal {
+                        padding: var(--space-3xl);
+                        display: flex; flex-direction: column; align-items: center;
+                        gap: var(--space-2xl);
+                    }
+                    .subtitle { margin: 0; font-size: var(--font-size-md); color: var(--color-text-subtle); text-align: center; }
+                    .options { display: flex; gap: var(--space-lg); flex-wrap: wrap; justify-content: center; }
+                    .card {
+                        display: flex; flex-direction: column; gap: var(--space-md);
+                        padding: var(--space-lg); border-radius: var(--radius-lg);
+                        border: 2px solid transparent;
+                        background: var(--color-surface-card);
+                        cursor: pointer;
+                        transition: border-color var(--transition);
+                        user-select: none;
+                    }
+                    .card:has(input:checked) { border-color: var(--color-accent); }
+                    .card-header {
+                        display: flex; align-items: center; gap: var(--space-xs);
+                        font-size: var(--font-size-md); font-weight: var(--font-weight-semibold);
+                    }
+                    .skip-card { justify-content: center; min-width: 196px; }
+                    .skip-note {
+                        margin: 0; font-size: var(--font-size-sm); color: var(--color-muted);
+                        max-width: 180px; line-height: var(--line-height-body);
+                    }
+                </style>
+                <div class="overlay">
+                    <div class="modal" role="dialog" aria-modal="true">
+                        <p class="subtitle">Choose a default theme to get started, or skip to configure one later.</p>
+                        <div class="options">
+                            <label class="card skip-card">
+                                <div class="card-header">
+                                    <input type="radio" name="theme" id="skip" value="skip">
+                                    <span>No theme</span>
+                                </div>
+                                <p class="skip-note">Configure a theme later in conf.yaml.</p>
+                            </label>
+                        </div>
+                        <button class="ok-btn" id="ok-btn" disabled>OK</button>
+                    </div>
+                </div>
             `;
-
-            const overlay = document.createElement("div");
-            overlay.className = "overlay";
-            const modal = document.createElement("div");
-            modal.className = "modal";
-            modal.setAttribute("role", "dialog");
-            modal.setAttribute("aria-modal", "true");
-
-            const subtitle = document.createElement("p");
-            subtitle.className = "subtitle";
-            subtitle.textContent = "Choose a default theme to get started, or skip to configure one later.";
-
-            const options = document.createElement("div");
-            options.className = "options";
-            options.appendChild(skipCard());
-
-            const okBtn = document.createElement("button");
-            okBtn.className = "ok-btn";
-            okBtn.id = "ok-btn";
-            okBtn.textContent = "OK";
-            okBtn.disabled = true;
-
-            modal.appendChild(subtitle);
-            modal.appendChild(options);
-            modal.appendChild(okBtn);
-            overlay.appendChild(modal);
-            shadow.appendChild(style);
-            shadow.appendChild(overlay);
+            this.#options = shadow.querySelector<HTMLDivElement>(".options")!;
+            const okBtn = shadow.querySelector<HTMLButtonElement>("#ok-btn")!;
 
             let selectedValue: string | null = null;
 
             // Palette card selection — b3tty-card-select is composed so it crosses
             // the palette card's shadow boundary and reaches this listener.
-            options.addEventListener("b3tty-card-select", (e: Event) => {
-                for (const card of Array.from(options.querySelectorAll("b3tty-palette-card"))) {
+            this.#options.addEventListener("b3tty-card-select", (e: Event) => {
+                for (const card of Array.from(this.#options.querySelectorAll("b3tty-palette-card"))) {
                     if (card !== e.target) card.removeAttribute("selected");
                 }
                 const skipRadio = shadow.querySelector<HTMLInputElement>("#skip");
@@ -768,10 +740,10 @@ if (typeof HTMLElement !== "undefined") {
             });
 
             // Skip card selection via its radio input.
-            options.addEventListener("change", (e: Event) => {
+            this.#options.addEventListener("change", (e: Event) => {
                 const target = e.target as HTMLInputElement;
                 if (target.id === "skip") {
-                    for (const card of Array.from(options.querySelectorAll("b3tty-palette-card"))) {
+                    for (const card of Array.from(this.#options.querySelectorAll("b3tty-palette-card"))) {
                         card.removeAttribute("selected");
                     }
                     selectedValue = "skip";
@@ -779,24 +751,30 @@ if (typeof HTMLElement !== "undefined") {
                 }
             });
 
+            okBtn.addEventListener("click", async () => {
+                if (!selectedValue) return;
+                await postSaveConfig(selectedValue);
+                window.location.reload();
+            });
+        }
+
+        connectedCallback(): void {
+            // Runs on every attach, so moving the element must not fetch and add the cards again.
+            if (this.#palettesRequested) return;
+            this.#palettesRequested = true;
+
             Promise.all([getThemePalette("b3tty-dark"), getThemePalette("b3tty-light")])
                 .then(([dark, light]) => {
                     const lightCard = document.createElement("b3tty-palette-card");
                     (lightCard as unknown as B3ttyPaletteCard).setup("b3tty-light", "B3tty Light", light);
                     const darkCard = document.createElement("b3tty-palette-card");
                     (darkCard as unknown as B3ttyPaletteCard).setup("b3tty-dark", "B3tty Dark", dark);
-                    options.prepend(lightCard);
-                    options.prepend(darkCard);
+                    this.#options.prepend(lightCard);
+                    this.#options.prepend(darkCard);
                 })
                 .catch(() => {
                     // Palette cards remain absent; the user can still select "No theme".
                 });
-
-            okBtn.addEventListener("click", async () => {
-                if (!selectedValue) return;
-                await postSaveConfig(selectedValue);
-                window.location.reload();
-            });
         }
     }
 
@@ -1163,70 +1141,51 @@ if (typeof HTMLElement !== "undefined") {
             super();
             this.#shadow = this.attachShadow({ mode: "open" });
 
-            const style = document.createElement("style");
-            style.textContent = `
-                ${DESIGN_TOKENS}
-                ${BASE_STYLES}
-                ${OVERLAY_STYLES}
-                ${TEXT_STYLES}
-                .modal {
-                    padding: var(--space-3xl) var(--space-3xl) var(--space-2xl);
-                    display: flex; flex-direction: column; gap: var(--space-xl);
-                    max-height: 85vh; max-width: 1000px; width: 100%;
-                    overflow: hidden;
-                }
-                .sections {
-                    display: flex; flex-direction: column; gap: var(--space-xl);
-                    overflow-y: auto; flex: 1; min-height: 0;
-                    padding: var(--space-2xs) var(--space-3xs);
-                }
-                .section { display: flex; flex-direction: column; gap: var(--space-sm); }
-                .section > .section-title { margin: 0; }
-                .cards {
-                    display: grid;
-                    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-                    gap: var(--space-lg);
-                }
-                ${PALETTE_CARD_VARS}
-                .loading {
-                    font-size: var(--font-size-md); color: var(--color-text-subtle);
-                    text-align: center; padding: var(--space-2xl);
-                }
-                ${BUTTON_STYLES}
+            this.#shadow.innerHTML = `
+                <style>
+                    ${DESIGN_TOKENS}
+                    ${BASE_STYLES}
+                    ${OVERLAY_STYLES}
+                    ${TEXT_STYLES}
+                    .modal {
+                        padding: var(--space-3xl) var(--space-3xl) var(--space-2xl);
+                        display: flex; flex-direction: column; gap: var(--space-xl);
+                        max-height: 85vh; max-width: 1000px; width: 100%;
+                        overflow: hidden;
+                    }
+                    .sections {
+                        display: flex; flex-direction: column; gap: var(--space-xl);
+                        overflow-y: auto; flex: 1; min-height: 0;
+                        padding: var(--space-2xs) var(--space-3xs);
+                    }
+                    .section { display: flex; flex-direction: column; gap: var(--space-sm); }
+                    .section > .section-title { margin: 0; }
+                    .cards {
+                        display: grid;
+                        grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+                        gap: var(--space-lg);
+                    }
+                    ${PALETTE_CARD_VARS}
+                    .loading {
+                        font-size: var(--font-size-md); color: var(--color-text-subtle);
+                        text-align: center; padding: var(--space-2xl);
+                    }
+                    ${BUTTON_STYLES}
+                </style>
+                <div class="overlay">
+                    <div class="modal" role="dialog" aria-modal="true">
+                        <h2 class="modal-title">Select a Theme</h2>
+                        <div class="sections"></div>
+                        <div class="actions">
+                            <button class="cancel-btn">Cancel</button>
+                            <button class="ok-btn" disabled>OK</button>
+                        </div>
+                    </div>
+                </div>
             `;
-
-            const overlay = document.createElement("div");
-            overlay.className = "overlay";
-            const modal = document.createElement("div");
-            modal.className = "modal";
-            modal.setAttribute("role", "dialog");
-            modal.setAttribute("aria-modal", "true");
-
-            const title = document.createElement("h2");
-            title.className = "modal-title";
-            title.textContent = "Select a Theme";
-
-            this.#sections = document.createElement("div");
-            this.#sections.className = "sections";
-
-            const actions = document.createElement("div");
-            actions.className = "actions";
-            const cancelBtn = document.createElement("button");
-            cancelBtn.className = "cancel-btn";
-            cancelBtn.textContent = "Cancel";
-            this.#okBtn = document.createElement("button");
-            this.#okBtn.className = "ok-btn";
-            this.#okBtn.textContent = "OK";
-            this.#okBtn.disabled = true;
-            actions.appendChild(cancelBtn);
-            actions.appendChild(this.#okBtn);
-
-            modal.appendChild(title);
-            modal.appendChild(this.#sections);
-            modal.appendChild(actions);
-            overlay.appendChild(modal);
-            this.#shadow.appendChild(style);
-            this.#shadow.appendChild(overlay);
+            this.#sections = this.#shadow.querySelector<HTMLDivElement>(".sections")!;
+            this.#okBtn = this.#shadow.querySelector<HTMLButtonElement>(".ok-btn")!;
+            const cancelBtn = this.#shadow.querySelector<HTMLButtonElement>(".cancel-btn")!;
 
             // b3tty-card-select is composed, so it crosses the palette card's
             // shadow boundary and bubbles up to this listener on #sections.
@@ -1255,10 +1214,7 @@ if (typeof HTMLElement !== "undefined") {
         open(themes: ThemeEntry[]): void {
             const openId = ++this.#openId;
             this.#okBtn.disabled = true;
-            const loading = document.createElement("div");
-            loading.className = "loading";
-            loading.textContent = "Loading themes\u2026";
-            this.#sections.replaceChildren(loading);
+            this.#sections.innerHTML = `<div class="loading">Loading themes\u2026</div>`;
             this.setAttribute("open", "");
 
             void fetchPaletteCards(themes).then((cards) => {
@@ -1471,6 +1427,210 @@ if (typeof HTMLElement !== "undefined") {
         installed: "Installed themes can't be edited. Copy it to make your own.",
     };
 
+    const THEME_EDITOR_STYLES = `
+        ${DESIGN_TOKENS}
+        ${BASE_STYLES}
+        ${OVERLAY_STYLES}
+        ${TEXT_STYLES}
+        .modal {
+            padding: var(--space-2xl);
+            display: flex; flex-direction: row;
+            width: min(803px, 100%); height: min(617px, 90vh);
+            overflow: hidden;
+        }
+        ${SPLIT_PANEL_STYLES}
+        .left-panel { width: 240px; overflow: hidden; }
+        .theme-list {
+            flex: 1; min-height: 0; overflow-y: auto;
+            display: flex; flex-direction: column; gap: var(--space-xs);
+        }
+        .list-section { display: flex; flex-direction: column; gap: var(--space-xs); }
+        .list-section .section-title { margin: var(--space-xs) 0 0; }
+        .list-footer {
+            flex-shrink: 0; display: flex; gap: var(--space-xs);
+            padding-top: var(--space-md); border-top: 1px solid var(--color-border-inner);
+        }
+        /* Same size as the actions row's Cancel and OK. */
+        .list-footer .cancel-btn {
+            flex: 1; padding-left: var(--space-sm); padding-right: var(--space-sm);
+        }
+        .list-footer .cancel-btn:disabled {
+            opacity: var(--opacity-disabled); cursor: not-allowed;
+            background: var(--color-surface-2);
+        }
+        ${EDITOR_CARD_STYLES}
+        ${PALETTE_CARD_VARS}
+        b3tty-palette-card { flex-shrink: 0; }
+        .name-section {
+            display: flex; flex-direction: column; gap: var(--space-2xs);
+            flex-shrink: 0; padding-bottom: var(--space-md);
+            border-bottom: 1px solid var(--color-border-inner);
+            margin-bottom: var(--space-sm);
+        }
+        .name-row {
+            display: flex; align-items: center; gap: var(--space-sm);
+        }
+        .name-section label { white-space: nowrap; min-width: 80px; }
+        .color-form {
+            flex: 1; overflow-y: auto; min-height: 0;
+            display: flex; flex-direction: column; gap: var(--space-2xs);
+        }
+        .color-form .section-title { padding: var(--space-xs) 0 var(--space-3xs); }
+        .color-form input:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
+        .field-row {
+            display: grid;
+            grid-template-columns: 140px 1fr 22px;
+            gap: var(--space-2xs); align-items: center;
+        }
+        .ansi-header, .ansi-row {
+            display: grid;
+            grid-template-columns: 68px 1fr 22px 1fr 22px;
+            gap: var(--space-2xs); align-items: center;
+        }
+        .color-form .ansi-header { padding: 0 0 var(--space-3xs); }
+        .field-row .field-desc, .field-row .field-error { grid-column: 2 / 4; }
+        ${FORM_INPUT_STYLES}
+        .swatch {
+            width: 18px; height: 18px;
+            border-radius: var(--radius-sm); border: 1px solid var(--color-border-subtle);
+            visibility: hidden;
+        }
+        .swatch.visible { visibility: visible; }
+        ${BUTTON_STYLES}
+        ${SAVE_ERROR_STYLES}
+        ${PROMPT_STYLES}
+    `;
+
+    /** The theme fields edited as colors, keyed by their Theme property. */
+    const CORE_COLORS = [
+        { key: "background", label: "Background" },
+        { key: "foreground", label: "Foreground" },
+        { key: "cursor", label: "Cursor" },
+        { key: "cursorAccent", label: "Cursor Accent" },
+        { key: "selectionBackground", label: "Selection Background" },
+        { key: "selectionForeground", label: "Selection Foreground" },
+    ];
+    const ANSI_COLORS = [
+        { label: "Black", normal: "black", bright: "brightBlack" },
+        { label: "Red", normal: "red", bright: "brightRed" },
+        { label: "Yellow", normal: "yellow", bright: "brightYellow" },
+        { label: "Green", normal: "green", bright: "brightGreen" },
+        { label: "Cyan", normal: "cyan", bright: "brightCyan" },
+        { label: "Blue", normal: "blue", bright: "brightBlue" },
+        { label: "Magenta", normal: "magenta", bright: "brightMagenta" },
+        { label: "White", normal: "white", bright: "brightWhite" },
+    ];
+
+    // These build markup from the hard-coded values in this file. Theme data must never
+    // pass through them; it reaches the form later, through input values.
+    const colorField = (key: string): string => `
+        <input type="text" class="color-input" placeholder="#rrggbb" data-color="${key}">
+        <span class="swatch" data-swatch="${key}"></span>
+    `;
+    const fieldNote = (className: string, text: string): string => `
+        <div class="field-row"><span class="${className}">${text}</span></div>
+    `;
+
+    const THEME_EDITOR_LEFT_PANEL = `
+        <div class="left-panel">
+            <div class="create-card">
+                <input type="radio" name="theme" checked>
+                <span>Create new theme</span>
+            </div>
+            <button class="action-card import-card">
+                <span class="action-card-icon" aria-hidden="true">⤓</span>
+                <span>Import theme…</span>
+            </button>
+            <!-- The theme cards, grouped by source (see #renderList); scrolls between the
+                 cards above and the footer below. -->
+            <div class="theme-list"></div>
+            <!-- Copy… and Delete… act on the selected theme, so both are disabled while
+                 "Create new theme" is selected. -->
+            <div class="list-footer">
+                <button class="cancel-btn copy-btn" disabled>Copy…</button>
+                <button class="cancel-btn delete-theme-btn" disabled>Delete…</button>
+            </div>
+        </div>
+    `;
+
+    const THEME_EDITOR_NAME_SECTION = `
+        <div class="name-section">
+            <div class="name-row">
+                <label class="field-label">Theme Name</label>
+                <input type="text" class="name-input" placeholder="Enter theme name">
+                <!-- Exports the selected saved user theme, so it is disabled while "Create
+                     new theme" or a built-in or installed theme is selected. -->
+                <button class="inline-btn" disabled>Export…</button>
+            </div>
+            <span class="name-error field-error">Cannot use a built-in or installed theme name</span>
+            <div class="read-only-note field-desc" role="status" hidden></div>
+        </div>
+    `;
+
+    const THEME_EDITOR_COLOR_FORM = `
+        <div class="color-form">
+            <div class="section-title">Core Colors</div>
+            ${CORE_COLORS.map(
+                ({ key, label }) => `
+                    <div class="field-row">
+                        <label class="field-label">${label}</label>
+                        ${colorField(key)}
+                    </div>
+                `
+            ).join("")}
+
+            <div class="section-title">ANSI Colors</div>
+            <div class="ansi-header section-title">
+                <span></span>
+                <span>Normal</span>
+                <span></span>
+                <span>Bright</span>
+                <span></span>
+            </div>
+            ${ANSI_COLORS.map(
+                ({ label, normal, bright }) => `
+                    <div class="ansi-row">
+                        <span class="color-label field-label">${label}</span>
+                        ${colorField(normal)}
+                        ${colorField(bright)}
+                    </div>
+                `
+            ).join("")}
+
+            <div class="section-title">Background Image</div>
+            <div class="field-row">
+                <label class="field-label">Image Path</label>
+                <input type="text" class="field-input bg-image-input" placeholder="/path/to/image.png or ~/image.png">
+            </div>
+            ${fieldNote(
+                "field-desc",
+                "Absolute path to a PNG, JPEG, GIF, or WebP file on the server. Leave blank for no image."
+            )}
+            <div class="field-row">
+                <label class="field-label">Transparency</label>
+                <input type="number" class="number-input bg-transparency-input" min="0" max="100" step="1"
+                    placeholder="${DEFAULT_BACKGROUND_IMAGE_TRANSPARENCY}">
+            </div>
+            ${fieldNote("field-error transparency-error", "Must be a whole number from 0 to 100")}
+            ${fieldNote(
+                "field-desc",
+                `How strongly the theme background tints the image: 0 shows the image fully, 100 hides it. Default ${DEFAULT_BACKGROUND_IMAGE_TRANSPARENCY}.`
+            )}
+        </div>
+    `;
+
+    const THEME_EDITOR_RIGHT_PANEL = `
+        <div class="right-panel">
+            ${THEME_EDITOR_NAME_SECTION}
+            ${THEME_EDITOR_COLOR_FORM}
+            <div class="actions">
+                <span class="save-error"></span>
+                <button class="cancel-btn">Cancel</button>
+                <button class="ok-btn" disabled>OK</button>
+            </div>
+        </div>
+    `;
+
     class B3ttyThemeEditorImpl extends HTMLElement implements B3ttyThemeEditor {
         #shadow: ShadowRoot;
         #leftPanel: HTMLDivElement;
@@ -1512,169 +1672,54 @@ if (typeof HTMLElement !== "undefined") {
             super();
             this.#shadow = this.attachShadow({ mode: "open" });
 
-            const style = document.createElement("style");
-            style.textContent = `
-                ${DESIGN_TOKENS}
-                ${BASE_STYLES}
-                ${OVERLAY_STYLES}
-                ${TEXT_STYLES}
-                .modal {
-                    padding: var(--space-2xl);
-                    display: flex; flex-direction: row;
-                    width: min(780px, 100%); height: min(560px, 90vh);
-                    overflow: hidden;
-                }
-                ${SPLIT_PANEL_STYLES}
-                .left-panel { width: 240px; overflow: hidden; }
-                .theme-list {
-                    flex: 1; min-height: 0; overflow-y: auto;
-                    display: flex; flex-direction: column; gap: var(--space-xs);
-                }
-                .list-section { display: flex; flex-direction: column; gap: var(--space-xs); }
-                .list-section .section-title { margin: var(--space-xs) 0 0; }
-                .list-footer {
-                    flex-shrink: 0; display: flex; gap: var(--space-xs);
-                    padding-top: var(--space-md); border-top: 1px solid var(--color-border-inner);
-                }
-                /* Same size as the actions row's Cancel and OK. */
-                .list-footer .cancel-btn {
-                    flex: 1; padding-left: var(--space-sm); padding-right: var(--space-sm);
-                }
-                .list-footer .cancel-btn:disabled {
-                    opacity: var(--opacity-disabled); cursor: not-allowed;
-                    background: var(--color-surface-2);
-                }
-                ${EDITOR_CARD_STYLES}
-                ${PALETTE_CARD_VARS}
-                b3tty-palette-card { flex-shrink: 0; }
-                .name-section {
-                    display: flex; flex-direction: column; gap: var(--space-2xs);
-                    flex-shrink: 0; padding-bottom: var(--space-md);
-                    border-bottom: 1px solid var(--color-border-inner);
-                    margin-bottom: var(--space-sm);
-                }
-                .name-row {
-                    display: flex; align-items: center; gap: var(--space-sm);
-                }
-                .name-section label { white-space: nowrap; min-width: 80px; }
-                .color-form {
-                    flex: 1; overflow-y: auto; min-height: 0;
-                    display: flex; flex-direction: column; gap: var(--space-2xs);
-                }
-                .color-form .section-title { padding: var(--space-xs) 0 var(--space-3xs); }
-                .color-form input:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
-                .field-row {
-                    display: grid;
-                    grid-template-columns: 140px 1fr 22px;
-                    gap: var(--space-2xs); align-items: center;
-                }
-                .ansi-header, .ansi-row {
-                    display: grid;
-                    grid-template-columns: 68px 1fr 22px 1fr 22px;
-                    gap: var(--space-2xs); align-items: center;
-                }
-                .color-form .ansi-header { padding: 0 0 var(--space-3xs); }
-                .field-row .field-desc, .field-row .field-error { grid-column: 2 / 4; }
-                ${FORM_INPUT_STYLES}
-                .swatch {
-                    width: 18px; height: 18px;
-                    border-radius: var(--radius-sm); border: 1px solid var(--color-border-subtle);
-                    visibility: hidden;
-                }
-                .swatch.visible { visibility: visible; }
-                ${BUTTON_STYLES}
-                ${SAVE_ERROR_STYLES}
-                ${PROMPT_STYLES}
+            const shadow = this.#shadow;
+            shadow.innerHTML = `
+                <style>${THEME_EDITOR_STYLES}</style>
+                <div class="overlay">
+                    <div class="modal" role="dialog" aria-modal="true">
+                        ${THEME_EDITOR_LEFT_PANEL}
+                        ${THEME_EDITOR_RIGHT_PANEL}
+                    </div>
+                </div>
             `;
+            this.#leftPanel = shadow.querySelector<HTMLDivElement>(".left-panel")!;
+            this.#createCard = shadow.querySelector<HTMLDivElement>(".create-card")!;
+            this.#createRadio = this.#createCard.querySelector<HTMLInputElement>("input")!;
+            this.#themeList = shadow.querySelector<HTMLDivElement>(".theme-list")!;
+            this.#copyBtn = shadow.querySelector<HTMLButtonElement>(".copy-btn")!;
+            this.#deleteBtn = shadow.querySelector<HTMLButtonElement>(".delete-theme-btn")!;
+            this.#nameInput = shadow.querySelector<HTMLInputElement>(".name-input")!;
+            this.#nameError = shadow.querySelector<HTMLSpanElement>(".name-error")!;
+            this.#exportBtn = shadow.querySelector<HTMLButtonElement>(".name-row .inline-btn")!;
+            this.#readOnlyNote = shadow.querySelector<HTMLDivElement>(".read-only-note")!;
+            this.#bgImageInput = shadow.querySelector<HTMLInputElement>(".bg-image-input")!;
+            this.#bgTransparencyInput = shadow.querySelector<HTMLInputElement>(".bg-transparency-input")!;
+            this.#bgTransparencyError = shadow.querySelector<HTMLSpanElement>(".transparency-error")!;
+            this.#saveError = shadow.querySelector<HTMLSpanElement>(".right-panel .save-error")!;
+            this.#okBtn = shadow.querySelector<HTMLButtonElement>(".right-panel .ok-btn")!;
+            const importCard = shadow.querySelector<HTMLButtonElement>(".import-card")!;
+            const colorForm = shadow.querySelector<HTMLDivElement>(".color-form")!;
+            const cancelBtn = shadow.querySelector<HTMLButtonElement>(".right-panel .actions .cancel-btn")!;
 
-            const overlay = document.createElement("div");
-            overlay.className = "overlay";
-            const modal = document.createElement("div");
-            modal.className = "modal";
-            modal.setAttribute("role", "dialog");
-            modal.setAttribute("aria-modal", "true");
+            for (const input of Array.from(colorForm.querySelectorAll<HTMLInputElement>("[data-color]"))) {
+                this.#colorInputs.set(input.dataset.color!, input);
+            }
+            for (const swatch of Array.from(colorForm.querySelectorAll<HTMLSpanElement>("[data-swatch]"))) {
+                this.#swatches.set(swatch.dataset.swatch!, swatch);
+            }
 
-            // --- Left panel ---
-            this.#leftPanel = document.createElement("div");
-            this.#leftPanel.className = "left-panel";
+            // Last, since setting the template would replace it.
+            this.#prompt = buildPromptLayer(shadow);
 
-            this.#createCard = document.createElement("div");
-            this.#createCard.className = "create-card";
-            this.#createRadio = document.createElement("input");
-            this.#createRadio.type = "radio";
-            this.#createRadio.name = "theme";
-            this.#createRadio.checked = true;
-            const createLabel = document.createElement("span");
-            createLabel.textContent = "Create new theme";
-            this.#createCard.appendChild(this.#createRadio);
-            this.#createCard.appendChild(createLabel);
-            this.#leftPanel.appendChild(this.#createCard);
-
-            const importCard = document.createElement("button");
-            importCard.className = "action-card";
-            const importIcon = document.createElement("span");
-            importIcon.className = "action-card-icon";
-            importIcon.setAttribute("aria-hidden", "true");
-            importIcon.textContent = "⤓";
-            const importLabel = document.createElement("span");
-            importLabel.textContent = "Import theme…";
-            importCard.appendChild(importIcon);
-            importCard.appendChild(importLabel);
+            // Listeners
             importCard.addEventListener("click", () => {
                 const detail: ThemeImportRequest = { opener: importCard };
                 this.dispatchEvent(
                     new CustomEvent("b3tty-open-theme-import", { bubbles: true, composed: true, detail })
                 );
             });
-            this.#leftPanel.appendChild(importCard);
-
-            // The theme cards, grouped by source (see #renderList); scrolls between the
-            // cards above and the footer below.
-            this.#themeList = document.createElement("div");
-            this.#themeList.className = "theme-list";
-            this.#leftPanel.appendChild(this.#themeList);
-
-            // Copy… and Delete… act on the selected theme, so both are disabled while
-            // "Create new theme" is selected.
-            const footer = document.createElement("div");
-            footer.className = "list-footer";
-            this.#copyBtn = document.createElement("button");
-            this.#copyBtn.className = "cancel-btn";
-            this.#copyBtn.textContent = "Copy…";
-            this.#copyBtn.disabled = true;
             this.#copyBtn.addEventListener("click", () => void this.#copySelected());
-            this.#deleteBtn = document.createElement("button");
-            this.#deleteBtn.className = "cancel-btn";
-            this.#deleteBtn.textContent = "Delete…";
-            this.#deleteBtn.disabled = true;
             this.#deleteBtn.addEventListener("click", () => void this.#deleteSelected());
-            footer.append(this.#copyBtn, this.#deleteBtn);
-            this.#leftPanel.appendChild(footer);
-
-            // --- Right panel ---
-            const rightPanel = document.createElement("div");
-            rightPanel.className = "right-panel";
-
-            const nameSection = document.createElement("div");
-            nameSection.className = "name-section";
-            const nameRow = document.createElement("div");
-            nameRow.className = "name-row";
-            const nameLabel = document.createElement("label");
-            nameLabel.className = "field-label";
-            nameLabel.textContent = "Theme Name";
-            this.#nameInput = document.createElement("input");
-            this.#nameInput.type = "text";
-            this.#nameInput.className = "name-input";
-            this.#nameInput.placeholder = "Enter theme name";
-            this.#nameError = document.createElement("span");
-            this.#nameError.className = "name-error field-error";
-            this.#nameError.textContent = "Cannot use a built-in or installed theme name";
-            // Exports the selected saved user theme, so it is disabled while "Create
-            // new theme" or a built-in or installed theme is selected.
-            this.#exportBtn = document.createElement("button");
-            this.#exportBtn.className = "inline-btn";
-            this.#exportBtn.textContent = "Export…";
-            this.#exportBtn.disabled = true;
             this.#exportBtn.addEventListener("click", () => {
                 if (!this.#selectedName || this.#readOnly) return;
                 const detail: ThemeExportRequest = {
@@ -1686,155 +1731,17 @@ if (typeof HTMLElement !== "undefined") {
                     new CustomEvent("b3tty-open-theme-export", { bubbles: true, composed: true, detail })
                 );
             });
-            nameRow.appendChild(nameLabel);
-            nameRow.appendChild(this.#nameInput);
-            nameRow.appendChild(this.#exportBtn);
-            nameSection.appendChild(nameRow);
-            nameSection.appendChild(this.#nameError);
-            this.#readOnlyNote = document.createElement("div");
-            this.#readOnlyNote.className = "field-desc";
-            this.#readOnlyNote.setAttribute("role", "status");
-            this.#readOnlyNote.hidden = true;
-            nameSection.appendChild(this.#readOnlyNote);
 
-            const colorForm = document.createElement("div");
-            colorForm.className = "color-form";
-
-            const coreTitle = document.createElement("div");
-            coreTitle.className = "section-title";
-            coreTitle.textContent = "Core Colors";
-            colorForm.appendChild(coreTitle);
-
-            for (const { key, label } of [
-                { key: "background", label: "Background" },
-                { key: "foreground", label: "Foreground" },
-                { key: "cursor", label: "Cursor" },
-                { key: "cursorAccent", label: "Cursor Accent" },
-                { key: "selectionBackground", label: "Selection Background" },
-                { key: "selectionForeground", label: "Selection Foreground" },
-            ]) {
-                const [row, input, swatch] = this.#makeColorRow(label);
-                this.#colorInputs.set(key, input);
-                this.#swatches.set(key, swatch);
-                colorForm.appendChild(row);
-            }
-
-            const ansiTitle = document.createElement("div");
-            ansiTitle.className = "section-title";
-            ansiTitle.textContent = "ANSI Colors";
-            colorForm.appendChild(ansiTitle);
-
-            const ansiHeader = document.createElement("div");
-            ansiHeader.className = "ansi-header section-title";
-            ansiHeader.appendChild(document.createElement("span")); // color name column
-            const hNormal = document.createElement("span");
-            hNormal.textContent = "Normal";
-            ansiHeader.appendChild(hNormal);
-            ansiHeader.appendChild(document.createElement("span")); // swatch placeholder
-            const hBright = document.createElement("span");
-            hBright.textContent = "Bright";
-            ansiHeader.appendChild(hBright);
-            ansiHeader.appendChild(document.createElement("span")); // swatch placeholder
-            colorForm.appendChild(ansiHeader);
-
-            for (const [colorName, normalKey, brightKey] of [
-                ["Black", "black", "brightBlack"],
-                ["Red", "red", "brightRed"],
-                ["Yellow", "yellow", "brightYellow"],
-                ["Green", "green", "brightGreen"],
-                ["Cyan", "cyan", "brightCyan"],
-                ["Blue", "blue", "brightBlue"],
-                ["Magenta", "magenta", "brightMagenta"],
-                ["White", "white", "brightWhite"],
-            ] as [string, string, string][]) {
-                const ansiRow = document.createElement("div");
-                ansiRow.className = "ansi-row";
-                const colorLabel = document.createElement("span");
-                colorLabel.className = "color-label field-label";
-                colorLabel.textContent = colorName;
-                ansiRow.appendChild(colorLabel);
-                for (const key of [normalKey, brightKey]) {
-                    const input = document.createElement("input");
-                    input.type = "text";
-                    input.className = "color-input";
-                    input.placeholder = "#rrggbb";
-                    const swatch = document.createElement("span");
-                    swatch.className = "swatch";
-                    input.addEventListener("input", () => {
-                        this.#updateSwatch(swatch, input.value);
-                        this.#validateForm();
-                    });
-                    this.#colorInputs.set(key, input);
-                    this.#swatches.set(key, swatch);
-                    ansiRow.appendChild(input);
-                    ansiRow.appendChild(swatch);
-                }
-                colorForm.appendChild(ansiRow);
-            }
-
-            const bgTitle = document.createElement("div");
-            bgTitle.className = "section-title";
-            bgTitle.textContent = "Background Image";
-            colorForm.appendChild(bgTitle);
-
-            this.#bgImageInput = document.createElement("input");
-            this.#bgImageInput.type = "text";
-            this.#bgImageInput.className = "field-input";
-            this.#bgImageInput.placeholder = "/path/to/image.png or ~/image.png";
-            colorForm.appendChild(this.#makeFieldRow("Image Path", this.#bgImageInput));
-            colorForm.appendChild(
-                this.#makeFieldNote(
-                    "field-desc",
-                    "Absolute path to a PNG, JPEG, GIF, or WebP file on the server. Leave blank for no image."
-                )
-            );
-
-            this.#bgTransparencyInput = document.createElement("input");
-            this.#bgTransparencyInput.type = "number";
-            this.#bgTransparencyInput.className = "number-input";
-            this.#bgTransparencyInput.min = "0";
-            this.#bgTransparencyInput.max = "100";
-            this.#bgTransparencyInput.step = "1";
-            this.#bgTransparencyInput.placeholder = String(DEFAULT_BACKGROUND_IMAGE_TRANSPARENCY);
+            // One listener for every color input; each input's key names its swatch.
+            colorForm.addEventListener("input", (e: Event) => {
+                const input = e.target as HTMLInputElement;
+                const key = input.dataset.color;
+                if (!key) return;
+                this.#updateSwatch(this.#swatches.get(key)!, input.value);
+                this.#validateForm();
+            });
             this.#bgTransparencyInput.addEventListener("input", () => this.#validateForm());
-            colorForm.appendChild(this.#makeFieldRow("Transparency", this.#bgTransparencyInput));
-            const transparencyError = this.#makeFieldNote("field-error", "Must be a whole number from 0 to 100");
-            this.#bgTransparencyError = transparencyError.firstElementChild as HTMLSpanElement;
-            colorForm.appendChild(transparencyError);
-            colorForm.appendChild(
-                this.#makeFieldNote(
-                    "field-desc",
-                    `How strongly the theme background tints the image: 0 shows the image fully, 100 hides it. Default ${DEFAULT_BACKGROUND_IMAGE_TRANSPARENCY}.`
-                )
-            );
 
-            const actions = document.createElement("div");
-            actions.className = "actions";
-            this.#saveError = document.createElement("span");
-            this.#saveError.className = "save-error";
-            const cancelBtn = document.createElement("button");
-            cancelBtn.className = "cancel-btn";
-            cancelBtn.textContent = "Cancel";
-            this.#okBtn = document.createElement("button");
-            this.#okBtn.className = "ok-btn";
-            this.#okBtn.textContent = "OK";
-            this.#okBtn.disabled = true;
-            actions.appendChild(this.#saveError);
-            actions.appendChild(cancelBtn);
-            actions.appendChild(this.#okBtn);
-
-            rightPanel.appendChild(nameSection);
-            rightPanel.appendChild(colorForm);
-            rightPanel.appendChild(actions);
-
-            modal.appendChild(this.#leftPanel);
-            modal.appendChild(rightPanel);
-            overlay.appendChild(modal);
-            this.#shadow.appendChild(style);
-            this.#shadow.appendChild(overlay);
-            this.#prompt = buildPromptLayer(this.#shadow);
-
-            // Listeners
             this.#nameInput.addEventListener("input", () => this.#validateForm());
 
             this.#createCard.addEventListener("click", () => this.#selectCreate());
@@ -1845,51 +1752,6 @@ if (typeof HTMLElement !== "undefined") {
 
             cancelBtn.addEventListener("click", () => this.close());
             this.#okBtn.addEventListener("click", () => void this.#handleOk());
-        }
-
-        #makeColorRow(label: string): [HTMLDivElement, HTMLInputElement, HTMLSpanElement] {
-            const row = document.createElement("div");
-            row.className = "field-row";
-            const lbl = document.createElement("label");
-            lbl.className = "field-label";
-            lbl.textContent = label;
-            const input = document.createElement("input");
-            input.type = "text";
-            input.className = "color-input";
-            input.placeholder = "#rrggbb";
-            const swatch = document.createElement("span");
-            swatch.className = "swatch";
-            input.addEventListener("input", () => {
-                this.#updateSwatch(swatch, input.value);
-                this.#validateForm();
-            });
-            row.appendChild(lbl);
-            row.appendChild(input);
-            row.appendChild(swatch);
-            return [row, input, swatch];
-        }
-
-        /** A labeled .field-row holding a non-color control (no swatch). */
-        #makeFieldRow(label: string, control: HTMLInputElement): HTMLDivElement {
-            const row = document.createElement("div");
-            row.className = "field-row";
-            const lbl = document.createElement("label");
-            lbl.className = "field-label";
-            lbl.textContent = label;
-            row.appendChild(lbl);
-            row.appendChild(control);
-            return row;
-        }
-
-        /** A .field-row holding a note (help text or error) aligned under the controls. */
-        #makeFieldNote(className: string, text: string): HTMLDivElement {
-            const row = document.createElement("div");
-            row.className = "field-row";
-            const note = document.createElement("span");
-            note.className = className;
-            note.textContent = text;
-            row.appendChild(note);
-            return row;
         }
 
         #updateSwatch(swatch: HTMLSpanElement, value: string): void {
@@ -2296,6 +2158,141 @@ if (typeof HTMLElement !== "undefined") {
 
     customElements.define("b3tty-theme-editor", B3ttyThemeEditorImpl);
 
+    const PROFILE_EDITOR_STYLES = `
+        ${DESIGN_TOKENS}
+        ${BASE_STYLES}
+        ${OVERLAY_STYLES}
+        ${TEXT_STYLES}
+        .modal {
+            padding: var(--space-2xl);
+            display: flex; flex-direction: row;
+            width: min(680px, 100%); height: min(500px, 90vh);
+            overflow: hidden;
+        }
+        ${SPLIT_PANEL_STYLES}
+        .left-panel { width: 200px; }
+        ${EDITOR_CARD_STYLES}
+        .fields-section {
+            display: flex; flex-direction: column; gap: var(--space-xs);
+            flex-shrink: 0; padding-bottom: var(--space-md);
+            border-bottom: 1px solid var(--color-border-inner);
+            margin-bottom: var(--space-sm);
+        }
+        .field-row {
+            display: grid;
+            grid-template-columns: 120px 1fr;
+            gap: var(--space-xs); align-items: center;
+        }
+        .field-row label { white-space: nowrap; }
+        .field-row label .required { color: var(--color-destructive); }
+        .name-error { grid-column: 2; }
+        .commands-section {
+            flex: 1; display: flex; flex-direction: column; gap: var(--space-2xs);
+            min-height: 0;
+        }
+        .commands-label { flex-shrink: 0; }
+        .commands-wrapper {
+            display: flex;
+            border: 1px solid var(--color-border);
+            border-radius: var(--radius-sm);
+            overflow: hidden;
+            flex: 1; min-height: 0;
+            background: var(--color-surface-3);
+            font-family: var(--font-family-mono);
+            font-size: var(--font-size-sm);
+            line-height: var(--line-height-body);
+        }
+        .line-numbers {
+            width: 32px;
+            padding: var(--space-2xs);
+            background: var(--color-surface-1);
+            color: var(--color-text-faint);
+            text-align: right;
+            user-select: none;
+            overflow: hidden;
+            white-space: pre;
+            line-height: inherit;
+            flex-shrink: 0;
+            box-sizing: border-box;
+        }
+        .commands-area {
+            flex: 1;
+            padding: var(--space-2xs) var(--space-xs);
+            border: none;
+            outline: none;
+            resize: none;
+            background: transparent;
+            color: var(--color-text);
+            font-family: inherit;
+            font-size: inherit;
+            line-height: inherit;
+            overflow: auto;
+            white-space: pre;
+            box-sizing: border-box;
+        }
+        ${FORM_INPUT_STYLES}
+        ${BUTTON_STYLES}
+        ${SAVE_ERROR_STYLES}
+        /* .delete-btn already claims margin-right: auto in this
+           actions bar; save-error sits immediately to its right
+           instead of also trying to auto-push. */
+        .save-error { margin-right: 0; }
+    `;
+
+    /** The profile editor's text fields, keyed by data-field. */
+    const PROFILE_FIELDS = [
+        { key: "shell", label: "Shell", placeholder: "e.g. /bin/zsh" },
+        { key: "title", label: "Title", placeholder: "Terminal window title" },
+        { key: "working-directory", label: "Working Directory", placeholder: "e.g. ~/projects" },
+        { key: "root", label: "Root", placeholder: "e.g. /" },
+    ];
+
+    // Builds markup from the hard-coded values above; profile data reaches the form
+    // later, through input values.
+    const profileField = (key: string, label: string, placeholder: string): string => `
+        <div class="field-row">
+            <label class="field-label">${label}</label>
+            <input type="text" class="field-input" placeholder="${placeholder}" data-field="${key}">
+        </div>
+    `;
+
+    // The profile cards are added by open() (see #makeProfileCard), since their
+    // names are user data.
+    const PROFILE_EDITOR_LEFT_PANEL = `
+        <div class="left-panel">
+            <div class="create-card" selected>
+                <input type="radio" name="profile" checked>
+                <span>Create new profile</span>
+            </div>
+        </div>
+    `;
+
+    const PROFILE_EDITOR_RIGHT_PANEL = `
+        <div class="right-panel">
+            <div class="fields-section">
+                <div class="field-row">
+                    <label class="field-label">Profile Name <span class="required">*</span></label>
+                    <input type="text" class="field-input" placeholder="Enter profile name" data-field="name">
+                    <span class="name-error field-error">Cannot use 'default' as a profile name</span>
+                </div>
+                ${PROFILE_FIELDS.map(({ key, label, placeholder }) => profileField(key, label, placeholder)).join("")}
+            </div>
+            <div class="commands-section">
+                <div class="commands-label field-label">Commands (one per line, run on startup):</div>
+                <div class="commands-wrapper">
+                    <div class="line-numbers">1</div>
+                    <textarea class="commands-area" placeholder="npm start" spellcheck="false" wrap="off"></textarea>
+                </div>
+            </div>
+            <div class="actions">
+                <button class="delete-btn" style="display: none;">Delete Profile</button>
+                <span class="save-error"></span>
+                <button class="cancel-btn">Cancel</button>
+                <button class="ok-btn" disabled>OK</button>
+            </div>
+        </div>
+    `;
+
     class B3ttyProfileEditorImpl extends HTMLElement implements B3ttyProfileEditor {
         #shadow: ShadowRoot;
         #leftPanel: HTMLDivElement;
@@ -2320,227 +2317,32 @@ if (typeof HTMLElement !== "undefined") {
             super();
             this.#shadow = this.attachShadow({ mode: "open" });
 
-            const style = document.createElement("style");
-            style.textContent = `
-                ${DESIGN_TOKENS}
-                ${BASE_STYLES}
-                ${OVERLAY_STYLES}
-                ${TEXT_STYLES}
-                .modal {
-                    padding: var(--space-2xl);
-                    display: flex; flex-direction: row;
-                    width: min(680px, 100%); height: min(500px, 90vh);
-                    overflow: hidden;
-                }
-                ${SPLIT_PANEL_STYLES}
-                .left-panel { width: 200px; }
-                ${EDITOR_CARD_STYLES}
-                .fields-section {
-                    display: flex; flex-direction: column; gap: var(--space-xs);
-                    flex-shrink: 0; padding-bottom: var(--space-md);
-                    border-bottom: 1px solid var(--color-border-inner);
-                    margin-bottom: var(--space-sm);
-                }
-                .field-row {
-                    display: grid;
-                    grid-template-columns: 120px 1fr;
-                    gap: var(--space-xs); align-items: center;
-                }
-                .field-row label { white-space: nowrap; }
-                .field-row label .required { color: var(--color-destructive); }
-                .name-error { grid-column: 2; }
-                .commands-section {
-                    flex: 1; display: flex; flex-direction: column; gap: var(--space-2xs);
-                    min-height: 0;
-                }
-                .commands-label { flex-shrink: 0; }
-                .commands-wrapper {
-                    display: flex;
-                    border: 1px solid var(--color-border);
-                    border-radius: var(--radius-sm);
-                    overflow: hidden;
-                    flex: 1; min-height: 0;
-                    background: var(--color-surface-3);
-                    font-family: var(--font-family-mono);
-                    font-size: var(--font-size-sm);
-                    line-height: var(--line-height-body);
-                }
-                .line-numbers {
-                    width: 32px;
-                    padding: var(--space-2xs);
-                    background: var(--color-surface-1);
-                    color: var(--color-text-faint);
-                    text-align: right;
-                    user-select: none;
-                    overflow: hidden;
-                    white-space: pre;
-                    line-height: inherit;
-                    flex-shrink: 0;
-                    box-sizing: border-box;
-                }
-                .commands-area {
-                    flex: 1;
-                    padding: var(--space-2xs) var(--space-xs);
-                    border: none;
-                    outline: none;
-                    resize: none;
-                    background: transparent;
-                    color: var(--color-text);
-                    font-family: inherit;
-                    font-size: inherit;
-                    line-height: inherit;
-                    overflow: auto;
-                    white-space: pre;
-                    box-sizing: border-box;
-                }
-                ${FORM_INPUT_STYLES}
-                ${BUTTON_STYLES}
-                ${SAVE_ERROR_STYLES}
-                /* .delete-btn already claims margin-right: auto in this
-                   actions bar; save-error sits immediately to its right
-                   instead of also trying to auto-push. */
-                .save-error { margin-right: 0; }
+            const shadow = this.#shadow;
+            shadow.innerHTML = `
+                <style>${PROFILE_EDITOR_STYLES}</style>
+                <div class="overlay">
+                    <div class="modal" role="dialog" aria-modal="true">
+                        ${PROFILE_EDITOR_LEFT_PANEL}
+                        ${PROFILE_EDITOR_RIGHT_PANEL}
+                    </div>
+                </div>
             `;
-
-            const overlay = document.createElement("div");
-            overlay.className = "overlay";
-            const modal = document.createElement("div");
-            modal.className = "modal";
-            modal.setAttribute("role", "dialog");
-            modal.setAttribute("aria-modal", "true");
-
-            // --- Left panel ---
-            this.#leftPanel = document.createElement("div");
-            this.#leftPanel.className = "left-panel";
-
-            this.#createCard = document.createElement("div");
-            this.#createCard.className = "create-card";
-            this.#createCard.setAttribute("selected", "");
-            this.#createRadio = document.createElement("input");
-            this.#createRadio.type = "radio";
-            this.#createRadio.name = "profile";
-            this.#createRadio.checked = true;
-            const createLabel = document.createElement("span");
-            createLabel.textContent = "Create new profile";
-            this.#createCard.appendChild(this.#createRadio);
-            this.#createCard.appendChild(createLabel);
-            this.#leftPanel.appendChild(this.#createCard);
-
-            // --- Right panel ---
-            const rightPanel = document.createElement("div");
-            rightPanel.className = "right-panel";
-
-            const fieldsSection = document.createElement("div");
-            fieldsSection.className = "fields-section";
-
-            const makeFieldRow = (
-                labelText: string,
-                required: boolean,
-                placeholder: string
-            ): [HTMLDivElement, HTMLInputElement] => {
-                const row = document.createElement("div");
-                row.className = "field-row";
-                const lbl = document.createElement("label");
-                lbl.className = "field-label";
-                if (required) {
-                    lbl.innerHTML = `${labelText} <span class="required">*</span>`;
-                } else {
-                    lbl.textContent = labelText;
-                }
-                const input = document.createElement("input");
-                input.type = "text";
-                input.className = "field-input";
-                input.placeholder = placeholder;
-                row.appendChild(lbl);
-                row.appendChild(input);
-                return [row, input];
-            };
-
-            const [nameRow, nameInput] = makeFieldRow("Profile Name", true, "Enter profile name");
-            this.#nameInput = nameInput;
-            this.#nameError = document.createElement("span");
-            this.#nameError.className = "name-error field-error";
-            this.#nameError.textContent = "Cannot use 'default' as a profile name";
-            nameRow.appendChild(this.#nameError);
-            fieldsSection.appendChild(nameRow);
-
-            const [shellRow, shellInput] = makeFieldRow("Shell", false, "e.g. /bin/zsh");
-            this.#shellInput = shellInput;
-            fieldsSection.appendChild(shellRow);
-
-            const [titleRow, titleInput] = makeFieldRow("Title", false, "Terminal window title");
-            this.#titleInput = titleInput;
-            fieldsSection.appendChild(titleRow);
-
-            const [wdRow, wdInput] = makeFieldRow("Working Directory", false, "e.g. ~/projects");
-            this.#wdInput = wdInput;
-            fieldsSection.appendChild(wdRow);
-
-            const [rootRow, rootInput] = makeFieldRow("Root", false, "e.g. /");
-            this.#rootInput = rootInput;
-            fieldsSection.appendChild(rootRow);
-
-            // --- Commands editor ---
-            const commandsSection = document.createElement("div");
-            commandsSection.className = "commands-section";
-
-            const commandsLabel = document.createElement("div");
-            commandsLabel.className = "commands-label field-label";
-            commandsLabel.textContent = "Commands (one per line, run on startup):";
-            commandsSection.appendChild(commandsLabel);
-
-            const commandsWrapper = document.createElement("div");
-            commandsWrapper.className = "commands-wrapper";
-
-            this.#lineNumbers = document.createElement("div");
-            this.#lineNumbers.className = "line-numbers";
-            this.#lineNumbers.textContent = "1";
-
-            this.#commandsArea = document.createElement("textarea");
-            this.#commandsArea.className = "commands-area";
-            this.#commandsArea.placeholder = "npm start";
-            this.#commandsArea.spellcheck = false;
-            this.#commandsArea.setAttribute("wrap", "off");
-
-            commandsWrapper.appendChild(this.#lineNumbers);
-            commandsWrapper.appendChild(this.#commandsArea);
-            commandsSection.appendChild(commandsWrapper);
-
-            // --- Actions ---
-            const actions = document.createElement("div");
-            actions.className = "actions";
-
-            this.#deleteBtn = document.createElement("button");
-            this.#deleteBtn.className = "delete-btn";
-            this.#deleteBtn.textContent = "Delete Profile";
-            this.#deleteBtn.style.display = "none";
-
-            this.#saveError = document.createElement("span");
-            this.#saveError.className = "save-error";
-
-            const cancelBtn = document.createElement("button");
-            cancelBtn.className = "cancel-btn";
-            cancelBtn.textContent = "Cancel";
-
-            this.#okBtn = document.createElement("button");
-            this.#okBtn.className = "ok-btn";
-            this.#okBtn.textContent = "OK";
-            this.#okBtn.disabled = true;
-
-            actions.appendChild(this.#deleteBtn);
-            actions.appendChild(this.#saveError);
-            actions.appendChild(cancelBtn);
-            actions.appendChild(this.#okBtn);
-
-            // --- Assemble ---
-            rightPanel.appendChild(fieldsSection);
-            rightPanel.appendChild(commandsSection);
-            rightPanel.appendChild(actions);
-            modal.appendChild(this.#leftPanel);
-            modal.appendChild(rightPanel);
-            overlay.appendChild(modal);
-            this.#shadow.appendChild(style);
-            this.#shadow.appendChild(overlay);
+            const field = (key: string) => shadow.querySelector<HTMLInputElement>(`[data-field="${key}"]`)!;
+            this.#leftPanel = shadow.querySelector<HTMLDivElement>(".left-panel")!;
+            this.#createCard = shadow.querySelector<HTMLDivElement>(".create-card")!;
+            this.#createRadio = this.#createCard.querySelector<HTMLInputElement>("input")!;
+            this.#nameInput = field("name");
+            this.#nameError = shadow.querySelector<HTMLSpanElement>(".name-error")!;
+            this.#shellInput = field("shell");
+            this.#titleInput = field("title");
+            this.#wdInput = field("working-directory");
+            this.#rootInput = field("root");
+            this.#lineNumbers = shadow.querySelector<HTMLDivElement>(".line-numbers")!;
+            this.#commandsArea = shadow.querySelector<HTMLTextAreaElement>(".commands-area")!;
+            this.#deleteBtn = shadow.querySelector<HTMLButtonElement>(".delete-btn")!;
+            this.#saveError = shadow.querySelector<HTMLSpanElement>(".save-error")!;
+            this.#okBtn = shadow.querySelector<HTMLButtonElement>(".ok-btn")!;
+            const cancelBtn = shadow.querySelector<HTMLButtonElement>(".cancel-btn")!;
 
             // --- Event listeners ---
             this.#nameInput.addEventListener("input", () => this.#validateForm());
@@ -3236,61 +3038,42 @@ if (typeof HTMLElement !== "undefined") {
             super();
             this.#shadow = this.attachShadow({ mode: "open" });
 
-            const style = document.createElement("style");
-            style.textContent = `
-                ${DESIGN_TOKENS}
-                ${BASE_STYLES}
-                ${OVERLAY_STYLES}
-                ${TEXT_STYLES}
-                .modal {
-                    padding: var(--space-3xl) var(--space-3xl) var(--space-2xl);
-                    display: flex; flex-direction: column; align-items: center; gap: var(--space-xs);
-                    max-width: 420px; width: 100%;
-                    text-align: center;
-                }
-                .title { font-weight: var(--font-weight-bold); }
-                .byline {
-                    margin: 0; font-size: var(--font-size-md); font-weight: var(--font-weight-regular);
-                    color: var(--color-text-subtle);
-                }
-                .version {
-                    margin: 0; font-size: var(--font-size-xs);
-                    color: var(--color-muted);
-                }
-                .actions { justify-content: center; margin-top: var(--space-lg); }
-                ${BUTTON_STYLES}
+            this.#shadow.innerHTML = `
+                <style>
+                    ${DESIGN_TOKENS}
+                    ${BASE_STYLES}
+                    ${OVERLAY_STYLES}
+                    ${TEXT_STYLES}
+                    .modal {
+                        padding: var(--space-3xl) var(--space-3xl) var(--space-2xl);
+                        display: flex; flex-direction: column; align-items: center; gap: var(--space-xs);
+                        max-width: 420px; width: 100%;
+                        text-align: center;
+                    }
+                    .title { font-weight: var(--font-weight-bold); }
+                    .byline {
+                        margin: 0; font-size: var(--font-size-md); font-weight: var(--font-weight-regular);
+                        color: var(--color-text-subtle);
+                    }
+                    .version {
+                        margin: 0; font-size: var(--font-size-xs);
+                        color: var(--color-muted);
+                    }
+                    .actions { justify-content: center; margin-top: var(--space-lg); }
+                    ${BUTTON_STYLES}
+                </style>
+                <div class="overlay">
+                    <div class="modal" role="dialog" aria-modal="true">
+                        <p class="title modal-title">b3tty - A better, browser-based terminal emulator</p>
+                        <p class="byline">By Chris Morrow</p>
+                        <p class="version">Version ${B3TTY_VERSION}</p>
+                        <div class="actions">
+                            <button class="ok-btn">OK</button>
+                        </div>
+                    </div>
+                </div>
             `;
-
-            const overlay = document.createElement("div");
-            overlay.className = "overlay";
-            const modal = document.createElement("div");
-            modal.className = "modal";
-            modal.setAttribute("role", "dialog");
-            modal.setAttribute("aria-modal", "true");
-
-            const title = document.createElement("p");
-            title.className = "title modal-title";
-            title.textContent = "b3tty - A better, browser-based terminal emulator";
-
-            const byline = document.createElement("p");
-            byline.className = "byline";
-            byline.textContent = "By Chris Morrow";
-
-            const version = document.createElement("p");
-            version.className = "version";
-            version.textContent = `Version ${B3TTY_VERSION}`;
-
-            const actions = document.createElement("div");
-            actions.className = "actions";
-            const okBtn = document.createElement("button");
-            okBtn.className = "ok-btn";
-            okBtn.textContent = "OK";
-            okBtn.addEventListener("click", () => this.close());
-            actions.appendChild(okBtn);
-
-            modal.append(title, byline, version, actions);
-            overlay.appendChild(modal);
-            this.#shadow.append(style, overlay);
+            this.#shadow.querySelector(".ok-btn")!.addEventListener("click", () => this.close());
         }
 
         open(): void {
