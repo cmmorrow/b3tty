@@ -4,7 +4,7 @@
  *   bun design-system/build.ts <out-dir>     (run from src/client; see `make design-system`)
  *
  * Writes <out-dir>/bundle.js, one minified classic script (IIFE) containing
- * the real components.ts and design.ts, with ../api.ts replaced by
+ * the real components/ and design.ts, with ../api.ts replaced by
  * mock-api.ts so no b3tty server is needed. It defines every b3tty-* custom
  * element and window.B3tty. Upload it as the design system's
  * project/components/bundle.js.
@@ -59,8 +59,8 @@ const result = await Bun.build({
         {
             name: "b3tty-design-system",
             setup(build) {
-                // components.ts imports "./api.ts"; serve the fixture-backed stand-in instead.
-                build.onResolve({ filter: /^\.\/api\.ts$/ }, () => ({ path: join(import.meta.dir, "mock-api.ts") }));
+                // The components import "../api.ts"; serve the fixture-backed stand-in instead.
+                build.onResolve({ filter: /^\.\.\/api\.ts$/ }, () => ({ path: join(import.meta.dir, "mock-api.ts") }));
                 build.onResolve({ filter: /^b3tty:builtin-themes$/ }, (args) => ({
                     path: args.path,
                     namespace: "b3tty",

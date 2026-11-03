@@ -29,7 +29,7 @@ import type {
     ThemeExportRequest,
     ThemeImportRequest,
     ThemeImportedDetail,
-} from "./components.ts";
+} from "./components/index.ts";
 
 export const THEME_KEYS = [
     "foreground",
@@ -934,7 +934,7 @@ export async function main(config: TermConfig): Promise<void> {
     // that has to run before the WebSocket can open. Neither the web components
     // (menu bar, dialogs, editors) nor the link/image addons are needed to
     // compute cols/rows or open the WebSocket.
-    const componentsPromise = import("./components.ts");
+    const componentsPromise = import("./components/index.ts");
     const extraAddonsPromise = Promise.all([import("@xterm/addon-web-links"), import("@xterm/addon-image")]);
 
     const { wsProtocol } = getProtocols(config.tls);
@@ -1204,6 +1204,6 @@ if (typeof window !== "undefined") {
         // The first-run setup page (setup.tmpl) loads this same bundle but has no
         // window.B3TTY. Its <b3tty-theme-selector> is defined in the components
         // chunk, which main() would otherwise be the only thing to import.
-        void import("./components.ts");
+        void import("./components/index.ts");
     }
 }

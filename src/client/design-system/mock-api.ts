@@ -1,7 +1,7 @@
 /**
  * Stand-in for ../api.ts with the same exports, answered from fixture data
  * instead of the b3tty server. build.ts swaps it in for every import of
- * ./api.ts, so the real components can open, load and save inside a design
+ * ../api.ts, so the real components can open, load and save inside a design
  * system preview that has no server behind it.
  */
 import THEMES from "b3tty:builtin-themes";

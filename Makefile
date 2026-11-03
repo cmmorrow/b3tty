@@ -42,7 +42,7 @@ client:
 		--define __B3TTY_VERSION__='"$(PACKAGE_VERSION)"'
 	cp src/client/node_modules/@xterm/xterm/css/xterm.css src/dist/xterm.min.css
 
-# Bundles the real components.ts/design.ts with a fixture-backed stand-in for
+# Bundles the real components/ and design.ts with a fixture-backed stand-in for
 # api.ts into build/design-system/bundle.js, the project/components/bundle.js
 # of the b3tty design system artifact. Not part of any other target.
 design-system:

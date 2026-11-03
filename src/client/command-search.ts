@@ -1,6 +1,6 @@
 /**
  * Matching and ranking for the command palette (<b3tty-command-palette> in
- * components.ts). Kept free of DOM access so it can be tested under bun test.
+ * components/command-palette.ts). Kept free of DOM access so it can be tested under bun test.
  */
 import type { PaletteCommand } from "./types.ts";
 
