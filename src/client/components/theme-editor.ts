@@ -363,6 +363,11 @@ const fieldNote = (className: string, text: string): string => `
     <div class="field-row"><span class="${className}">${text}</span></div>
 `;
 
+// .theme-list holds the theme cards, grouped by source (see #renderList), and scrolls
+// between the cards above it and the footer below. The footer's Copy… and Delete… act
+// on the selected theme, so both are disabled while "Create new theme" is selected.
+// (HTML comments can't go in these templates: the design system inlines the bundle,
+// which must not contain "<!--".)
 const THEME_EDITOR_LEFT_PANEL = `
     <div class="left-panel">
         <div class="create-card">
@@ -373,11 +378,7 @@ const THEME_EDITOR_LEFT_PANEL = `
             <span class="action-card-icon" aria-hidden="true">⤓</span>
             <span>Import theme…</span>
         </button>
-        <!-- The theme cards, grouped by source (see #renderList); scrolls between the
-             cards above and the footer below. -->
         <div class="theme-list"></div>
-        <!-- Copy… and Delete… act on the selected theme, so both are disabled while
-             "Create new theme" is selected. -->
         <div class="list-footer">
             <button class="cancel-btn copy-btn" disabled>Copy…</button>
             <button class="cancel-btn delete-theme-btn" disabled>Delete…</button>
@@ -385,13 +386,13 @@ const THEME_EDITOR_LEFT_PANEL = `
     </div>
 `;
 
+// Export… exports the selected saved user theme, so it is disabled while "Create new
+// theme" or a built-in or installed theme is selected.
 const THEME_EDITOR_NAME_SECTION = `
     <div class="name-section">
         <div class="name-row">
             <label class="field-label">Theme Name</label>
             <input type="text" class="name-input" placeholder="Enter theme name">
-            <!-- Exports the selected saved user theme, so it is disabled while "Create
-                 new theme" or a built-in or installed theme is selected. -->
             <button class="inline-btn" disabled>Export…</button>
         </div>
         <span class="name-error field-error">Cannot use a built-in or installed theme name</span>
