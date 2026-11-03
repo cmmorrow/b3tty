@@ -294,7 +294,9 @@ if (typeof HTMLElement !== "undefined") {
             this.#selectedCard = null;
             this.#nameInput.readOnly = false;
             this.#deleteBtn.style.display = "none";
+            this.#isLoading = false;
             this.#clearForm();
+            this.#validateForm();
         }
 
         #selectProfileCard(card: HTMLDivElement, name: string): void {
@@ -319,6 +321,8 @@ if (typeof HTMLElement !== "undefined") {
         async #loadProfileConfig(name: string): Promise<void> {
             try {
                 const cfg = await getProfileConfig(name);
+                // Another card was selected while this profile loaded.
+                if (this.#selectedName !== name) return;
                 this.#shellInput.value = cfg.shell ?? "";
                 this.#titleInput.value = cfg.title ?? "";
                 this.#wdInput.value = cfg.workingDirectory ?? "";
@@ -328,8 +332,10 @@ if (typeof HTMLElement !== "undefined") {
             } catch {
                 // Silently keep existing form state on load failure.
             } finally {
-                this.#isLoading = false;
-                this.#validateForm();
+                if (this.#selectedName === name) {
+                    this.#isLoading = false;
+                    this.#validateForm();
+                }
             }
         }
 
