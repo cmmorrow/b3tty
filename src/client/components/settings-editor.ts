@@ -48,6 +48,8 @@ if (typeof HTMLElement !== "undefined") {
         #cancelBtn: HTMLButtonElement;
         #okBtn: HTMLButtonElement;
         #saveError: HTMLSpanElement;
+        /** True while a settings request is in flight. */
+        #saving = false;
 
         // Tab buttons
         #tabBtns: Map<string, HTMLButtonElement> = new Map();
@@ -389,6 +391,10 @@ if (typeof HTMLElement !== "undefined") {
 
         #checkDirty(): void {
             if (!this.#origServer || !this.#origTerminal) return;
+            if (this.#saving) {
+                this.#okBtn.disabled = true;
+                return;
+            }
 
             const serverChanged =
                 this.#portInput.value !== this.#origServer.port ||
@@ -423,6 +429,7 @@ if (typeof HTMLElement !== "undefined") {
             const fontSize = parseInt(this.#fontSizeInput.value, 10);
             if (isNaN(port) || port < 1 || port > 65535) return;
             if (isNaN(fontSize) || fontSize < 1) return;
+            if (this.#saving) return;
 
             const settings: SettingsConfig = {
                 server: {
@@ -440,6 +447,7 @@ if (typeof HTMLElement !== "undefined") {
                 },
             };
             this.#saveError.classList.remove("visible");
+            this.#setSaving(true);
             try {
                 const response = await postSettings(settings);
                 this.dispatchEvent(
@@ -455,7 +463,21 @@ if (typeof HTMLElement !== "undefined") {
                 // visibly do anything.
                 this.#saveError.textContent = err instanceof Error ? err.message : "Failed to save settings.";
                 this.#saveError.classList.add("visible");
+            } finally {
+                this.#setSaving(false);
             }
+        }
+
+        /**
+         * Enters or leaves the saving state. While a request is in flight, OK and
+         * Cancel stay disabled, so a double click can't send it twice and the editor can't
+         * close under it. Leaving it re-checks the form, unless the save closed the editor.
+         */
+        #setSaving(saving: boolean): void {
+            this.#saving = saving;
+            this.#cancelBtn.disabled = saving;
+            if (saving) this.#okBtn.disabled = true;
+            else if (this.hasAttribute("open")) this.#checkDirty();
         }
 
         // -----------------------------------------------------------------------

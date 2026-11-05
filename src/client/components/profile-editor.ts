@@ -178,11 +178,14 @@ if (typeof HTMLElement !== "undefined") {
         #commandsArea: HTMLTextAreaElement;
         #lineNumbers: HTMLDivElement;
         #okBtn: HTMLButtonElement;
+        #cancelBtn: HTMLButtonElement;
         #deleteBtn: HTMLButtonElement;
         #saveError: HTMLSpanElement;
         #selectedName: string | null = null;
         #selectedCard: HTMLDivElement | null = null;
         #isLoading = false;
+        /** True while an edit-profile or delete-profile request is in flight. */
+        #saving = false;
 
         constructor() {
             super();
@@ -213,7 +216,7 @@ if (typeof HTMLElement !== "undefined") {
             this.#deleteBtn = shadow.querySelector<HTMLButtonElement>(".delete-btn")!;
             this.#saveError = shadow.querySelector<HTMLSpanElement>(".save-error")!;
             this.#okBtn = shadow.querySelector<HTMLButtonElement>(".ok-btn")!;
-            const cancelBtn = shadow.querySelector<HTMLButtonElement>(".cancel-btn")!;
+            this.#cancelBtn = shadow.querySelector<HTMLButtonElement>(".cancel-btn")!;
 
             // --- Event listeners ---
             this.#nameInput.addEventListener("input", () => this.#validateForm());
@@ -235,7 +238,7 @@ if (typeof HTMLElement !== "undefined") {
                 this.#selectProfileCard(card, name);
             });
 
-            cancelBtn.addEventListener("click", () => this.close());
+            this.#cancelBtn.addEventListener("click", () => this.close());
             this.#deleteBtn.addEventListener("click", () => void this.#handleDelete());
             this.#okBtn.addEventListener("click", () => void this.#handleOk());
         }
@@ -357,7 +360,7 @@ if (typeof HTMLElement !== "undefined") {
         }
 
         #validateForm(): void {
-            if (this.#isLoading) {
+            if (this.#isLoading || this.#saving) {
                 this.#okBtn.disabled = true;
                 return;
             }
@@ -373,7 +376,7 @@ if (typeof HTMLElement !== "undefined") {
 
         async #handleOk(): Promise<void> {
             const name = this.#nameInput.value.trim();
-            if (!name) return;
+            if (!name || this.#saving) return;
             const rawCommands = this.#commandsArea.value.split("\n");
             const commands = rawCommands.filter((line) => line !== "");
             const profile: ProfileConfig = {
@@ -384,6 +387,7 @@ if (typeof HTMLElement !== "undefined") {
                 commands,
             };
             this.#saveError.classList.remove("visible");
+            this.#setSaving(true);
             try {
                 const response = await postEditProfile(name, profile);
                 this.dispatchEvent(
@@ -399,13 +403,16 @@ if (typeof HTMLElement !== "undefined") {
                 // didn't visibly do anything.
                 this.#saveError.textContent = err instanceof Error ? err.message : "Failed to save profile.";
                 this.#saveError.classList.add("visible");
+            } finally {
+                this.#setSaving(false);
             }
         }
 
         async #handleDelete(): Promise<void> {
             const name = this.#selectedName;
-            if (!name) return;
+            if (!name || this.#saving) return;
             this.#saveError.classList.remove("visible");
+            this.#setSaving(true);
             try {
                 const response = await postDeleteProfile(name);
                 this.dispatchEvent(
@@ -421,7 +428,22 @@ if (typeof HTMLElement !== "undefined") {
                 // didn't visibly do anything.
                 this.#saveError.textContent = err instanceof Error ? err.message : "Failed to delete profile.";
                 this.#saveError.classList.add("visible");
+            } finally {
+                this.#setSaving(false);
             }
+        }
+
+        /**
+         * Enters or leaves the saving state. While a request is in flight, OK, Delete, and
+         * Cancel stay disabled, so a double click can't send it twice and the editor can't
+         * close under it. Leaving it re-checks the form, unless the save closed the editor.
+         */
+        #setSaving(saving: boolean): void {
+            this.#saving = saving;
+            this.#cancelBtn.disabled = saving;
+            this.#deleteBtn.disabled = saving;
+            if (saving) this.#okBtn.disabled = true;
+            else if (this.hasAttribute("open")) this.#validateForm();
         }
     }
 

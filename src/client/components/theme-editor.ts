@@ -124,7 +124,6 @@ const PROMPT_STYLES = `
     .prompt-field[hidden] { display: none; }
     .prompt .field-input { width: 100%; }
     .prompt .delete-btn { margin-right: 0; }
-    .prompt .delete-btn:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
 `;
 
 /**
@@ -286,10 +285,7 @@ const THEME_EDITOR_STYLES = `
     .list-footer .cancel-btn {
         flex: 1; padding-left: var(--space-sm); padding-right: var(--space-sm);
     }
-    .list-footer .cancel-btn:disabled {
-        opacity: var(--opacity-disabled); cursor: not-allowed;
-        background: var(--color-surface-2);
-    }
+    .list-footer .cancel-btn:disabled { background: var(--color-surface-2); }
     ${EDITOR_CARD_STYLES}
     ${PALETTE_CARD_VARS}
     b3tty-palette-card { flex-shrink: 0; }
@@ -481,6 +477,7 @@ if (typeof HTMLElement !== "undefined") {
         #bgTransparencyInput: HTMLInputElement;
         #bgTransparencyError: HTMLSpanElement;
         #okBtn: HTMLButtonElement;
+        #cancelBtn: HTMLButtonElement;
         #exportBtn: HTMLButtonElement;
         #copyBtn: HTMLButtonElement;
         #deleteBtn: HTMLButtonElement;
@@ -495,6 +492,8 @@ if (typeof HTMLElement !== "undefined") {
         #createCard: HTMLDivElement;
         #createRadio: HTMLInputElement;
         #isLoading = false;
+        /** True while an edit-theme request is in flight. */
+        #saving = false;
         /** Every theme, by name, as last passed to open() or refresh(). */
         #entries: Map<string, ThemeEntry> = new Map();
         /** True while a built-in or installed theme is selected. */
@@ -533,7 +532,7 @@ if (typeof HTMLElement !== "undefined") {
             this.#okBtn = shadow.querySelector<HTMLButtonElement>(".right-panel .ok-btn")!;
             const importCard = shadow.querySelector<HTMLButtonElement>(".import-card")!;
             const colorForm = shadow.querySelector<HTMLDivElement>(".color-form")!;
-            const cancelBtn = shadow.querySelector<HTMLButtonElement>(".right-panel .actions .cancel-btn")!;
+            this.#cancelBtn = shadow.querySelector<HTMLButtonElement>(".right-panel .actions .cancel-btn")!;
 
             for (const input of Array.from(colorForm.querySelectorAll<HTMLInputElement>("[data-color]"))) {
                 this.#colorInputs.set(input.dataset.color!, input);
@@ -584,7 +583,7 @@ if (typeof HTMLElement !== "undefined") {
                 this.#selectCard(e.target as HTMLElement);
             });
 
-            cancelBtn.addEventListener("click", () => this.close());
+            this.#cancelBtn.addEventListener("click", () => this.close());
             this.#okBtn.addEventListener("click", () => void this.#handleOk());
         }
 
@@ -604,7 +603,7 @@ if (typeof HTMLElement !== "undefined") {
         }
 
         #validateForm(): void {
-            if (this.#isLoading || this.#readOnly) {
+            if (this.#isLoading || this.#readOnly || this.#saving) {
                 this.#okBtn.disabled = true;
                 this.#nameError.classList.remove("visible");
                 this.#bgTransparencyError.classList.remove("visible");
@@ -934,7 +933,7 @@ if (typeof HTMLElement !== "undefined") {
 
         async #handleOk(): Promise<void> {
             const name = this.#nameInput.value.trim();
-            if (!name || this.#readOnly) return;
+            if (!name || this.#readOnly || this.#saving) return;
             const themeData: Record<string, string | number> = {};
             for (const [key, input] of this.#colorInputs) {
                 if (input.value) themeData[key] = input.value;
@@ -946,6 +945,7 @@ if (typeof HTMLElement !== "undefined") {
                 themeData["backgroundImageTransparency"] = Number(this.#bgTransparencyInput.value);
             }
             this.#saveError.classList.remove("visible");
+            this.#setSaving(true);
             try {
                 const response = await postEditTheme(name, themeData);
                 this.dispatchEvent(
@@ -962,7 +962,21 @@ if (typeof HTMLElement !== "undefined") {
                 // from a UI bug.
                 this.#saveError.textContent = err instanceof Error ? err.message : "Failed to save theme.";
                 this.#saveError.classList.add("visible");
+            } finally {
+                this.#setSaving(false);
             }
+        }
+
+        /**
+         * Enters or leaves the saving state. While a request is in flight, OK and
+         * Cancel stay disabled, so a double click can't send it twice and the editor can't
+         * close under it. Leaving it re-checks the form, unless the save closed the editor.
+         */
+        #setSaving(saving: boolean): void {
+            this.#saving = saving;
+            this.#cancelBtn.disabled = saving;
+            if (saving) this.#okBtn.disabled = true;
+            else if (this.hasAttribute("open")) this.#validateForm();
         }
 
         open(themes: ThemeEntry[], options: ThemeEditorOpenOptions = {}): void {
