@@ -2,6 +2,13 @@ import { postImportTheme, ThemeUpgradeRequiredError } from "../api.ts";
 import type { ImportThemeResponse } from "../types.ts";
 import { closeStackedOverlay } from "./overlay.ts";
 import { buildThemeFileDialog, focusPathInput, type ThemeFileDialogParts } from "./theme-file-dialog.ts";
+import {
+    canSubmitThemeImport,
+    initialThemeImportState,
+    reduceThemeImport,
+    type ThemeImportAction,
+    type ThemeImportState,
+} from "./theme-import-dialog-state.ts";
 
 /**
  * Detail of the b3tty-theme-imported event the import dialog dispatches (bubbles +
@@ -35,8 +42,7 @@ if (typeof HTMLElement !== "undefined") {
     class B3ttyThemeImportDialogImpl extends HTMLElement implements B3ttyThemeImportDialog {
         #parts: ThemeFileDialogParts;
         #opener: HTMLElement | null = null;
-        /** Set once the server said the package upgrades an installed theme. */
-        #replace = false;
+        #state: ThemeImportState = initialThemeImportState;
 
         constructor() {
             super();
@@ -45,66 +51,69 @@ if (typeof HTMLElement !== "undefined") {
                 "Install a theme from a .b3theme package. It will appear in Select Theme, ready to use or copy.";
             this.#parts.input.placeholder = "~/Downloads/theme.b3theme";
             this.#parts.hint.textContent = "An absolute path, or one starting with ~ for your home directory.";
-            // A different path is a different package, so any pending Replace is undone.
-            this.#parts.input.addEventListener("input", () => this.#setReplace(false));
+            // Registered after buildThemeFileDialog's own input listener, so #render has
+            // the last word on the action button.
+            this.#parts.input.addEventListener("input", () =>
+                this.#dispatch({ type: "pathChanged", path: this.#parts.input.value })
+            );
             this.#parts.actionBtn.addEventListener("click", () => void this.#import());
+            this.#render();
         }
 
         open(opener: HTMLElement | null = null): void {
             this.#opener = opener;
-            const { input, saveError, actionBtn } = this.#parts;
-            input.value = "";
-            input.disabled = false;
-            this.#setReplace(false);
-            actionBtn.disabled = true;
-            saveError.classList.remove("visible");
+            this.#dispatch({ type: "opened" });
             this.setAttribute("open", "");
-            focusPathInput(input);
+            focusPathInput(this.#parts.input);
         }
 
         close(): void {
-            this.#parts.saveError.classList.remove("visible");
             const opener = this.#opener;
             this.#opener = null;
             closeStackedOverlay(this, opener);
         }
 
-        /**
-         * Switches between importing and replacing an installed version, which shows
-         * the server's description of the upgrade (including any change of author or
-         * repository) and relabels the action button.
-         */
-        #setReplace(replace: boolean, message = ""): void {
-            this.#replace = replace;
-            const { warning, actionBtn } = this.#parts;
-            warning.textContent = replace ? `${message} Replace the installed version?` : "";
-            warning.classList.toggle("visible", replace);
-            actionBtn.textContent = replace ? "Replace" : "Import";
+        #dispatch(action: ThemeImportAction): void {
+            this.#state = reduceThemeImport(this.#state, action);
+            this.#render();
+        }
+
+        /** Brings the DOM in line with #state. Safe to call at any time. */
+        #render(): void {
+            const { input, warning, saveError, cancelBtn, actionBtn } = this.#parts;
+            const state = this.#state;
+            const importing = state.phase === "importing";
+            if (input.value !== state.path) input.value = state.path;
+            input.disabled = importing;
+            // The server's description of the upgrade names any change of author or repository.
+            warning.textContent = state.upgrade === null ? "" : `${state.upgrade} Replace the installed version?`;
+            warning.classList.toggle("visible", state.upgrade !== null);
+            const error = state.phase === "editing" ? state.error : null;
+            saveError.textContent = error ?? "";
+            saveError.classList.toggle("visible", error !== null);
+            // Cancel too, so the dialog can't close and reopen under a request in flight.
+            cancelBtn.disabled = importing;
+            actionBtn.textContent = state.upgrade === null ? "Import" : "Replace";
+            actionBtn.disabled = !canSubmitThemeImport(state);
         }
 
         async #import(): Promise<void> {
-            const { input, saveError, actionBtn } = this.#parts;
-            const path = input.value.trim();
-            if (!path) return;
-            saveError.classList.remove("visible");
-            input.disabled = true;
-            actionBtn.disabled = true;
+            const before = this.#state;
+            this.#dispatch({ type: "submitted" });
+            const state = this.#state;
+            if (state === before || state.phase !== "importing") return;
             try {
-                const response = await postImportTheme(path, this.#replace);
+                const response = await postImportTheme(state.path.trim(), state.upgrade !== null);
                 const opener = this.#opener;
                 this.close();
                 const detail: ThemeImportedDetail = { response, opener };
                 this.dispatchEvent(new CustomEvent("b3tty-theme-imported", { detail, bubbles: true, composed: true }));
             } catch (err) {
                 if (err instanceof ThemeUpgradeRequiredError) {
-                    this.#setReplace(true, err.message);
+                    this.#dispatch({ type: "upgradeRequired", message: err.message });
                 } else {
-                    saveError.textContent = err instanceof Error ? err.message : String(err);
-                    saveError.classList.add("visible");
+                    this.#dispatch({ type: "failed", message: err instanceof Error ? err.message : String(err) });
                 }
-            } finally {
-                input.disabled = false;
-                actionBtn.disabled = !input.value.trim();
             }
         }
     }
