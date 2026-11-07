@@ -1,5 +1,4 @@
 import { getProfileConfig, postDeleteProfile, postEditProfile } from "../api.ts";
-import type { ProfileConfig } from "../types.ts";
 import {
     BASE_STYLES,
     BUTTON_STYLES,
@@ -12,6 +11,18 @@ import {
     TEXT_STYLES,
 } from "../design.ts";
 import { closeOverlay } from "./overlay.ts";
+import {
+    canDeleteProfile,
+    canSaveProfile,
+    initialProfileEditorState,
+    isProfileEditorBusy,
+    isReservedProfileName,
+    profileFromForm,
+    reduceProfileEditor,
+    type ProfileEditorAction,
+    type ProfileEditorState,
+    type ProfileForm,
+} from "./profile-editor-state.ts";
 
 /**
  * Interface for the b3tty-profile-editor web component.
@@ -126,7 +137,7 @@ const profileField = (key: string, label: string, placeholder: string): string =
     </div>
 `;
 
-// The profile cards are added by open() (see #makeProfileCard), since their
+// The profile cards are added by #renderCards (see #makeProfileCard), since their
 // names are user data.
 const PROFILE_EDITOR_LEFT_PANEL = `
     <div class="left-panel">
@@ -165,33 +176,23 @@ const PROFILE_EDITOR_RIGHT_PANEL = `
 
 if (typeof HTMLElement !== "undefined") {
     class B3ttyProfileEditorImpl extends HTMLElement implements B3ttyProfileEditor {
-        #shadow: ShadowRoot;
         #leftPanel: HTMLDivElement;
         #createCard: HTMLDivElement;
         #createRadio: HTMLInputElement;
-        #nameInput: HTMLInputElement;
+        /** The form's inputs, keyed by the ProfileForm field each one edits. */
+        #inputs: Map<keyof ProfileForm, HTMLInputElement | HTMLTextAreaElement> = new Map();
         #nameError: HTMLSpanElement;
-        #shellInput: HTMLInputElement;
-        #titleInput: HTMLInputElement;
-        #wdInput: HTMLInputElement;
-        #rootInput: HTMLInputElement;
         #commandsArea: HTMLTextAreaElement;
         #lineNumbers: HTMLDivElement;
         #okBtn: HTMLButtonElement;
         #cancelBtn: HTMLButtonElement;
         #deleteBtn: HTMLButtonElement;
         #saveError: HTMLSpanElement;
-        #selectedName: string | null = null;
-        #selectedCard: HTMLDivElement | null = null;
-        #isLoading = false;
-        /** True while an edit-profile or delete-profile request is in flight. */
-        #saving = false;
+        #state: ProfileEditorState = initialProfileEditorState;
 
         constructor() {
             super();
-            this.#shadow = this.attachShadow({ mode: "open" });
-
-            const shadow = this.#shadow;
+            const shadow = this.attachShadow({ mode: "open" });
             shadow.innerHTML = `
                 <style>${PROFILE_EDITOR_STYLES}</style>
                 <div class="overlay">
@@ -205,71 +206,94 @@ if (typeof HTMLElement !== "undefined") {
             this.#leftPanel = shadow.querySelector<HTMLDivElement>(".left-panel")!;
             this.#createCard = shadow.querySelector<HTMLDivElement>(".create-card")!;
             this.#createRadio = this.#createCard.querySelector<HTMLInputElement>("input")!;
-            this.#nameInput = field("name");
             this.#nameError = shadow.querySelector<HTMLSpanElement>(".name-error")!;
-            this.#shellInput = field("shell");
-            this.#titleInput = field("title");
-            this.#wdInput = field("working-directory");
-            this.#rootInput = field("root");
             this.#lineNumbers = shadow.querySelector<HTMLDivElement>(".line-numbers")!;
             this.#commandsArea = shadow.querySelector<HTMLTextAreaElement>(".commands-area")!;
             this.#deleteBtn = shadow.querySelector<HTMLButtonElement>(".delete-btn")!;
             this.#saveError = shadow.querySelector<HTMLSpanElement>(".save-error")!;
             this.#okBtn = shadow.querySelector<HTMLButtonElement>(".ok-btn")!;
             this.#cancelBtn = shadow.querySelector<HTMLButtonElement>(".cancel-btn")!;
+            this.#inputs.set("name", field("name"));
+            this.#inputs.set("shell", field("shell"));
+            this.#inputs.set("title", field("title"));
+            this.#inputs.set("workingDirectory", field("working-directory"));
+            this.#inputs.set("root", field("root"));
+            this.#inputs.set("commands", this.#commandsArea);
 
             // --- Event listeners ---
-            this.#nameInput.addEventListener("input", () => this.#validateForm());
-
-            this.#commandsArea.addEventListener("input", () => this.#syncLineNumbers());
+            for (const [key, input] of this.#inputs) {
+                input.addEventListener("input", () =>
+                    this.#dispatch({ type: "fieldChanged", field: key, value: input.value })
+                );
+            }
             this.#commandsArea.addEventListener("scroll", () => {
                 this.#lineNumbers.scrollTop = this.#commandsArea.scrollTop;
             });
-
-            this.#createCard.addEventListener("click", () => {
-                this.#selectCreateCard();
-            });
-
+            this.#createCard.addEventListener("click", () => this.#dispatch({ type: "createSelected" }));
             this.#leftPanel.addEventListener("click", (e) => {
-                const card = (e.target as HTMLElement).closest(".profile-card") as HTMLDivElement | null;
-                if (!card) return;
-                const name = (card as HTMLDivElement).dataset["profileName"];
-                if (!name) return;
-                this.#selectProfileCard(card, name);
+                const card = (e.target as HTMLElement).closest<HTMLDivElement>(".profile-card");
+                const name = card?.dataset["profileName"];
+                if (name) void this.#selectProfile(name);
             });
-
             this.#cancelBtn.addEventListener("click", () => this.close());
             this.#deleteBtn.addEventListener("click", () => void this.#handleDelete());
             this.#okBtn.addEventListener("click", () => void this.#handleOk());
+            this.#render();
         }
 
         open(profileNames: string[]): void {
-            this.#selectedName = null;
-            this.#selectedCard = null;
-            this.#isLoading = false;
-            this.#clearForm();
-            this.#okBtn.disabled = true;
-            this.#deleteBtn.style.display = "none";
-            this.#saveError.classList.remove("visible");
-            this.#nameInput.readOnly = false;
-
-            for (const card of Array.from(this.#leftPanel.querySelectorAll(".profile-card"))) {
-                card.remove();
-            }
-            this.#selectCreateCard();
-
-            const filtered = profileNames.filter((n) => n !== "default");
-            for (const name of filtered) {
-                this.#leftPanel.appendChild(this.#makeProfileCard(name));
-            }
+            this.#dispatch({ type: "opened", profileNames });
             this.setAttribute("open", "");
         }
 
         close(): void {
-            this.#selectedName = null;
-            this.#nameError.classList.remove("visible");
-            this.#saveError.classList.remove("visible");
             closeOverlay(this);
+        }
+
+        #dispatch(action: ProfileEditorAction): void {
+            this.#state = reduceProfileEditor(this.#state, action);
+            this.#render();
+        }
+
+        /** Brings the DOM in line with #state. Safe to call at any time. */
+        #render(): void {
+            const state = this.#state;
+            const busy = isProfileEditorBusy(state);
+
+            this.#renderCards();
+            this.#createRadio.checked = state.selected === null;
+            this.#createCard.toggleAttribute("selected", state.selected === null);
+            for (const card of Array.from(this.#leftPanel.querySelectorAll<HTMLDivElement>(".profile-card"))) {
+                const selected = card.dataset["profileName"] === state.selected;
+                card.toggleAttribute("selected", selected);
+                card.querySelector<HTMLInputElement>("input")!.checked = selected;
+            }
+
+            for (const [key, input] of this.#inputs) {
+                if (input.value !== state.form[key]) input.value = state.form[key];
+                // An existing profile's name is fixed; nothing changes while a request is in flight.
+                input.readOnly = busy || (key === "name" && state.selected !== null);
+            }
+            this.#syncLineNumbers();
+            this.#nameError.classList.toggle("visible", isReservedProfileName(state.form.name));
+
+            this.#saveError.textContent = state.error ?? "";
+            this.#saveError.classList.toggle("visible", state.error !== null);
+            this.#deleteBtn.style.display = state.selected === null ? "none" : "";
+            this.#deleteBtn.disabled = !canDeleteProfile(state);
+            // Cancel too, so the editor can't close and reopen under a request in flight.
+            this.#cancelBtn.disabled = busy;
+            this.#okBtn.disabled = !canSaveProfile(state);
+        }
+
+        /** Rebuilds the profile cards when the list of names has changed. */
+        #renderCards(): void {
+            const cards = Array.from(this.#leftPanel.querySelectorAll<HTMLDivElement>(".profile-card"));
+            const rendered = cards.map((card) => card.dataset["profileName"]);
+            const names = this.#state.profileNames;
+            if (rendered.length === names.length && rendered.every((name, i) => name === names[i])) return;
+            for (const card of cards) card.remove();
+            for (const name of names) this.#leftPanel.appendChild(this.#makeProfileCard(name));
         }
 
         #makeProfileCard(name: string): HTMLDivElement {
@@ -286,110 +310,32 @@ if (typeof HTMLElement !== "undefined") {
             return card;
         }
 
-        #selectCreateCard(): void {
-            for (const c of Array.from(this.#leftPanel.querySelectorAll(".profile-card"))) {
-                c.removeAttribute("selected");
-                (c.querySelector("input[type=radio]") as HTMLInputElement | null)!.checked = false;
-            }
-            this.#createCard.setAttribute("selected", "");
-            this.#createRadio.checked = true;
-            this.#selectedName = null;
-            this.#selectedCard = null;
-            this.#nameInput.readOnly = false;
-            this.#deleteBtn.style.display = "none";
-            this.#isLoading = false;
-            this.#clearForm();
-            this.#validateForm();
-        }
-
-        #selectProfileCard(card: HTMLDivElement, name: string): void {
-            this.#createCard.removeAttribute("selected");
-            this.#createRadio.checked = false;
-            for (const c of Array.from(this.#leftPanel.querySelectorAll(".profile-card"))) {
-                c.removeAttribute("selected");
-                (c.querySelector("input[type=radio]") as HTMLInputElement | null)!.checked = false;
-            }
-            card.setAttribute("selected", "");
-            (card.querySelector("input[type=radio]") as HTMLInputElement | null)!.checked = true;
-            this.#selectedName = name;
-            this.#selectedCard = card;
-            this.#nameInput.value = name;
-            this.#nameInput.readOnly = true;
-            this.#deleteBtn.style.display = "";
-            this.#isLoading = true;
-            this.#okBtn.disabled = true;
-            void this.#loadProfileConfig(name);
-        }
-
-        async #loadProfileConfig(name: string): Promise<void> {
-            try {
-                const cfg = await getProfileConfig(name);
-                // Another card was selected while this profile loaded.
-                if (this.#selectedName !== name) return;
-                this.#shellInput.value = cfg.shell ?? "";
-                this.#titleInput.value = cfg.title ?? "";
-                this.#wdInput.value = cfg.workingDirectory ?? "";
-                this.#rootInput.value = cfg.root ?? "";
-                this.#commandsArea.value = (cfg.commands ?? []).join("\n");
-                this.#syncLineNumbers();
-            } catch {
-                // Silently keep existing form state on load failure.
-            } finally {
-                if (this.#selectedName === name) {
-                    this.#isLoading = false;
-                    this.#validateForm();
-                }
-            }
-        }
-
-        #clearForm(): void {
-            this.#nameInput.value = "";
-            this.#shellInput.value = "";
-            this.#titleInput.value = "";
-            this.#wdInput.value = "";
-            this.#rootInput.value = "";
-            this.#commandsArea.value = "";
-            this.#syncLineNumbers();
-            this.#nameError.classList.remove("visible");
-        }
-
         #syncLineNumbers(): void {
             const lineCount = this.#commandsArea.value === "" ? 1 : this.#commandsArea.value.split("\n").length;
             this.#lineNumbers.textContent = Array.from({ length: lineCount }, (_, i) => i + 1).join("\n");
             this.#lineNumbers.scrollTop = this.#commandsArea.scrollTop;
         }
 
-        #validateForm(): void {
-            if (this.#isLoading || this.#saving) {
-                this.#okBtn.disabled = true;
-                return;
+        async #selectProfile(name: string): Promise<void> {
+            const before = this.#state;
+            this.#dispatch({ type: "profileSelected", name });
+            if (this.#state === before) return;
+            try {
+                const profile = await getProfileConfig(name);
+                this.#dispatch({ type: "profileLoaded", name, profile });
+            } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                this.#dispatch({ type: "profileLoadFailed", name, message });
             }
-            const name = this.#nameInput.value.trim();
-            if (name === "default") {
-                this.#nameError.classList.add("visible");
-                this.#okBtn.disabled = true;
-                return;
-            }
-            this.#nameError.classList.remove("visible");
-            this.#okBtn.disabled = name === "";
         }
 
         async #handleOk(): Promise<void> {
-            const name = this.#nameInput.value.trim();
-            if (!name || this.#saving) return;
-            const rawCommands = this.#commandsArea.value.split("\n");
-            const commands = rawCommands.filter((line) => line !== "");
-            const profile: ProfileConfig = {
-                shell: this.#shellInput.value.trim(),
-                title: this.#titleInput.value.trim(),
-                workingDirectory: this.#wdInput.value.trim(),
-                root: this.#rootInput.value.trim(),
-                commands,
-            };
-            this.#saveError.classList.remove("visible");
-            this.#setSaving(true);
+            const before = this.#state;
+            this.#dispatch({ type: "saveSubmitted" });
+            if (this.#state === before) return;
+            const name = this.#state.form.name.trim();
             try {
-                const response = await postEditProfile(name, profile);
+                const response = await postEditProfile(name, profileFromForm(this.#state.form));
                 this.dispatchEvent(
                     new CustomEvent("b3tty-profile-edited", {
                         detail: { name, response },
@@ -401,20 +347,17 @@ if (typeof HTMLElement !== "undefined") {
             } catch (err) {
                 // Keep editor open so user can retry, but say why the save
                 // didn't visibly do anything.
-                this.#saveError.textContent = err instanceof Error ? err.message : "Failed to save profile.";
-                this.#saveError.classList.add("visible");
-            } finally {
-                this.#setSaving(false);
+                const message = err instanceof Error ? err.message : "Failed to save profile.";
+                this.#dispatch({ type: "requestFailed", message });
             }
         }
 
         async #handleDelete(): Promise<void> {
-            const name = this.#selectedName;
-            if (!name || this.#saving) return;
-            this.#saveError.classList.remove("visible");
-            this.#setSaving(true);
+            const before = this.#state;
+            this.#dispatch({ type: "deleteSubmitted" });
+            if (this.#state === before || this.#state.selected === null) return;
             try {
-                const response = await postDeleteProfile(name);
+                const response = await postDeleteProfile(this.#state.selected);
                 this.dispatchEvent(
                     new CustomEvent("b3tty-profile-edited", {
                         detail: { name: null, response },
@@ -426,24 +369,9 @@ if (typeof HTMLElement !== "undefined") {
             } catch (err) {
                 // Keep editor open so user can retry, but say why the delete
                 // didn't visibly do anything.
-                this.#saveError.textContent = err instanceof Error ? err.message : "Failed to delete profile.";
-                this.#saveError.classList.add("visible");
-            } finally {
-                this.#setSaving(false);
+                const message = err instanceof Error ? err.message : "Failed to delete profile.";
+                this.#dispatch({ type: "requestFailed", message });
             }
-        }
-
-        /**
-         * Enters or leaves the saving state. While a request is in flight, OK, Delete, and
-         * Cancel stay disabled, so a double click can't send it twice and the editor can't
-         * close under it. Leaving it re-checks the form, unless the save closed the editor.
-         */
-        #setSaving(saving: boolean): void {
-            this.#saving = saving;
-            this.#cancelBtn.disabled = saving;
-            this.#deleteBtn.disabled = saving;
-            if (saving) this.#okBtn.disabled = true;
-            else if (this.hasAttribute("open")) this.#validateForm();
         }
     }
 
