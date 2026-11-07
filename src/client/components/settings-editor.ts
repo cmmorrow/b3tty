@@ -1,5 +1,5 @@
 import { postSettings } from "../api.ts";
-import type { SettingsConfig } from "../types.ts";
+import type { SettingsConfig, SettingsServerConfig } from "../types.ts";
 import {
     BASE_STYLES,
     BUTTON_STYLES,
@@ -10,6 +10,18 @@ import {
     TEXT_STYLES,
 } from "../design.ts";
 import { closeOverlay } from "./overlay.ts";
+import {
+    autoResizeChanged,
+    canSaveSettings,
+    initialSettingsEditorState,
+    reduceSettingsEditor,
+    serverSettingsChanged,
+    settingsFromForm,
+    settingsProblem,
+    type SettingsEditorAction,
+    type SettingsEditorState,
+    type SettingsTab,
+} from "./settings-editor-state.ts";
 
 /**
  * Interface for the b3tty-settings-editor web component.
@@ -29,7 +41,7 @@ export function isB3ttySettingsEditor(el: Element): el is HTMLElement & B3ttySet
 if (typeof HTMLElement !== "undefined") {
     class B3ttySettingsEditorImpl extends HTMLElement implements B3ttySettingsEditor {
         #shadow: ShadowRoot;
-        #activeTab: "server" | "terminal" = "server";
+        #state: SettingsEditorState = initialSettingsEditorState;
 
         // Server tab inputs
         #portInput: HTMLInputElement;
@@ -48,8 +60,6 @@ if (typeof HTMLElement !== "undefined") {
         #cancelBtn: HTMLButtonElement;
         #okBtn: HTMLButtonElement;
         #saveError: HTMLSpanElement;
-        /** True while a settings request is in flight. */
-        #saving = false;
 
         // Tab buttons
         #tabBtns: Map<string, HTMLButtonElement> = new Map();
@@ -60,16 +70,6 @@ if (typeof HTMLElement !== "undefined") {
         // Restart notes (shown only when relevant fields are modified)
         #serverRestartNote: HTMLDivElement;
         #termRestartNote: HTMLDivElement;
-
-        // Original values for dirty tracking
-        #origServer: { port: string; noAuth: boolean; noBrowser: boolean; showMenubar: string } | null = null;
-        #origTerminal: {
-            fontFamily: string;
-            fontSize: string;
-            autoResize: boolean;
-            rows: string;
-            columns: string;
-        } | null = null;
 
         constructor() {
             super();
@@ -166,9 +166,9 @@ if (typeof HTMLElement !== "undefined") {
                 ["terminal", "Terminal"],
             ] as [string, string][]) {
                 const btn = document.createElement("button");
-                btn.className = "tab-btn" + (id === "server" ? " active" : "");
+                btn.className = "tab-btn";
                 btn.textContent = label;
-                btn.addEventListener("click", () => this.#switchTab(id as "server" | "terminal"));
+                btn.addEventListener("click", () => this.#dispatch({ type: "tabSelected", tab: id as SettingsTab }));
                 this.#tabBtns.set(id, btn);
                 tabBar.appendChild(btn);
             }
@@ -179,7 +179,7 @@ if (typeof HTMLElement !== "undefined") {
 
             // --- Server panel ---
             const serverPanel = document.createElement("div");
-            serverPanel.className = "panel active";
+            serverPanel.className = "panel";
             this.#panels.set("server", serverPanel);
 
             this.#portInput = document.createElement("input");
@@ -338,22 +338,26 @@ if (typeof HTMLElement !== "undefined") {
             this.#cancelBtn.addEventListener("click", () => this.close());
             this.#okBtn.addEventListener("click", () => void this.#handleSettingsOk());
 
-            for (const el of [
-                this.#portInput,
-                this.#fontFamilyInput,
-                this.#fontSizeInput,
-                this.#rowsInput,
-                this.#columnsInput,
-            ]) {
-                el.addEventListener("input", () => this.#checkDirty());
-            }
-            for (const el of [this.#noAuthInput, this.#noBrowserInput, this.#showMenubarInput]) {
-                el.addEventListener("change", () => this.#checkDirty());
-            }
-            this.#autoResizeInput.addEventListener("change", () => {
-                this.#updateDimensionDisabled(this.#autoResizeInput.checked);
-                this.#checkDirty();
-            });
+            const onInput = (el: HTMLInputElement, change: (value: string) => SettingsEditorAction): void =>
+                el.addEventListener("input", () => this.#dispatch(change(el.value)));
+            const onToggle = (el: HTMLInputElement, change: (checked: boolean) => SettingsEditorAction): void =>
+                el.addEventListener("change", () => this.#dispatch(change(el.checked)));
+            onInput(this.#portInput, (value) => ({ type: "fieldChanged", field: "port", value }));
+            onInput(this.#fontFamilyInput, (value) => ({ type: "fieldChanged", field: "fontFamily", value }));
+            onInput(this.#fontSizeInput, (value) => ({ type: "fieldChanged", field: "fontSize", value }));
+            onInput(this.#rowsInput, (value) => ({ type: "fieldChanged", field: "rows", value }));
+            onInput(this.#columnsInput, (value) => ({ type: "fieldChanged", field: "columns", value }));
+            onToggle(this.#noAuthInput, (value) => ({ type: "fieldChanged", field: "noAuth", value }));
+            onToggle(this.#noBrowserInput, (value) => ({ type: "fieldChanged", field: "noBrowser", value }));
+            onToggle(this.#autoResizeInput, (value) => ({ type: "fieldChanged", field: "autoResize", value }));
+            this.#showMenubarInput.addEventListener("change", () =>
+                this.#dispatch({
+                    type: "fieldChanged",
+                    field: "showMenubar",
+                    value: this.#showMenubarInput.value as SettingsServerConfig["showMenubar"],
+                })
+            );
+            this.#render();
         }
 
         #makeSettingGroup(label: string, desc: string, input: HTMLElement): HTMLDivElement {
@@ -374,82 +378,63 @@ if (typeof HTMLElement !== "undefined") {
             return group;
         }
 
-        #updateDimensionDisabled(autoResize: boolean): void {
-            this.#rowsInput.disabled = autoResize;
-            this.#columnsInput.disabled = autoResize;
+        #dispatch(action: SettingsEditorAction): void {
+            this.#state = reduceSettingsEditor(this.#state, action);
+            this.#render();
         }
 
-        #switchTab(tab: "server" | "terminal"): void {
-            this.#activeTab = tab;
-            for (const [id, btn] of this.#tabBtns) {
-                btn.classList.toggle("active", id === tab);
+        /** Brings the DOM in line with #state. Safe to call at any time. */
+        #render(): void {
+            const state = this.#state;
+            const { form } = state;
+            const saving = state.phase === "saving";
+
+            for (const [id, btn] of this.#tabBtns) btn.classList.toggle("active", id === state.tab);
+            for (const [id, panel] of this.#panels) panel.classList.toggle("active", id === state.tab);
+
+            // Values are set only when they differ, so typing isn't disturbed.
+            const text: [HTMLInputElement | HTMLSelectElement, string][] = [
+                [this.#portInput, form.port],
+                [this.#showMenubarInput, form.showMenubar],
+                [this.#fontFamilyInput, form.fontFamily],
+                [this.#fontSizeInput, form.fontSize],
+                [this.#rowsInput, form.rows],
+                [this.#columnsInput, form.columns],
+            ];
+            for (const [el, value] of text) {
+                if (el.value !== value) el.value = value;
+                el.disabled = saving;
             }
-            for (const [id, panel] of this.#panels) {
-                panel.classList.toggle("active", id === tab);
+            const toggles: [HTMLInputElement, boolean][] = [
+                [this.#noAuthInput, form.noAuth],
+                [this.#noBrowserInput, form.noBrowser],
+                [this.#autoResizeInput, form.autoResize],
+            ];
+            for (const [el, checked] of toggles) {
+                el.checked = checked;
+                el.disabled = saving;
             }
+            // Rows and columns only apply while Auto-Resize is off.
+            this.#rowsInput.disabled = saving || form.autoResize;
+            this.#columnsInput.disabled = saving || form.autoResize;
+
+            this.#serverRestartNote.classList.toggle("visible", serverSettingsChanged(state));
+            this.#termRestartNote.classList.toggle("visible", autoResizeChanged(state));
+
+            const message = state.error ?? settingsProblem(form);
+            this.#saveError.textContent = message ?? "";
+            this.#saveError.classList.toggle("visible", message !== null);
+            // Cancel too, so the editor can't close and reopen under a request in flight.
+            this.#cancelBtn.disabled = saving;
+            this.#okBtn.disabled = !canSaveSettings(state);
         }
-
-        #checkDirty(): void {
-            if (!this.#origServer || !this.#origTerminal) return;
-            if (this.#saving) {
-                this.#okBtn.disabled = true;
-                return;
-            }
-
-            const serverChanged =
-                this.#portInput.value !== this.#origServer.port ||
-                this.#noAuthInput.checked !== this.#origServer.noAuth ||
-                this.#noBrowserInput.checked !== this.#origServer.noBrowser ||
-                this.#showMenubarInput.value !== this.#origServer.showMenubar;
-
-            const termChanged =
-                this.#fontFamilyInput.value !== this.#origTerminal.fontFamily ||
-                this.#fontSizeInput.value !== this.#origTerminal.fontSize;
-
-            const autoResizeChanged = this.#autoResizeInput.checked !== this.#origTerminal.autoResize;
-            const dimChanged =
-                this.#rowsInput.value !== this.#origTerminal.rows ||
-                this.#columnsInput.value !== this.#origTerminal.columns;
-
-            // Rows/cols apply live when auto-resize is off at startup; only the
-            // auto-resize toggle itself requires a restart.
-            const dimRestartNeeded = autoResizeChanged;
-
-            this.#okBtn.disabled = !serverChanged && !termChanged && !autoResizeChanged && !dimChanged;
-            this.#serverRestartNote.classList.toggle("visible", serverChanged);
-            this.#termRestartNote.classList.toggle("visible", dimRestartNeeded);
-        }
-
-        // -----------------------------------------------------------------------
-        // Settings OK handler
-        // -----------------------------------------------------------------------
 
         async #handleSettingsOk(): Promise<void> {
-            const port = parseInt(this.#portInput.value, 10);
-            const fontSize = parseInt(this.#fontSizeInput.value, 10);
-            if (isNaN(port) || port < 1 || port > 65535) return;
-            if (isNaN(fontSize) || fontSize < 1) return;
-            if (this.#saving) return;
-
-            const settings: SettingsConfig = {
-                server: {
-                    port,
-                    noAuth: this.#noAuthInput.checked,
-                    noBrowser: this.#noBrowserInput.checked,
-                    showMenubar: this.#showMenubarInput.value as "hover" | "visible" | "disable",
-                },
-                terminal: {
-                    fontFamily: this.#fontFamilyInput.value.trim(),
-                    fontSize,
-                    autoResize: this.#autoResizeInput.checked,
-                    rows: parseInt(this.#rowsInput.value, 10) || 0,
-                    columns: parseInt(this.#columnsInput.value, 10) || 0,
-                },
-            };
-            this.#saveError.classList.remove("visible");
-            this.#setSaving(true);
+            const before = this.#state;
+            this.#dispatch({ type: "submitted" });
+            if (this.#state === before) return;
             try {
-                const response = await postSettings(settings);
+                const response = await postSettings(settingsFromForm(this.#state.form));
                 this.dispatchEvent(
                     new CustomEvent("b3tty-settings-edited", {
                         detail: { response },
@@ -461,69 +446,17 @@ if (typeof HTMLElement !== "undefined") {
             } catch (err) {
                 // Keep modal open for retry, but say why the save didn't
                 // visibly do anything.
-                this.#saveError.textContent = err instanceof Error ? err.message : "Failed to save settings.";
-                this.#saveError.classList.add("visible");
-            } finally {
-                this.#setSaving(false);
+                const message = err instanceof Error ? err.message : "Failed to save settings.";
+                this.#dispatch({ type: "failed", message });
             }
         }
 
-        /**
-         * Enters or leaves the saving state. While a request is in flight, OK and
-         * Cancel stay disabled, so a double click can't send it twice and the editor can't
-         * close under it. Leaving it re-checks the form, unless the save closed the editor.
-         */
-        #setSaving(saving: boolean): void {
-            this.#saving = saving;
-            this.#cancelBtn.disabled = saving;
-            if (saving) this.#okBtn.disabled = true;
-            else if (this.hasAttribute("open")) this.#checkDirty();
-        }
-
-        // -----------------------------------------------------------------------
-        // Public API
-        // -----------------------------------------------------------------------
-
         open(settings: SettingsConfig): void {
-            this.#portInput.value = String(settings.server.port);
-            this.#noAuthInput.checked = settings.server.noAuth;
-            this.#noBrowserInput.checked = settings.server.noBrowser;
-            this.#showMenubarInput.value = settings.server.showMenubar;
-
-            this.#fontFamilyInput.value = settings.terminal.fontFamily;
-            this.#fontSizeInput.value = String(settings.terminal.fontSize);
-            this.#autoResizeInput.checked = settings.terminal.autoResize;
-            this.#rowsInput.value = String(settings.terminal.rows);
-            this.#columnsInput.value = String(settings.terminal.columns);
-            this.#updateDimensionDisabled(settings.terminal.autoResize);
-
-            this.#origServer = {
-                port: this.#portInput.value,
-                noAuth: this.#noAuthInput.checked,
-                noBrowser: this.#noBrowserInput.checked,
-                showMenubar: this.#showMenubarInput.value,
-            };
-            this.#origTerminal = {
-                fontFamily: this.#fontFamilyInput.value,
-                fontSize: this.#fontSizeInput.value,
-                autoResize: this.#autoResizeInput.checked,
-                rows: this.#rowsInput.value,
-                columns: this.#columnsInput.value,
-            };
-
-            this.#okBtn.disabled = true;
-            this.#serverRestartNote.classList.remove("visible");
-            this.#termRestartNote.classList.remove("visible");
-            this.#saveError.classList.remove("visible");
-
-            this.#switchTab("server");
+            this.#dispatch({ type: "opened", settings });
             this.setAttribute("open", "");
         }
 
         close(): void {
-            this.#origServer = null;
-            this.#origTerminal = null;
-            this.#saveError.classList.remove("visible");
             closeOverlay(this);
         }
     }
