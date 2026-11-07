@@ -24,7 +24,8 @@ export interface ThemeFileDialogParts {
  * root: title, intro, a hidden .warning-note, a File Path field, and an actions row of
  * .save-error, Cancel, and the action button. Opens above other overlays
  * (--z-overlay-stacked) since both can be opened from the theme editor. Cancel calls
- * host.close(); Enter in the field clicks the action button when it is enabled.
+ * host.close(); Enter in the field clicks the action button when it is enabled. The
+ * dialogs render every enabled/visible state themselves, from their reducers.
  */
 export function buildThemeFileDialog(
     host: HTMLElement & { close(): void },
@@ -98,10 +99,6 @@ export function buildThemeFileDialog(
     actionBtn.textContent = actionLabel;
     actions.append(saveError, cancelBtn, actionBtn);
 
-    input.addEventListener("input", () => {
-        actionBtn.disabled = input.disabled || !input.value.trim();
-        saveError.classList.remove("visible");
-    });
     input.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && !actionBtn.disabled) actionBtn.click();
     });

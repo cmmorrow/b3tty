@@ -51,8 +51,6 @@ if (typeof HTMLElement !== "undefined") {
                 "Install a theme from a .b3theme package. It will appear in Select Theme, ready to use or copy.";
             this.#parts.input.placeholder = "~/Downloads/theme.b3theme";
             this.#parts.hint.textContent = "An absolute path, or one starting with ~ for your home directory.";
-            // Registered after buildThemeFileDialog's own input listener, so #render has
-            // the last word on the action button.
             this.#parts.input.addEventListener("input", () =>
                 this.#dispatch({ type: "pathChanged", path: this.#parts.input.value })
             );
