@@ -23,11 +23,40 @@ import { closeOverlay } from "./overlay.ts";
 import {
     type B3ttyPaletteCard,
     cardDetails,
-    fetchPaletteCards,
+    createPaletteCard,
+    fetchThemePalettes,
     formatThemeName,
-    type PaletteCardEntry,
     THEME_SECTIONS,
 } from "./palette-card.ts";
+import {
+    canSubmitPrompt,
+    initialPromptState,
+    reducePrompt,
+    showPromptProblem,
+    type PromptAction,
+    type PromptState,
+} from "./theme-editor-prompt-state.ts";
+import {
+    canCopyTheme,
+    canDeleteTheme,
+    canExportTheme,
+    canSaveTheme,
+    copyName,
+    copyNameProblem,
+    hasUnsavedChanges,
+    initialThemeEditorState,
+    isEditable,
+    isReadOnly,
+    nameIsTaken,
+    previewPalette,
+    reduceThemeEditor,
+    selectedSource,
+    themeDataFromForm,
+    themeEntry,
+    type ThemeColorKey,
+    type ThemeEditorAction,
+    type ThemeEditorState,
+} from "./theme-editor-state.ts";
 
 /**
  * Options for B3ttyThemeEditor.open(): `select` names a theme to select once the list
@@ -171,53 +200,64 @@ function buildPromptLayer(root: ShadowRoot): PromptLayer {
     overlay.appendChild(box);
     root.appendChild(overlay);
 
+    let state: PromptState = initialPromptState;
     let current: { options: PromptOptions; resolve(ok: boolean): void } | null = null;
-    let busy = false;
 
-    const update = (): void => {
-        const validate = current?.options.input?.validate;
-        const reason = validate ? validate(input.value) : null;
-        // An empty field is unusable but not yet an error worth showing.
-        fieldError.textContent = reason ?? "";
-        fieldError.classList.toggle("visible", !!reason && input.value !== "");
-        actionBtn.disabled = busy || !!reason;
-        cancelBtn.disabled = busy;
+    const problemOf = (value: string): string | null => current?.options.input?.validate(value) ?? null;
+    /** Brings the prompt's DOM in line with its state. */
+    const render = (): void => {
+        overlay.classList.toggle("open", state.phase !== "closed");
+        if (state.phase === "closed") return;
+        const submitting = state.phase === "submitting";
+        if (input.value !== state.value) input.value = state.value;
+        input.disabled = submitting;
+        fieldError.textContent = state.problem ?? "";
+        fieldError.classList.toggle("visible", showPromptProblem(state));
+        saveError.textContent = state.error ?? "";
+        saveError.classList.toggle("visible", state.error !== null);
+        actionBtn.disabled = !canSubmitPrompt(state);
+        cancelBtn.disabled = submitting;
     };
-    const finish = (ok: boolean): void => {
+    const dispatch = (action: PromptAction): void => {
+        state = reducePrompt(state, action);
+        render();
+    };
+    /** Hands the result to ask()'s caller once the prompt has closed. */
+    const settle = (ok: boolean): void => {
         const c = current;
         current = null;
-        overlay.classList.remove("open");
         c?.options.opener?.focus();
         c?.resolve(ok);
     };
+    const cancel = (): void => {
+        const before = state;
+        dispatch({ type: "cancelled" });
+        if (state !== before) settle(false);
+    };
     const submit = async (): Promise<void> => {
-        if (!current || actionBtn.disabled) return;
-        busy = true;
-        saveError.classList.remove("visible");
-        update();
+        const before = state;
+        dispatch({ type: "submitted" });
+        const options = current?.options;
+        if (state === before || state.phase !== "submitting" || !options) return;
         try {
-            await current.options.submit(input.value);
-            busy = false;
-            finish(true);
+            await options.submit(state.value);
+            dispatch({ type: "succeeded" });
+            settle(true);
         } catch (err) {
-            busy = false;
-            saveError.textContent = err instanceof Error ? err.message : String(err);
-            saveError.classList.add("visible");
-            update();
+            dispatch({ type: "failed", message: err instanceof Error ? err.message : String(err) });
         }
     };
 
-    input.addEventListener("input", () => {
-        saveError.classList.remove("visible");
-        update();
-    });
-    cancelBtn.addEventListener("click", () => finish(false));
+    input.addEventListener("input", () =>
+        dispatch({ type: "valueChanged", value: input.value, problem: problemOf(input.value) })
+    );
+    cancelBtn.addEventListener("click", cancel);
     actionBtn.addEventListener("click", () => void submit());
     box.addEventListener("keydown", (e) => {
         if (e.key === "Escape") {
             e.preventDefault();
             e.stopPropagation();
-            if (!busy) finish(false);
+            cancel();
         } else if (e.key === "Enter" && e.target === input) {
             e.preventDefault();
             void submit();
@@ -226,20 +266,17 @@ function buildPromptLayer(root: ShadowRoot): PromptLayer {
 
     return {
         ask(options: PromptOptions): Promise<boolean> {
-            if (current) finish(false);
+            if (current) settle(false);
             heading.textContent = options.title;
             message.replaceChildren(...options.message);
             field.hidden = !options.input;
             fieldLabel.textContent = options.input?.label ?? "";
-            input.value = options.input?.value ?? "";
             actionBtn.textContent = options.actionLabel;
             actionBtn.className = options.destructive ? "delete-btn" : "ok-btn";
-            saveError.classList.remove("visible");
-            busy = false;
             return new Promise((resolve) => {
                 current = { options, resolve };
-                overlay.classList.add("open");
-                update();
+                const value = options.input?.value ?? "";
+                dispatch({ type: "opened", hasInput: !!options.input, value, problem: problemOf(value) });
                 if (options.input) {
                     input.focus();
                     input.select();
@@ -462,17 +499,16 @@ const THEME_EDITOR_RIGHT_PANEL = `
 
 if (typeof HTMLElement !== "undefined") {
     class B3ttyThemeEditorImpl extends HTMLElement implements B3ttyThemeEditor {
-        #shadow: ShadowRoot;
         #leftPanel: HTMLDivElement;
         #themeList: HTMLDivElement;
+        #createCard: HTMLDivElement;
+        #createRadio: HTMLInputElement;
         #nameInput: HTMLInputElement;
         #nameError: HTMLSpanElement;
         #readOnlyNote: HTMLDivElement;
         #saveError: HTMLSpanElement;
-        #colorInputs: Map<string, HTMLInputElement> = new Map();
-        #swatches: Map<string, HTMLSpanElement> = new Map();
-        // Kept out of #colorInputs so the color loops, swatches, and palette
-        // preview never see them; they take effect when the theme is saved.
+        #colorInputs: Map<ThemeColorKey, HTMLInputElement> = new Map();
+        #swatches: Map<ThemeColorKey, HTMLSpanElement> = new Map();
         #bgImageInput: HTMLInputElement;
         #bgTransparencyInput: HTMLInputElement;
         #bgTransparencyError: HTMLSpanElement;
@@ -482,30 +518,15 @@ if (typeof HTMLElement !== "undefined") {
         #copyBtn: HTMLButtonElement;
         #deleteBtn: HTMLButtonElement;
         #prompt: PromptLayer;
-        // The selected theme's inputs as loaded, to tell whether the form has unsaved
-        // changes; null when no saved theme is loaded.
-        #savedSnapshot: string | null = null;
-        #selectedName: string | null = null;
-        #selectedCard: HTMLElement | null = null;
-        #selectedPalette: Palette | null = null;
-        #paletteCache: Map<string, Palette> = new Map();
-        #createCard: HTMLDivElement;
-        #createRadio: HTMLInputElement;
-        #isLoading = false;
-        /** True while an edit-theme request is in flight. */
-        #saving = false;
-        /** Every theme, by name, as last passed to open() or refresh(). */
-        #entries: Map<string, ThemeEntry> = new Map();
-        /** True while a built-in or installed theme is selected. */
-        #readOnly = false;
-        /** Bumped on every refresh, so palettes fetched for an earlier one are ignored. */
-        #refreshId = 0;
+        #state: ThemeEditorState = initialThemeEditorState;
+        /** The palettes the list was last built from, so it is only rebuilt when they change. */
+        #renderedPalettes: Record<string, Palette> | null = null;
+        /** The palette each card last showed, serialized, so setup() only runs when it changes. */
+        #cardPalettes = new WeakMap<HTMLElement, string>();
 
         constructor() {
             super();
-            this.#shadow = this.attachShadow({ mode: "open" });
-
-            const shadow = this.#shadow;
+            const shadow = this.attachShadow({ mode: "open" });
             shadow.innerHTML = `
                 <style>${THEME_EDITOR_STYLES}</style>
                 <div class="overlay">
@@ -530,15 +551,15 @@ if (typeof HTMLElement !== "undefined") {
             this.#bgTransparencyError = shadow.querySelector<HTMLSpanElement>(".transparency-error")!;
             this.#saveError = shadow.querySelector<HTMLSpanElement>(".right-panel .save-error")!;
             this.#okBtn = shadow.querySelector<HTMLButtonElement>(".right-panel .ok-btn")!;
+            this.#cancelBtn = shadow.querySelector<HTMLButtonElement>(".right-panel .actions .cancel-btn")!;
             const importCard = shadow.querySelector<HTMLButtonElement>(".import-card")!;
             const colorForm = shadow.querySelector<HTMLDivElement>(".color-form")!;
-            this.#cancelBtn = shadow.querySelector<HTMLButtonElement>(".right-panel .actions .cancel-btn")!;
 
             for (const input of Array.from(colorForm.querySelectorAll<HTMLInputElement>("[data-color]"))) {
-                this.#colorInputs.set(input.dataset.color!, input);
+                this.#colorInputs.set(input.dataset.color as ThemeColorKey, input);
             }
             for (const swatch of Array.from(colorForm.querySelectorAll<HTMLSpanElement>("[data-swatch]"))) {
-                this.#swatches.set(swatch.dataset.swatch!, swatch);
+                this.#swatches.set(swatch.dataset.swatch as ThemeColorKey, swatch);
             }
 
             // Last, since setting the template would replace it.
@@ -554,10 +575,11 @@ if (typeof HTMLElement !== "undefined") {
             this.#copyBtn.addEventListener("click", () => void this.#copySelected());
             this.#deleteBtn.addEventListener("click", () => void this.#deleteSelected());
             this.#exportBtn.addEventListener("click", () => {
-                if (!this.#selectedName || this.#readOnly) return;
+                const state = this.#state;
+                if (!canExportTheme(state) || state.selected === null) return;
                 const detail: ThemeExportRequest = {
-                    name: this.#selectedName,
-                    unsavedChanges: this.#hasUnsavedChanges(),
+                    name: state.selected,
+                    unsavedChanges: hasUnsavedChanges(state),
                     opener: this.#exportBtn,
                 };
                 this.dispatchEvent(
@@ -565,231 +587,155 @@ if (typeof HTMLElement !== "undefined") {
                 );
             });
 
-            // One listener for every color input; each input's key names its swatch.
+            // One listener for every color input; each input's key names its field.
             colorForm.addEventListener("input", (e: Event) => {
                 const input = e.target as HTMLInputElement;
-                const key = input.dataset.color;
-                if (!key) return;
-                this.#updateSwatch(this.#swatches.get(key)!, input.value);
-                this.#validateForm();
+                const key = input.dataset.color as ThemeColorKey | undefined;
+                if (key) this.#dispatch({ type: "fieldChanged", field: key, value: input.value });
             });
-            this.#bgTransparencyInput.addEventListener("input", () => this.#validateForm());
-
-            this.#nameInput.addEventListener("input", () => this.#validateForm());
-
-            this.#createCard.addEventListener("click", () => this.#selectCreate());
-
+            this.#bgImageInput.addEventListener("input", () =>
+                this.#dispatch({ type: "fieldChanged", field: "backgroundImage", value: this.#bgImageInput.value })
+            );
+            this.#bgTransparencyInput.addEventListener("input", () =>
+                this.#dispatch({ type: "fieldChanged", field: "transparency", value: this.#bgTransparencyInput.value })
+            );
+            this.#nameInput.addEventListener("input", () =>
+                this.#dispatch({ type: "fieldChanged", field: "name", value: this.#nameInput.value })
+            );
+            this.#createCard.addEventListener("click", () => this.#dispatch({ type: "createSelected" }));
             this.#leftPanel.addEventListener("b3tty-card-select", (e: Event) => {
-                this.#selectCard(e.target as HTMLElement);
+                void this.#selectTheme((e.target as unknown as B3ttyPaletteCard).value);
             });
-
             this.#cancelBtn.addEventListener("click", () => this.close());
             this.#okBtn.addEventListener("click", () => void this.#handleOk());
+            this.#render();
         }
 
-        #updateSwatch(swatch: HTMLSpanElement, value: string): void {
-            if (value && isValidThemeColor(value)) {
-                swatch.style.backgroundColor = value;
-                swatch.classList.add("visible");
-            } else {
-                swatch.classList.remove("visible");
-            }
+        open(themes: ThemeEntry[], options: ThemeEditorOpenOptions = {}): void {
+            this.#dispatch({ type: "opened" });
+            this.setAttribute("open", "");
+            void this.refresh(themes, options.select).then(() => {
+                if (!options.action || !options.select || this.#state.selected !== options.select) return;
+                if (options.action === "copy") void this.#copySelected();
+                else void this.#deleteSelected();
+            });
         }
 
-        /** Whether name belongs to a built-in or installed theme, which a user theme can't use. */
-        #isReadOnlyName(name: string): boolean {
-            const entry = this.#entries.get(name);
-            return !!entry && entry.source !== "user";
+        close(): void {
+            closeOverlay(this);
         }
 
-        #validateForm(): void {
-            if (this.#isLoading || this.#readOnly || this.#saving) {
-                this.#okBtn.disabled = true;
-                this.#nameError.classList.remove("visible");
-                this.#bgTransparencyError.classList.remove("visible");
-                return;
-            }
-            this.#updatePreview();
-            const transparencyValid = isValidBackgroundImageTransparency(this.#bgTransparencyInput.value);
-            this.#bgTransparencyError.classList.toggle("visible", !transparencyValid);
-            const name = this.#nameInput.value.trim();
-            if (!name) {
-                this.#okBtn.disabled = true;
-                this.#nameError.classList.remove("visible");
-                return;
-            }
-            if (this.#isReadOnlyName(name)) {
-                this.#okBtn.disabled = true;
-                this.#nameError.classList.add("visible");
-                return;
-            }
-            this.#nameError.classList.remove("visible");
-            for (const input of this.#colorInputs.values()) {
-                if (input.value && !isValidThemeColor(input.value)) {
-                    this.#okBtn.disabled = true;
-                    return;
+        async refresh(themes: ThemeEntry[], select?: string): Promise<void> {
+            this.#dispatch({ type: "refreshStarted", entries: themes });
+            const listId = this.#state.listId;
+            const loaded = await fetchThemePalettes(themes);
+            const palettes = Object.fromEntries(loaded.map(({ entry, palette }) => [entry.name, palette]));
+            const before = this.#state;
+            this.#dispatch({ type: "refreshLoaded", listId, palettes, select });
+            const state = this.#state;
+            if (state === before || state.phase !== "loading" || state.selected === null) return;
+            void this.#loadTheme(state.selected);
+            this.#cardFor(state.selected)?.scrollIntoView({ block: "nearest" });
+        }
+
+        #dispatch(action: ThemeEditorAction): void {
+            this.#state = reduceThemeEditor(this.#state, action);
+            this.#render();
+        }
+
+        /** Brings the DOM in line with #state. Safe to call at any time. */
+        #render(): void {
+            const state = this.#state;
+            const { form } = state;
+            const saving = state.phase === "saving";
+            const readOnly = isReadOnly(state);
+            const editable = isEditable(state);
+
+            this.#renderList();
+            this.#createRadio.checked = state.selected === null;
+            this.#createCard.toggleAttribute("selected", state.selected === null);
+            const preview = previewPalette(state);
+            for (const card of this.#cards()) {
+                const name = (card as unknown as B3ttyPaletteCard).value;
+                const selected = name === state.selected;
+                // The selected card shows the live preview; every other card its own palette.
+                const palette = (selected ? preview : null) ?? state.palettes[name];
+                const key = palette ? JSON.stringify(palette) : "";
+                if (palette && this.#cardPalettes.get(card) !== key) {
+                    const entry = themeEntry(state, name);
+                    (card as unknown as B3ttyPaletteCard).setup(
+                        name,
+                        formatThemeName(name),
+                        palette,
+                        entry ? cardDetails(entry) : undefined
+                    );
+                    this.#cardPalettes.set(card, key);
                 }
+                card.toggleAttribute("selected", selected);
             }
-            this.#okBtn.disabled = !transparencyValid;
-        }
 
-        /**
-         * Puts the right panel in or out of its read-only state: a built-in or installed
-         * theme is shown with every field disabled and a note saying to copy it.
-         */
-        #setReadOnly(source: ThemeSource | null): void {
+            // Values are set only when they differ, so typing isn't disturbed.
+            if (this.#nameInput.value !== form.name) this.#nameInput.value = form.name;
+            this.#nameInput.readOnly = readOnly || saving;
+            for (const [key, input] of this.#colorInputs) {
+                const value = form.colors[key];
+                if (input.value !== value) input.value = value;
+                input.disabled = readOnly || saving;
+                const swatch = this.#swatches.get(key);
+                if (!swatch) continue;
+                const valid = value !== "" && isValidThemeColor(value);
+                swatch.classList.toggle("visible", valid);
+                if (valid) swatch.style.backgroundColor = value;
+            }
+            if (this.#bgImageInput.value !== form.backgroundImage) this.#bgImageInput.value = form.backgroundImage;
+            if (this.#bgTransparencyInput.value !== form.transparency) {
+                this.#bgTransparencyInput.value = form.transparency;
+            }
+            this.#bgImageInput.disabled = readOnly || saving;
+            this.#bgTransparencyInput.disabled = readOnly || saving;
+
+            this.#nameError.classList.toggle("visible", editable && nameIsTaken(state));
+            this.#bgTransparencyError.classList.toggle(
+                "visible",
+                editable && !isValidBackgroundImageTransparency(form.transparency)
+            );
+            const source = selectedSource(state);
             const note = source ? READ_ONLY_NOTES[source] : undefined;
-            this.#readOnly = !!note;
-            for (const input of this.#colorInputs.values()) input.disabled = this.#readOnly;
-            this.#bgImageInput.disabled = this.#readOnly;
-            this.#bgTransparencyInput.disabled = this.#readOnly;
-            this.#nameInput.readOnly = this.#readOnly;
             this.#readOnlyNote.textContent = note ?? "";
             this.#readOnlyNote.hidden = !note;
-        }
+            this.#saveError.textContent = state.error ?? "";
+            this.#saveError.classList.toggle("visible", state.error !== null);
 
-        /** Enables Copy…, Delete…, and Export… for the selected theme. */
-        #updateButtons(): void {
-            const entry = this.#selectedName ? this.#entries.get(this.#selectedName) : undefined;
-            this.#copyBtn.disabled = !entry;
-            // A built-in can only be removed from the menu, so there's nothing to do
-            // when it isn't in it.
-            this.#deleteBtn.disabled = !entry || (entry.source === "builtin" && !entry.inMenu);
-            this.#exportBtn.disabled = !entry || entry.source !== "user";
-        }
-
-        #restoreSelectedCard(): void {
-            if (!this.#selectedCard || !this.#selectedName) return;
-            const original = this.#paletteCache.get(this.#selectedName);
-            const entry = this.#entries.get(this.#selectedName);
-            if (original) {
-                (this.#selectedCard as unknown as B3ttyPaletteCard).setup(
-                    this.#selectedName,
-                    formatThemeName(this.#selectedName),
-                    original,
-                    entry ? cardDetails(entry) : undefined
-                );
-            }
-            this.#selectedCard = null;
-            this.#selectedPalette = null;
-        }
-
-        #buildPreviewPalette(): Palette | null {
-            if (!this.#selectedPalette) return null;
-            const base = this.#selectedPalette;
-            const get = (key: string): string | null => {
-                const val = this.#colorInputs.get(key)?.value;
-                return val && isValidThemeColor(val) ? val : null;
-            };
-            const normalKeys = ["black", "red", "yellow", "green", "cyan", "blue", "magenta", "white"];
-            const brightKeys = [
-                "brightBlack",
-                "brightRed",
-                "brightYellow",
-                "brightGreen",
-                "brightCyan",
-                "brightBlue",
-                "brightMagenta",
-                "brightWhite",
-            ];
-            return {
-                bg: get("background") ?? base.bg,
-                fg: get("foreground") ?? base.fg,
-                selBg: get("selectionBackground") ?? base.selBg,
-                cursor: get("cursor") ?? base.cursor,
-                normal: normalKeys.map((k, i) => get(k) ?? base.normal[i] ?? ""),
-                bright: brightKeys.map((k, i) => get(k) ?? base.bright[i] ?? ""),
-            };
-        }
-
-        #updatePreview(): void {
-            if (!this.#selectedCard || !this.#selectedName || !this.#selectedPalette) return;
-            const palette = this.#buildPreviewPalette();
-            if (!palette) return;
-            const entry = this.#entries.get(this.#selectedName);
-            (this.#selectedCard as unknown as B3ttyPaletteCard).setup(
-                this.#selectedName,
-                formatThemeName(this.#selectedName),
-                palette,
-                entry ? cardDetails(entry) : undefined
-            );
-        }
-
-        #snapshotInputs(): string {
-            const values = Array.from(this.#colorInputs.values(), (input) => input.value);
-            values.push(this.#bgImageInput.value, this.#bgTransparencyInput.value);
-            return JSON.stringify(values);
-        }
-
-        #hasUnsavedChanges(): boolean {
-            return this.#savedSnapshot !== null && this.#savedSnapshot !== this.#snapshotInputs();
-        }
-
-        #clearInputs(): void {
-            this.#savedSnapshot = null;
-            for (const [key, input] of this.#colorInputs) {
-                input.value = "";
-                const swatch = this.#swatches.get(key);
-                if (swatch) swatch.classList.remove("visible");
-            }
-            this.#bgImageInput.value = "";
-            this.#bgTransparencyInput.value = "";
-            this.#bgTransparencyError.classList.remove("visible");
-        }
-
-        /** Selects "Create new theme": an empty, editable form. */
-        #selectCreate(): void {
-            for (const card of Array.from(this.#leftPanel.querySelectorAll("b3tty-palette-card"))) {
-                card.removeAttribute("selected");
-            }
-            this.#createCard.setAttribute("selected", "");
-            this.#createRadio.checked = true;
-            this.#restoreSelectedCard();
-            this.#selectedName = null;
-            this.#setReadOnly(null);
-            this.#updateButtons();
-            this.#nameInput.value = "";
-            this.#clearInputs();
-            this.#isLoading = false;
-            this.#validateForm();
-        }
-
-        /** Selects a theme's card and loads the theme into the right panel. */
-        #selectCard(target: HTMLElement): void {
-            for (const card of Array.from(this.#leftPanel.querySelectorAll("b3tty-palette-card"))) {
-                if (card !== target) card.removeAttribute("selected");
-            }
-            target.setAttribute("selected", "");
-            this.#createCard.removeAttribute("selected");
-            this.#createRadio.checked = false;
-            const name = (target as unknown as B3ttyPaletteCard).value;
-            this.#restoreSelectedCard();
-            this.#selectedName = name;
-            this.#selectedCard = target;
-            this.#selectedPalette = this.#paletteCache.get(name) ?? null;
-            this.#setReadOnly(this.#entries.get(name)?.source ?? null);
-            this.#updateButtons();
-            this.#nameInput.value = name;
-            this.#isLoading = true;
-            this.#okBtn.disabled = true;
-            this.#clearInputs();
-            void this.#loadThemeColors(name);
+            this.#copyBtn.disabled = !canCopyTheme(state);
+            this.#deleteBtn.disabled = !canDeleteTheme(state);
+            this.#exportBtn.disabled = !canExportTheme(state);
+            // Cancel too, so the editor can't close and reopen under a request in flight.
+            this.#cancelBtn.disabled = saving;
+            this.#okBtn.disabled = !canSaveTheme(state);
         }
 
         /**
-         * Rebuilds the theme list from #entries' cards: Your themes, Installed, and
-         * Built-in, each left out when empty.
+         * Rebuilds the theme list when the loaded palettes change: Your themes,
+         * Installed, and Built-in, each left out when empty.
          */
-        #renderList(cards: PaletteCardEntry[]): void {
+        #renderList(): void {
+            const { entries, palettes } = this.#state;
+            if (palettes === this.#renderedPalettes) return;
+            this.#renderedPalettes = palettes;
             this.#themeList.replaceChildren();
             for (const { source, title } of THEME_SECTIONS) {
-                const inSection = cards.filter((c) => c.entry.source === source);
+                const inSection = entries.filter((e) => e.source === source && palettes[e.name]);
                 if (inSection.length === 0) continue;
                 const section = document.createElement("div");
                 section.className = "list-section";
                 const body = document.createElement("div");
                 body.className = "list-section";
-                for (const { card } of inSection) body.appendChild(card);
+                for (const entry of inSection) {
+                    const palette = palettes[entry.name]!;
+                    const card = createPaletteCard(entry, palette);
+                    this.#cardPalettes.set(card, JSON.stringify(palette));
+                    body.appendChild(card);
+                }
                 const heading = document.createElement("div");
                 heading.className = "section-title";
                 heading.textContent = title;
@@ -798,21 +744,27 @@ if (typeof HTMLElement !== "undefined") {
             }
         }
 
-        async refresh(themes: ThemeEntry[], select?: string): Promise<void> {
-            const refreshId = ++this.#refreshId;
-            this.#entries = new Map(themes.map((e) => [e.name, e]));
-            const cards = await fetchPaletteCards(themes);
-            if (refreshId !== this.#refreshId) return;
-            this.#restoreSelectedCard();
-            this.#paletteCache.clear();
-            for (const { entry, palette } of cards) this.#paletteCache.set(entry.name, palette);
-            this.#renderList(cards);
-            const target = select ? cards.find((c) => c.entry.name === select)?.card : undefined;
-            if (target) {
-                this.#selectCard(target);
-                target.scrollIntoView({ block: "nearest" });
-            } else {
-                this.#selectCreate();
+        #cards(): HTMLElement[] {
+            return Array.from(this.#themeList.querySelectorAll<HTMLElement>("b3tty-palette-card"));
+        }
+
+        #cardFor(name: string): HTMLElement | undefined {
+            return this.#cards().find((card) => (card as unknown as B3ttyPaletteCard).value === name);
+        }
+
+        async #selectTheme(name: string): Promise<void> {
+            const before = this.#state;
+            this.#dispatch({ type: "themeSelected", name });
+            if (this.#state !== before) await this.#loadTheme(name);
+        }
+
+        async #loadTheme(name: string): Promise<void> {
+            try {
+                const config = await getThemeConfig(name);
+                this.#dispatch({ type: "themeLoaded", name, config });
+            } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                this.#dispatch({ type: "themeLoadFailed", name, message });
             }
         }
 
@@ -823,26 +775,9 @@ if (typeof HTMLElement !== "undefined") {
             );
         }
 
-        /** A name for a copy of name that no theme has yet: name-copy, name-copy-2, … */
-        #copyName(name: string): string {
-            let candidate = `${name}-copy`;
-            for (let i = 2; this.#entries.has(candidate); i++) candidate = `${name}-copy-${i}`;
-            return candidate;
-        }
-
-        /** Why newName can't name a copy, or null; mirrors validateThemeName on the server. */
-        #copyNameProblem(newName: string): string | null {
-            if (!newName) return "Enter a name.";
-            if (newName.trim() !== newName) return "The name can't start or end with a space.";
-            if (newName.includes("/")) return "The name can't contain a /.";
-            if (newName.length > 64) return "The name can't be longer than 64 characters.";
-            if (this.#entries.has(newName)) return "A theme with this name already exists.";
-            return null;
-        }
-
         async #copySelected(): Promise<void> {
-            const name = this.#selectedName;
-            if (!name || this.#copyBtn.disabled) return;
+            const name = this.#state.selected;
+            if (name === null || !canCopyTheme(this.#state)) return;
             const bold = document.createElement("b");
             bold.textContent = name;
             await this.#prompt.ask({
@@ -850,8 +785,8 @@ if (typeof HTMLElement !== "undefined") {
                 message: ["Save a copy of ", bold, " as a theme of your own, which you can edit and export."],
                 input: {
                     label: "New theme name",
-                    value: this.#copyName(name),
-                    validate: (value) => this.#copyNameProblem(value),
+                    value: copyName(this.#state.entries, name),
+                    validate: (value) => copyNameProblem(this.#state.entries, value),
                 },
                 actionLabel: "Copy",
                 opener: this.#copyBtn,
@@ -865,8 +800,8 @@ if (typeof HTMLElement !== "undefined") {
         }
 
         async #deleteSelected(): Promise<void> {
-            const entry = this.#selectedName ? this.#entries.get(this.#selectedName) : undefined;
-            if (!entry || this.#deleteBtn.disabled) return;
+            const entry = themeEntry(this.#state, this.#state.selected);
+            if (!entry || !canDeleteTheme(this.#state)) return;
             const bold = document.createElement("b");
             bold.textContent = entry.name;
             const prompts: Record<ThemeSource, { title: string; message: Array<string | Node>; action: string }> = {
@@ -906,48 +841,14 @@ if (typeof HTMLElement !== "undefined") {
             });
         }
 
-        async #loadThemeColors(name: string): Promise<void> {
-            try {
-                const config = await getThemeConfig(name);
-                if (this.#selectedName !== name) return;
-                const data = config as unknown as Record<string, string>;
-                for (const [key, input] of this.#colorInputs) {
-                    const value = data[key] ?? "";
-                    input.value = value;
-                    const swatch = this.#swatches.get(key);
-                    if (swatch) this.#updateSwatch(swatch, value);
-                }
-                this.#bgImageInput.value = config.backgroundImage ?? "";
-                // Left empty when unset so the placeholder shows the default.
-                this.#bgTransparencyInput.value = config.backgroundImageTransparency?.toString() ?? "";
-                this.#savedSnapshot = this.#snapshotInputs();
-            } catch {
-                // leave inputs as-is on failure
-            } finally {
-                if (this.#selectedName === name) {
-                    this.#isLoading = false;
-                    this.#validateForm();
-                }
-            }
-        }
-
         async #handleOk(): Promise<void> {
-            const name = this.#nameInput.value.trim();
-            if (!name || this.#readOnly || this.#saving) return;
-            const themeData: Record<string, string | number> = {};
-            for (const [key, input] of this.#colorInputs) {
-                if (input.value) themeData[key] = input.value;
-            }
-            // Always sent: an empty path clears the theme's background image.
-            themeData["backgroundImage"] = this.#bgImageInput.value.trim();
-            // Omitted when empty so the theme falls back to the default.
-            if (this.#bgTransparencyInput.value !== "") {
-                themeData["backgroundImageTransparency"] = Number(this.#bgTransparencyInput.value);
-            }
-            this.#saveError.classList.remove("visible");
-            this.#setSaving(true);
+            const before = this.#state;
+            this.#dispatch({ type: "saveSubmitted" });
+            if (this.#state === before) return;
+            const { form } = this.#state;
+            const name = form.name.trim();
             try {
-                const response = await postEditTheme(name, themeData);
+                const response = await postEditTheme(name, themeDataFromForm(form));
                 this.dispatchEvent(
                     new CustomEvent("b3tty-theme-edited", {
                         detail: { name, response },
@@ -960,47 +861,9 @@ if (typeof HTMLElement !== "undefined") {
                 // Keep editor open so the user can retry, but tell them why —
                 // a save that silently does nothing looks indistinguishable
                 // from a UI bug.
-                this.#saveError.textContent = err instanceof Error ? err.message : "Failed to save theme.";
-                this.#saveError.classList.add("visible");
-            } finally {
-                this.#setSaving(false);
+                const message = err instanceof Error ? err.message : "Failed to save theme.";
+                this.#dispatch({ type: "saveFailed", message });
             }
-        }
-
-        /**
-         * Enters or leaves the saving state. While a request is in flight, OK and
-         * Cancel stay disabled, so a double click can't send it twice and the editor can't
-         * close under it. Leaving it re-checks the form, unless the save closed the editor.
-         */
-        #setSaving(saving: boolean): void {
-            this.#saving = saving;
-            this.#cancelBtn.disabled = saving;
-            if (saving) this.#okBtn.disabled = true;
-            else if (this.hasAttribute("open")) this.#validateForm();
-        }
-
-        open(themes: ThemeEntry[], options: ThemeEditorOpenOptions = {}): void {
-            this.#selectedCard = null;
-            this.#selectedPalette = null;
-            this.#nameError.classList.remove("visible");
-            this.#saveError.classList.remove("visible");
-            this.#themeList.replaceChildren();
-            this.#selectCreate();
-            this.setAttribute("open", "");
-
-            void this.refresh(themes, options.select).then(() => {
-                if (!options.action || !options.select || this.#selectedName !== options.select) return;
-                if (options.action === "copy") void this.#copySelected();
-                else void this.#deleteSelected();
-            });
-        }
-
-        close(): void {
-            this.#restoreSelectedCard();
-            this.#selectedName = null;
-            this.#nameError.classList.remove("visible");
-            this.#saveError.classList.remove("visible");
-            closeOverlay(this);
         }
     }
 

@@ -86,32 +86,34 @@ export interface PaletteCardEntry {
 }
 
 /**
- * Fetches every theme's palette in parallel and builds its card, keeping the order of
- * `themes`. A theme whose palette can't be fetched is left out.
+ * Fetches every theme's palette in parallel, keeping the order of `themes`. A theme
+ * whose palette can't be fetched is left out.
  */
-export function fetchPaletteCards(themes: ThemeEntry[]): Promise<PaletteCardEntry[]> {
+export function fetchThemePalettes(themes: ThemeEntry[]): Promise<Array<{ entry: ThemeEntry; palette: Palette }>> {
     return Promise.all(
         themes.map((entry) =>
             getThemePalette(entry.name)
                 .then((p) => ({ entry, palette: p as Palette | null }))
                 .catch(() => ({ entry, palette: null as Palette | null }))
         )
-    ).then((results) => {
-        const cards: PaletteCardEntry[] = [];
-        for (const { entry, palette } of results) {
-            if (palette) {
-                const card = document.createElement("b3tty-palette-card");
-                (card as unknown as B3ttyPaletteCard).setup(
-                    entry.name,
-                    formatThemeName(entry.name),
-                    palette,
-                    cardDetails(entry)
-                );
-                cards.push({ card, entry, palette });
-            }
-        }
-        return cards;
-    });
+    ).then((results) => results.flatMap(({ entry, palette }) => (palette ? [{ entry, palette }] : [])));
+}
+
+/** Builds a theme's palette card, with the installed-theme extras from cardDetails. */
+export function createPaletteCard(entry: ThemeEntry, palette: Palette): HTMLElement {
+    const card = document.createElement("b3tty-palette-card");
+    (card as unknown as B3ttyPaletteCard).setup(entry.name, formatThemeName(entry.name), palette, cardDetails(entry));
+    return card;
+}
+
+/**
+ * Fetches every theme's palette in parallel and builds its card, keeping the order of
+ * `themes`. A theme whose palette can't be fetched is left out.
+ */
+export function fetchPaletteCards(themes: ThemeEntry[]): Promise<PaletteCardEntry[]> {
+    return fetchThemePalettes(themes).then((loaded) =>
+        loaded.map(({ entry, palette }) => ({ card: createPaletteCard(entry, palette), entry, palette }))
+    );
 }
 
 if (typeof HTMLElement !== "undefined") {
