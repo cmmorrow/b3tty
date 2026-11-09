@@ -481,6 +481,6 @@ Pull requests are welcome. The following checks run automatically on every PR an
 - **Test** — `make test` runs the full Go and bun test suites.
 - **Format** — `make format-check` verifies that all frontend TypeScript source files are formatted with prettier. Run `make format` locally to fix any formatting issues before pushing.
 
-The component styles also live in a b3tty design system artifact used for reviewing and tweaking them. After changing `src/client/components.ts` or `src/client/design.ts`, run `make design-system` to rebuild the artifact's component bundle at `build/design-system/bundle.js`.
+The component styles also live in a b3tty design system artifact used for reviewing and tweaking them. After changing `src/client/components/` or `src/client/design.ts`, run `make design-system` to rebuild the artifact's component bundle at `build/design-system/bundle.js`.
 
 When a PR that updates the `VERSION` file is merged into `main`, a git tag matching the new version number is created automatically.

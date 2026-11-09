@@ -193,7 +193,7 @@ export const BUTTON_STYLES = `
         border: 1px solid var(--color-border); background: var(--color-surface-3);
         color: var(--color-text);
     }
-    .cancel-btn:hover { background: var(--color-surface-2); border-color: var(--color-border-strong); }
+    .cancel-btn:not(:disabled):hover { background: var(--color-surface-2); border-color: var(--color-border-strong); }
     .ok-btn {
         padding-left: var(--space-3xl); padding-right: var(--space-3xl);
         border: none; background: var(--color-accent); color: var(--color-on-accent);
@@ -206,9 +206,11 @@ export const BUTTON_STYLES = `
         border: 1px solid var(--color-destructive-solid); background: var(--color-destructive-solid);
         color: var(--color-on-destructive);
     }
-    .delete-btn:hover {
+    .delete-btn:not(:disabled):hover {
         border-color: var(--color-destructive-solid-hover); background: var(--color-destructive-solid-hover);
     }
+    /* Cancel and Delete are disabled while their dialog's request is in flight. */
+    .cancel-btn:disabled, .delete-btn:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
     /* Compact secondary button for use inline with form fields. */
     .inline-btn {
         padding: var(--space-xs) var(--space-md); border-radius: var(--radius-md);

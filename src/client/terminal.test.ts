@@ -58,7 +58,7 @@ import {
     isValidRepoUrl,
     MAX_UINT16,
 } from "./validators.ts";
-import { isB3ttyDialog, isB3ttyMenuBar } from "./components.ts";
+import { isB3ttyDialog, isB3ttyMenuBar } from "./components/index.ts";
 import {
     apiFetch,
     getSettings,

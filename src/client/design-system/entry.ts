@@ -1,9 +1,9 @@
 /**
  * Entry point of the design system bundle (see build.ts). Importing
- * ../components.ts defines all twelve b3tty-* custom elements; this module then
+ * ../components/index.ts defines all twelve b3tty-* custom elements; this module then
  * assigns window.B3tty with the helpers and fixture data the previews use.
  */
-import "../components.ts";
+import "../components/index.ts";
 import * as styles from "../design.ts";
 import THEMES from "b3tty:builtin-themes";
 import { PROFILE_NAMES, SAMPLE_SETTINGS, USER_THEMES, paletteOf, themeEntries } from "./mock-api.ts";
