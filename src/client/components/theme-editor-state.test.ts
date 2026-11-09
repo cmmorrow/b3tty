@@ -116,6 +116,26 @@ describe("reduceThemeEditor: selecting and loading", () => {
         expect(canExportTheme(loaded)).toBe(true);
     });
 
+    test("clicking the selected theme again keeps the edits and starts no new load", () => {
+        const edited = run(...LOADED_MIDNIGHT, { type: "fieldChanged", field: "red", value: "#ff0000" });
+        expect(reduceThemeEditor(edited, { type: "themeSelected", name: "midnight" })).toBe(edited);
+        const loading = run(...LISTED, { type: "themeSelected", name: "midnight" });
+        expect(reduceThemeEditor(loading, { type: "themeSelected", name: "midnight" })).toBe(loading);
+    });
+
+    test("clicking the selected theme after a failed load retries it", () => {
+        const failed = run(
+            ...LISTED,
+            { type: "themeSelected", name: "midnight" },
+            { type: "themeLoadFailed", name: "midnight", message: "timeout" }
+        );
+        expect(reduceThemeEditor(failed, { type: "themeSelected", name: "midnight" })).toMatchObject({
+            selected: "midnight",
+            phase: "loading",
+            error: null,
+        });
+    });
+
     test("going back to Create clears the form and disables OK", () => {
         const s = run(...LOADED_MIDNIGHT, { type: "createSelected" });
         expect(s.selected).toBeNull();
@@ -136,7 +156,7 @@ describe("reduceThemeEditor: selecting and loading", () => {
 
     test("a failed load shows why and can't be saved over", () => {
         const s = run(
-            ...LOADED_MIDNIGHT,
+            ...LISTED,
             { type: "themeSelected", name: "midnight" },
             {
                 type: "themeLoadFailed",

@@ -282,6 +282,9 @@ export function reduceThemeEditor(state: ThemeEditorState, action: ThemeEditorAc
             return selectCreate(state);
         case "themeSelected":
             if (state.phase === "saving" || !(action.name in state.palettes)) return state;
+            // Clicking the selected card again keeps the edits in progress, and doesn't
+            // reload them away; it only retries a load that failed.
+            if (action.name === state.selected && state.phase !== "loadFailed") return state;
             return selectTheme(state, action.name);
         case "themeLoaded": {
             // Only the selection still waiting on this load counts.
