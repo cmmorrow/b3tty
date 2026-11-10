@@ -157,26 +157,73 @@ const PALETTE_CARD_STYLES = `
     }
     .terminal {
         border-radius: var(--radius-md);
-        padding: var(--space-md) var(--space-md) var(--space-sm);
+        padding: var(--space-sm) var(--space-md);
         display: flex; flex-direction: column;
-        gap: var(--palette-card-terminal-gap, var(--space-xs));
         font-family: var(--font-family-mono); font-size: var(--font-size-xs);
         box-shadow: var(--palette-card-terminal-shadow, var(--shadow-card));
         min-width: var(--palette-card-terminal-min-width, 196px);
     }
-    .titlebar { display: flex; gap: 5px; margin-bottom: 1px; }
-    .dot { width: 9px; height: 9px; border-radius: var(--radius-full); }
-    .preview-text { padding: 1px 2px; line-height: var(--line-height-body); letter-spacing: 0.01em; }
+    /* Shrinks to the swatch rows' width and centers in the preview, so the text lines up
+       with the first swatch and the leftover width is split evenly on both sides. */
+    .terminal-body {
+        align-self: center;
+        display: flex; flex-direction: column;
+        gap: var(--palette-card-terminal-gap, var(--space-xs));
+    }
+    .preview-text {
+        padding: 1px 2px; font-size: var(--font-size-sm);
+        line-height: var(--line-height-body); letter-spacing: 0.01em;
+    }
     .sel { padding: 0 2px; border-radius: 2px; }
     .swatch-row { display: flex; gap: 3px; }
     .swatch {
         width: 20px; height: 20px; border-radius: var(--radius-sm);
         box-shadow: inset 0 0 0 1px rgba(128,128,128,0.25);
     }
+
+    /* Unset colors. The terminal fills these in itself, so the card marks them as not
+       set rather than guessing. The marks use currentColor — the preview's text color —
+       so they show on dark and light backgrounds alike. */
+    .terminal.unset-bg {
+        background: transparent;
+        box-shadow: none;
+        outline: 1px dashed var(--color-border);
+        outline-offset: -1px;
+    }
+    .swatch.unset {
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 35%, transparent);
+        background: linear-gradient(
+            to top right,
+            transparent calc(50% - 0.75px),
+            color-mix(in srgb, currentColor 55%, transparent) calc(50% - 0.75px),
+            color-mix(in srgb, currentColor 55%, transparent) calc(50% + 0.75px),
+            transparent calc(50% + 0.75px)
+        );
+    }
+    .cursor.unset { box-shadow: inset 0 0 0 1px currentColor; }
 `;
 
-/** The traffic-light dots in the preview's title bar: window chrome, not theme data. */
-const TITLEBAR_DOTS = ["#ff5f57", "#ffbd2e", "#28c841"];
+/** The swatch tooltip for a color the theme doesn't set. */
+const UNSET_COLOR_TITLE = "Not set — uses the terminal's default";
+
+/**
+ * Black or white, whichever reads better on a #rgb / #rrggbb background (by WCAG
+ * relative luminance), or null for anything else. The palette card uses it for a theme
+ * with a background but no foreground, only to keep the preview text legible — it says
+ * nothing about the color the terminal will actually draw.
+ */
+export function contrastingTextColor(background: string): "#000000" | "#ffffff" | null {
+    const full = background.trim().replace(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i, "#$1$1$2$2$3$3");
+    const m = full.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+    if (!m) return null;
+    const [r, g, b] = [m[1]!, m[2]!, m[3]!].map((h) => {
+        const c = parseInt(h, 16) / 255;
+        return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    }) as [number, number, number];
+    const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    // The luminance where black and white text have equal contrast.
+    return luminance > 0.179 ? "#000000" : "#ffffff";
+}
 
 // Built only from hard-coded values. Everything that comes from a theme — its name,
 // details, link, and colors — is set by setup() through text, attributes, and styles.
@@ -192,14 +239,29 @@ const PALETTE_CARD_TEMPLATE = `
         <span class="badge" hidden></span>
     </div>
     <div class="terminal">
-        <div class="titlebar">
-            ${TITLEBAR_DOTS.map((color) => `<div class="dot" style="background: ${color}"></div>`).join("")}
+        <div class="terminal-body">
+            <div class="preview-text">Lorem <span class="sel">Ipsum</span><span class="cursor">\u00a0</span></div>
+            <div class="swatch-row normal">${'<div class="swatch"></div>'.repeat(8)}</div>
+            <div class="swatch-row bright">${'<div class="swatch"></div>'.repeat(8)}</div>
         </div>
-        <div class="preview-text">lorem <span class="sel">ipsum</span><span class="cursor">\u00a0</span></div>
-        <div class="swatch-row normal">${'<div class="swatch"></div>'.repeat(8)}</div>
-        <div class="swatch-row bright">${'<div class="swatch"></div>'.repeat(8)}</div>
     </div>
 `;
+
+let colorContext: CanvasRenderingContext2D | null | undefined;
+
+/**
+ * A theme color as #rrggbb: hex values pass through, and a named color ("navy") is
+ * resolved by the browser through a canvas context. Anything it can't resolve comes
+ * back unchanged.
+ */
+function toHexColor(color: string): string {
+    if (color.startsWith("#")) return color;
+    if (colorContext === undefined) colorContext = document.createElement("canvas").getContext("2d");
+    if (!colorContext) return color;
+    colorContext.fillStyle = "#000000";
+    colorContext.fillStyle = color;
+    return colorContext.fillStyle;
+}
 
 if (typeof HTMLElement !== "undefined") {
     class B3ttyPaletteCardImpl extends HTMLElement implements B3ttyPaletteCard {
@@ -210,7 +272,6 @@ if (typeof HTMLElement !== "undefined") {
         #subtitle: HTMLSpanElement;
         #badge: HTMLSpanElement;
         #terminal: HTMLDivElement;
-        #preview: HTMLDivElement;
         #sel: HTMLSpanElement;
         #cursor: HTMLSpanElement;
         #normalSwatches: HTMLDivElement[];
@@ -242,7 +303,6 @@ if (typeof HTMLElement !== "undefined") {
             this.#subtitle = shadow.querySelector<HTMLSpanElement>(".card-subtitle")!;
             this.#badge = shadow.querySelector<HTMLSpanElement>(".badge")!;
             this.#terminal = shadow.querySelector<HTMLDivElement>(".terminal")!;
-            this.#preview = shadow.querySelector<HTMLDivElement>(".preview-text")!;
             this.#sel = shadow.querySelector<HTMLSpanElement>(".sel")!;
             this.#cursor = shadow.querySelector<HTMLSpanElement>(".cursor")!;
             this.#normalSwatches = Array.from(shadow.querySelectorAll<HTMLDivElement>(".normal .swatch"));
@@ -291,13 +351,28 @@ if (typeof HTMLElement !== "undefined") {
             this.#badge.textContent = details?.badge ?? "";
             this.#badge.hidden = !details?.badge;
 
-            this.#terminal.style.background = palette.bg;
-            this.#preview.style.color = palette.fg;
-            this.#sel.style.background = palette.selBg;
-            this.#sel.style.color = palette.fg;
-            this.#cursor.style.background = palette.cursor;
-            this.#normalSwatches.forEach((swatch, i) => (swatch.style.background = palette.normal[i] ?? ""));
-            this.#brightSwatches.forEach((swatch, i) => (swatch.style.background = palette.bright[i] ?? ""));
+            // An unset color is shown as unset (see the .unset styles), never as a guess.
+            const bg = palette.bg.trim();
+            const fg = palette.fg.trim();
+            this.#terminal.classList.toggle("unset-bg", !bg);
+            this.#terminal.style.background = bg;
+            // With no foreground, pick black or white so the text stays readable; with no
+            // background either, the card's own text color already is.
+            this.#terminal.style.color = fg || (bg ? (contrastingTextColor(toHexColor(bg)) ?? "") : "");
+            const selBg = palette.selBg.trim();
+            this.#sel.style.background = selBg;
+            const cursor = palette.cursor.trim();
+            this.#cursor.classList.toggle("unset", !cursor);
+            this.#cursor.style.background = cursor;
+            const paintSwatch = (swatch: HTMLDivElement, color: string | undefined): void => {
+                const value = color?.trim() ?? "";
+                swatch.classList.toggle("unset", !value);
+                swatch.style.background = value;
+                if (value) swatch.removeAttribute("title");
+                else swatch.title = UNSET_COLOR_TITLE;
+            };
+            this.#normalSwatches.forEach((swatch, i) => paintSwatch(swatch, palette.normal[i]));
+            this.#brightSwatches.forEach((swatch, i) => paintSwatch(swatch, palette.bright[i]));
         }
     }
 
