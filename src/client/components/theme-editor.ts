@@ -307,10 +307,15 @@ const THEME_EDITOR_STYLES = `
         overflow: hidden;
     }
     ${SPLIT_PANEL_STYLES}
-    .left-panel { width: 240px; overflow: hidden; }
+    .left-panel { width: 252px; overflow: hidden; }
+    /* The list's scrollbar overlays its content, so the list keeps a gutter on the right
+       for it, clear of the selected card's outline; everything else in the panel leaves
+       the same gap, so all the cards line up. */
+    .left-panel > :not(.theme-list) { margin-right: var(--space-md); }
     .theme-list {
         flex: 1; min-height: 0; overflow-y: auto;
         display: flex; flex-direction: column; gap: var(--space-xs);
+        padding-right: var(--space-md);
     }
     .list-section { display: flex; flex-direction: column; gap: var(--space-xs); }
     .list-section .section-title { margin: var(--space-xs) 0 0; }
@@ -329,6 +334,9 @@ const THEME_EDITOR_STYLES = `
     .name-section {
         display: flex; flex-direction: column; gap: var(--space-2xs);
         flex-shrink: 0; padding-bottom: var(--space-md);
+        /* Matches .color-form's scrollbar gutter, so Export lines up with the swatches;
+           padding rather than margin, so the divider below still spans the panel. */
+        padding-right: var(--space-md);
         border-bottom: 1px solid var(--color-border-inner);
         margin-bottom: var(--space-sm);
     }
@@ -336,9 +344,11 @@ const THEME_EDITOR_STYLES = `
         display: flex; align-items: center; gap: var(--space-sm);
     }
     .name-section label { white-space: nowrap; min-width: 80px; }
+    /* Like .theme-list, the form keeps a right gutter for its overlay scrollbar. */
     .color-form {
         flex: 1; overflow-y: auto; min-height: 0;
         display: flex; flex-direction: column; gap: var(--space-2xs);
+        padding-right: var(--space-md);
     }
     .color-form .section-title { padding: var(--space-xs) 0 var(--space-3xs); }
     .color-form input:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }

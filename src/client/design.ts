@@ -29,7 +29,7 @@ export const DESIGN_TOKENS = `
         --color-surface-2: #f1ede3;
         --color-surface-3: #fffefa;
         --color-surface-ro: #f4f0e7;
-        --color-surface-card: #f1ede3;
+        --color-surface-card: #ebe6da;
         --color-surface-hover: #e8e2d5;
         --color-surface-selected: #e2dbcc;
         /* Color: borders. --color-border outlines controls (inputs, Cancel), so it
@@ -232,7 +232,7 @@ export const PALETTE_CARD_VARS = `
         --palette-card-padding: 0;
         --palette-card-gap: 0;
         --palette-card-overflow: hidden;
-        --palette-card-header-bg: var(--color-surface-2);
+        --palette-card-header-bg: var(--color-surface-card);
         --palette-card-header-padding: var(--space-sm) var(--space-md);
         --palette-card-header-font-size: var(--font-size-sm);
         --palette-card-terminal-gap: var(--space-xs);
@@ -280,7 +280,7 @@ export const EDITOR_CARD_STYLES = `
     .create-card, .profile-card {
         display: flex; align-items: center; gap: var(--space-xs);
         padding: var(--space-sm) var(--space-md);
-        background: var(--color-surface-2);
+        background: var(--color-surface-card);
         border: 2px solid transparent;
         border-radius: var(--radius-sm);
         cursor: pointer;
