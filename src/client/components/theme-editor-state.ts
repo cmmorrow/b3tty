@@ -3,6 +3,11 @@
  * be tested under bun test. The component dispatches an action for each user event and
  * server response, and renders whatever state comes back. The Copy… / Delete… prompt
  * has its own state, in theme-editor-prompt-state.ts.
+ *
+ * Unsaved edits survive selecting another card: leaving a user theme (or "Create new
+ * theme") with unsaved changes keeps its form as a draft, and selecting it again
+ * restores the draft instead of reloading. Drafts live only in this state, so they
+ * last until the editor is closed or the page is reloaded.
  */
 import type { Palette, ThemeEntry, ThemeSource } from "../types.ts";
 import { isValidBackgroundImageTransparency, isValidThemeColor } from "../validators.ts";
@@ -63,6 +68,13 @@ export interface ThemeForm {
     transparency: string;
 }
 
+/** A user theme's unsaved form, kept while another card is selected. */
+export interface ThemeDraft {
+    form: ThemeForm;
+    /** The theme as loaded, to compare against. */
+    saved: ThemeForm;
+}
+
 /** A field of the form: a color key, or one of the other inputs. */
 export type ThemeFormField = ThemeColorKey | "name" | "backgroundImage" | "transparency";
 
@@ -90,18 +102,33 @@ export interface ThemeEditorState {
     saved: ThemeForm | null;
     /** A failed load or save, shown in the actions bar. */
     error: string | null;
+    /** A success message ("Saved"), shown in the actions bar until the next change. */
+    notice: string | null;
+    /** Unsaved forms of user themes other than the selected one, by name. */
+    drafts: Record<string, ThemeDraft>;
+    /** The unsaved "Create new theme" form, while another card is selected. */
+    newDraft: ThemeForm | null;
 }
 
 export type ThemeEditorAction =
     | { type: "opened" }
     | { type: "refreshStarted"; entries: ThemeEntry[] }
-    | { type: "refreshLoaded"; listId: number; palettes: Record<string, Palette>; select?: string }
+    | {
+          type: "refreshLoaded";
+          listId: number;
+          palettes: Record<string, Palette>;
+          select?: string;
+          /** Keeps the current selection and form, e.g. after a save; `select` is ignored. */
+          keepSelection?: boolean;
+      }
     | { type: "createSelected" }
     | { type: "themeSelected"; name: string }
     | { type: "themeLoaded"; name: string; config: LoadedTheme }
     | { type: "themeLoadFailed"; name: string; message: string }
     | { type: "fieldChanged"; field: ThemeFormField; value: string }
+    | { type: "resetRequested" }
     | { type: "saveSubmitted" }
+    | { type: "saveSucceeded"; name: string }
     | { type: "saveFailed"; message: string };
 
 function emptyForm(name = ""): ThemeForm {
@@ -118,6 +145,9 @@ export const initialThemeEditorState: ThemeEditorState = {
     form: emptyForm(),
     saved: null,
     error: null,
+    notice: null,
+    drafts: {},
+    newDraft: null,
 };
 
 /** The form for a theme as GET /theme-config returns it. */
@@ -198,15 +228,65 @@ export function hasUnsavedChanges(state: ThemeEditorState): boolean {
     );
 }
 
+/** Whether a form has anything typed in it. */
+function formIsEmpty(form: ThemeForm): boolean {
+    return (
+        form.name.trim() === "" &&
+        form.backgroundImage === "" &&
+        form.transparency === "" &&
+        THEME_COLOR_KEYS.every((key) => form.colors[key] === "")
+    );
+}
+
 /**
- * The selected card's live preview: its loaded palette with every valid typed color
- * laid over it, or null when nothing is selected or its palette isn't loaded.
+ * Whether the form holds edits that Save hasn't saved: for "Create new theme", anything
+ * typed; for a user theme, a changed name, color, or background. A read-only theme, or
+ * one that is still loading or failed to load, never has any.
  */
-export function previewPalette(state: ThemeEditorState): Palette | null {
-    const base = state.selected === null ? undefined : state.palettes[state.selected];
-    if (!base) return null;
+export function formIsDirty(state: ThemeEditorState): boolean {
+    if (state.phase === "loading" || state.phase === "loadFailed" || isReadOnly(state)) return false;
+    if (state.selected === null) return !formIsEmpty(state.form);
+    return hasUnsavedChanges(state) || state.form.name.trim() !== state.selected;
+}
+
+/**
+ * Whether Reset can be clicked: the form has unsaved changes to throw away — back to
+ * the saved theme, or to an empty form for "Create new theme".
+ */
+export function canResetTheme(state: ThemeEditorState): boolean {
+    return isEditable(state) && formIsDirty(state);
+}
+
+/** Whether a theme's card should be badged as having unsaved changes. */
+export function themeHasUnsavedChanges(state: ThemeEditorState, name: string): boolean {
+    return name === state.selected ? formIsDirty(state) : name in state.drafts;
+}
+
+/** Whether the "Create new theme" card should be badged as having unsaved changes. */
+export function newThemeHasUnsavedChanges(state: ThemeEditorState): boolean {
+    return state.selected === null ? formIsDirty(state) : state.newDraft !== null;
+}
+
+/**
+ * Everything Close would discard: the user themes with unsaved changes, sorted, and
+ * whether "Create new theme" has any.
+ */
+export function unsavedChanges(state: ThemeEditorState): { names: string[]; newTheme: boolean } {
+    const names = Object.keys(state.drafts);
+    if (state.selected !== null && formIsDirty(state)) names.push(state.selected);
+    return { names: names.sort(), newTheme: newThemeHasUnsavedChanges(state) };
+}
+
+/** Whether Close should ask before discarding unsaved changes. */
+export function hasAnyUnsavedChanges(state: ThemeEditorState): boolean {
+    const { names, newTheme } = unsavedChanges(state);
+    return newTheme || names.length > 0;
+}
+
+/** A palette with every valid color typed into form laid over it. */
+function overlayForm(base: Palette, form: ThemeForm): Palette {
     const typed = (key: ThemeColorKey): string | null => {
-        const value = state.form.colors[key];
+        const value = form.colors[key];
         return value && isValidThemeColor(value) ? value : null;
     };
     return {
@@ -217,6 +297,24 @@ export function previewPalette(state: ThemeEditorState): Palette | null {
         normal: NORMAL_KEYS.map((key, i) => typed(key) ?? base.normal[i] ?? ""),
         bright: BRIGHT_KEYS.map((key, i) => typed(key) ?? base.bright[i] ?? ""),
     };
+}
+
+/**
+ * The selected card's live preview: its loaded palette with every valid typed color
+ * laid over it, or null when nothing is selected or its palette isn't loaded.
+ */
+export function previewPalette(state: ThemeEditorState): Palette | null {
+    const base = state.selected === null ? undefined : state.palettes[state.selected];
+    return base ? overlayForm(base, state.form) : null;
+}
+
+/** What a theme's card shows: the live preview, its draft laid over its palette, or its palette. */
+export function cardPalette(state: ThemeEditorState, name: string): Palette | null {
+    if (name === state.selected) return previewPalette(state);
+    const base = state.palettes[name];
+    if (!base) return null;
+    const draft = state.drafts[name];
+    return draft ? overlayForm(base, draft.form) : base;
 }
 
 /** The theme to send on save: set colors only, the trimmed image path (empty clears it), and the transparency when set. */
@@ -248,14 +346,42 @@ export function copyNameProblem(entries: ThemeEntry[], newName: string): string 
     return null;
 }
 
-/** Selects "Create new theme": an empty, editable form. */
-function selectCreate(state: ThemeEditorState): ThemeEditorState {
-    return { ...state, selected: null, phase: "editing", form: emptyForm(), saved: null, error: null };
+/** Keeps the selection's unsaved form as a draft, before another card is selected. */
+function stashSelection(state: ThemeEditorState): ThemeEditorState {
+    const dirty = formIsDirty(state);
+    if (state.selected === null) return { ...state, newDraft: dirty ? state.form : null };
+    if (!dirty || !state.saved) return state;
+    return { ...state, drafts: { ...state.drafts, [state.selected]: { form: state.form, saved: state.saved } } };
 }
 
-/** Selects a theme with a card and starts loading it; the form holds only its name until then. */
+/** Drops drafts of themes that are no longer user themes with a card, e.g. after a delete. */
+function pruneDrafts(state: ThemeEditorState): ThemeEditorState {
+    const kept = Object.entries(state.drafts).filter(
+        ([name]) => name in state.palettes && themeEntry(state, name)?.source === "user"
+    );
+    if (kept.length === Object.keys(state.drafts).length) return state;
+    return { ...state, drafts: Object.fromEntries(kept) };
+}
+
+/** Selects "Create new theme": its draft when it has one, else an empty, editable form. */
+function selectCreate(state: ThemeEditorState): ThemeEditorState {
+    const form = state.newDraft ?? emptyForm();
+    return { ...state, selected: null, phase: "editing", form, saved: null, error: null, notice: null, newDraft: null };
+}
+
+/**
+ * Selects a theme with a card: its draft when it has one, else starts loading it, with
+ * the form holding only its name until then.
+ */
 function selectTheme(state: ThemeEditorState, name: string): ThemeEditorState {
-    return { ...state, selected: name, phase: "loading", form: emptyForm(name), saved: null, error: null };
+    const base = { ...state, selected: name, error: null, notice: null };
+    const draft = state.drafts[name];
+    if (draft) {
+        const drafts = { ...state.drafts };
+        delete drafts[name];
+        return { ...base, drafts, phase: "editing", form: draft.form, saved: draft.saved };
+    }
+    return { ...base, phase: "loading", form: emptyForm(name), saved: null };
 }
 
 /**
@@ -272,20 +398,22 @@ export function reduceThemeEditor(state: ThemeEditorState, action: ThemeEditorAc
             if (action.listId !== state.listId) return state;
             const next = { ...state, palettes: action.palettes };
             // A save in flight keeps its selection; the list still updates.
-            if (state.phase === "saving") return next;
+            if (state.phase === "saving" || action.keepSelection) return pruneDrafts(next);
+            const stashed = pruneDrafts(stashSelection(next));
             return action.select !== undefined && action.select in action.palettes
-                ? selectTheme(next, action.select)
-                : selectCreate(next);
+                ? selectTheme(stashed, action.select)
+                : selectCreate(stashed);
         }
         case "createSelected":
-            if (state.phase === "saving") return state;
-            return selectCreate(state);
+            // Clicking it again keeps the form, like clicking the selected card.
+            if (state.phase === "saving" || state.selected === null) return state;
+            return selectCreate(stashSelection(state));
         case "themeSelected":
             if (state.phase === "saving" || !(action.name in state.palettes)) return state;
             // Clicking the selected card again keeps the edits in progress, and doesn't
             // reload them away; it only retries a load that failed.
             if (action.name === state.selected && state.phase !== "loadFailed") return state;
-            return selectTheme(state, action.name);
+            return selectTheme(stashSelection(state), action.name);
         case "themeLoaded": {
             // Only the selection still waiting on this load counts.
             if (state.phase !== "loading" || state.selected !== action.name) return state;
@@ -302,11 +430,25 @@ export function reduceThemeEditor(state: ThemeEditorState, action: ThemeEditorAc
                 field === "name" || field === "backgroundImage" || field === "transparency"
                     ? { ...state.form, [field]: value }
                     : { ...state.form, colors: { ...state.form.colors, [field]: value } };
-            return { ...state, form, error: null };
+            return { ...state, form, error: null, notice: null };
+        }
+        case "resetRequested": {
+            if (!canResetTheme(state)) return state;
+            const form = state.selected === null || !state.saved ? emptyForm() : state.saved;
+            return { ...state, form, error: null, notice: null };
         }
         case "saveSubmitted":
             if (!canSaveTheme(state)) return state;
-            return { ...state, phase: "saving", error: null };
+            return { ...state, phase: "saving", error: null, notice: null };
+        case "saveSucceeded": {
+            if (state.phase !== "saving") return state;
+            // The saved theme is now selected, under the name it was saved as; a draft
+            // it had under that name was just overwritten.
+            const form = { ...state.form, name: action.name };
+            const drafts = { ...state.drafts };
+            delete drafts[action.name];
+            return { ...state, phase: "editing", selected: action.name, form, saved: form, drafts, notice: "Saved" };
+        }
         case "saveFailed":
             if (state.phase !== "saving") return state;
             return { ...state, phase: "editing", error: action.message };
