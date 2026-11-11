@@ -142,7 +142,8 @@ export const BASE_STYLES = `
  *   .field-desc    — secondary help text under a field
  *   .field-error   — inline validation/save error, hidden until `.visible`
  *   .warning-note  — boxed caution message (e.g. unsaved changes), hidden until `.visible`
- *   .badge         — small pill flagging a state (e.g. an installed theme's "Modified")
+ *   .badge         — small pill flagging a state (e.g. an installed theme's "Modified");
+ *                    .badge.accent is the neutral variant (the theme editor's "Unsaved")
  */
 export const TEXT_STYLES = `
     .modal-title {
@@ -179,6 +180,10 @@ export const TEXT_STYLES = `
         background: var(--color-warning-bg); color: var(--color-warning);
         font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold);
         line-height: var(--line-height-body); white-space: nowrap;
+    }
+    .badge.accent {
+        border-color: var(--color-accent); background: var(--color-surface-selected);
+        color: var(--color-accent);
     }
 `;
 

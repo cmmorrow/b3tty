@@ -4,14 +4,17 @@ import { isValidRepoUrl } from "../validators.ts";
 import { BASE_STYLES, DESIGN_TOKENS, TEXT_STYLES } from "../design.ts";
 
 /**
- * Optional extras on a palette card, used for installed themes: `subtitle` is a muted
- * line under the name, `href` makes the name a link (only an https URL, opened in a new
- * tab, and clicking it doesn't select the card), and `badge` is a small pill after it.
+ * Optional extras on a palette card: `subtitle` is a muted line under the name, `href`
+ * makes the name a link (only an https URL, opened in a new tab, and clicking it
+ * doesn't select the card), and `badge` is a small pill after it — a warning by default
+ * (an installed theme's "Modified"), or with `badgeTone: "accent"` a neutral state (the
+ * theme editor's "Unsaved").
  */
 export interface PaletteCardDetails {
     subtitle?: string;
     href?: string;
     badge?: string;
+    badgeTone?: "warning" | "accent";
 }
 
 /**
@@ -350,6 +353,7 @@ if (typeof HTMLElement !== "undefined") {
             this.#subtitle.hidden = !details?.subtitle;
             this.#badge.textContent = details?.badge ?? "";
             this.#badge.hidden = !details?.badge;
+            this.#badge.classList.toggle("accent", details?.badgeTone === "accent");
 
             // An unset color is shown as unset (see the .unset styles), never as a guess.
             const bg = palette.bg.trim();

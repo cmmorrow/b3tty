@@ -3,9 +3,13 @@ import {
     canCopyTheme,
     canDeleteTheme,
     canExportTheme,
+    canResetTheme,
     canSaveTheme,
+    cardPalette,
     copyName,
     copyNameProblem,
+    formIsDirty,
+    hasAnyUnsavedChanges,
     hasUnsavedChanges,
     initialThemeEditorState,
     isReadOnly,
@@ -13,6 +17,9 @@ import {
     previewPalette,
     reduceThemeEditor,
     themeDataFromForm,
+    themeHasUnsavedChanges,
+    newThemeHasUnsavedChanges,
+    unsavedChanges,
     type ThemeEditorAction,
     type ThemeEditorState,
 } from "./theme-editor-state.ts";
@@ -136,7 +143,7 @@ describe("reduceThemeEditor: selecting and loading", () => {
         });
     });
 
-    test("going back to Create clears the form and disables OK", () => {
+    test("going back to Create clears the form and disables Save", () => {
         const s = run(...LOADED_MIDNIGHT, { type: "createSelected" });
         expect(s.selected).toBeNull();
         expect(s.form.colors.background).toBe("");
@@ -245,6 +252,231 @@ describe("reduceThemeEditor: editing and saving", () => {
     test("opening again starts over but keeps counting refreshes", () => {
         const s = run(...LOADED_MIDNIGHT, { type: "opened" });
         expect(s).toEqual({ ...initialThemeEditorState, listId: 1 });
+    });
+});
+
+describe("reduceThemeEditor: saving without closing", () => {
+    const EDITED: ThemeEditorAction[] = [
+        ...LOADED_MIDNIGHT,
+        { type: "fieldChanged", field: "background", value: "#202040" },
+    ];
+
+    test("a save keeps the form, makes it the saved theme, and says so", () => {
+        const s = run(...EDITED, { type: "saveSubmitted" }, { type: "saveSucceeded", name: "midnight" });
+        expect(s).toMatchObject({ phase: "editing", selected: "midnight", notice: "Saved" });
+        expect(s.form.colors.background).toBe("#202040");
+        expect(hasUnsavedChanges(s)).toBe(false);
+        expect(formIsDirty(s)).toBe(false);
+        expect(canSaveTheme(s)).toBe(true);
+        // The next edit clears the notice.
+        const edited = reduceThemeEditor(s, { type: "fieldChanged", field: "red", value: "#ff0000" });
+        expect(edited.notice).toBeNull();
+        expect(formIsDirty(edited)).toBe(true);
+    });
+
+    test("a new theme is selected under its trimmed name once saved", () => {
+        const s = run(
+            ...LISTED,
+            { type: "fieldChanged", field: "name", value: " fresh " },
+            { type: "saveSubmitted" },
+            { type: "saveSucceeded", name: "fresh" }
+        );
+        expect(s).toMatchObject({ selected: "fresh", phase: "editing" });
+        expect(s.form.name).toBe("fresh");
+        expect(formIsDirty(s)).toBe(false);
+        // The refresh that follows keeps it selected without reloading it.
+        const refreshed = reduceThemeEditor(
+            reduceThemeEditor(s, {
+                type: "refreshStarted",
+                entries: [...ENTRIES, { name: "fresh", source: "user", inMenu: true }],
+            }),
+            {
+                type: "refreshLoaded",
+                listId: 2,
+                palettes: { ...PALETTES, fresh: PALETTE },
+                keepSelection: true,
+            }
+        );
+        expect(refreshed).toMatchObject({ selected: "fresh", phase: "editing", notice: "Saved" });
+        expect(refreshed.form).toBe(s.form);
+    });
+
+    test("only a save in flight can succeed", () => {
+        const s = run(...EDITED);
+        expect(reduceThemeEditor(s, { type: "saveSucceeded", name: "midnight" })).toBe(s);
+    });
+});
+
+describe("reduceThemeEditor: unsaved drafts", () => {
+    const EDITED: ThemeEditorAction[] = [
+        ...LOADED_MIDNIGHT,
+        { type: "fieldChanged", field: "background", value: "#202040" },
+    ];
+
+    test("leaving an edited theme keeps its draft, badges it, and previews it on its card", () => {
+        const s = run(...EDITED, { type: "themeSelected", name: "dracula" });
+        expect(s.selected).toBe("dracula");
+        expect(s.drafts["midnight"]?.form.colors.background).toBe("#202040");
+        expect(themeHasUnsavedChanges(s, "midnight")).toBe(true);
+        expect(themeHasUnsavedChanges(s, "dracula")).toBe(false);
+        expect(cardPalette(s, "midnight")?.bg).toBe("#202040");
+        expect(cardPalette(s, "aurora")).toBe(PALETTE);
+    });
+
+    test("selecting a theme with a draft restores it without loading", () => {
+        const s = run(
+            ...EDITED,
+            { type: "themeSelected", name: "dracula" },
+            { type: "themeSelected", name: "midnight" }
+        );
+        expect(s).toMatchObject({ selected: "midnight", phase: "editing" });
+        expect(s.form.colors.background).toBe("#202040");
+        expect(s.saved?.colors.background).toBe("#101020");
+        expect(s.drafts).toEqual({});
+        expect(hasUnsavedChanges(s)).toBe(true);
+    });
+
+    test("leaving an unedited theme keeps no draft", () => {
+        const s = run(...LOADED_MIDNIGHT, { type: "themeSelected", name: "dracula" });
+        expect(s.drafts).toEqual({});
+        expect(hasAnyUnsavedChanges(s)).toBe(false);
+    });
+
+    test("a renamed user theme counts as unsaved", () => {
+        const s = run(...LOADED_MIDNIGHT, { type: "fieldChanged", field: "name", value: "midnight-2" });
+        expect(hasUnsavedChanges(s)).toBe(false);
+        expect(formIsDirty(s)).toBe(true);
+    });
+
+    test("a new theme in progress is kept while another card is selected", () => {
+        const s = run(
+            ...LISTED,
+            { type: "fieldChanged", field: "name", value: "fresh" },
+            { type: "themeSelected", name: "midnight" }
+        );
+        expect(s.newDraft?.name).toBe("fresh");
+        expect(newThemeHasUnsavedChanges(s)).toBe(true);
+        const back = reduceThemeEditor(s, { type: "createSelected" });
+        expect(back.form.name).toBe("fresh");
+        expect(back.newDraft).toBeNull();
+        expect(newThemeHasUnsavedChanges(back)).toBe(true);
+    });
+
+    test("clicking Create new theme again keeps the form", () => {
+        const s = run(...LISTED, { type: "fieldChanged", field: "name", value: "fresh" });
+        expect(reduceThemeEditor(s, { type: "createSelected" })).toBe(s);
+    });
+
+    test("read-only themes never count as unsaved", () => {
+        const s = run(
+            ...LISTED,
+            { type: "themeSelected", name: "dracula" },
+            { type: "themeLoaded", name: "dracula", config: MIDNIGHT },
+            { type: "themeSelected", name: "midnight" }
+        );
+        expect(s.drafts).toEqual({});
+    });
+
+    test("unsavedChanges lists every theme Close would discard", () => {
+        const s = run(
+            ...LISTED,
+            { type: "fieldChanged", field: "name", value: "fresh" },
+            { type: "themeSelected", name: "midnight" },
+            { type: "themeLoaded", name: "midnight", config: MIDNIGHT },
+            { type: "fieldChanged", field: "red", value: "#ff0000" }
+        );
+        expect(unsavedChanges(s)).toEqual({ names: ["midnight"], newTheme: true });
+        expect(hasAnyUnsavedChanges(s)).toBe(true);
+    });
+
+    test("a refresh that removes a theme drops its draft", () => {
+        const s = run(
+            ...EDITED,
+            { type: "themeSelected", name: "dracula" },
+            { type: "refreshStarted", entries: ENTRIES.slice(1) },
+            { type: "refreshLoaded", listId: 2, palettes: PALETTES }
+        );
+        expect(s.drafts).toEqual({});
+    });
+
+    test("a refresh that selects another theme keeps the selection's draft", () => {
+        const s = run(
+            ...EDITED,
+            { type: "refreshStarted", entries: ENTRIES },
+            { type: "refreshLoaded", listId: 2, palettes: PALETTES, select: "aurora" }
+        );
+        expect(s.selected).toBe("aurora");
+        expect(s.drafts["midnight"]?.form.colors.background).toBe("#202040");
+    });
+
+    test("saving over a theme with a draft drops that draft", () => {
+        const s = run(
+            ...EDITED,
+            { type: "createSelected" },
+            { type: "fieldChanged", field: "name", value: "midnight" },
+            { type: "saveSubmitted" },
+            { type: "saveSucceeded", name: "midnight" }
+        );
+        expect(s.drafts).toEqual({});
+    });
+
+    test("opening again discards every draft", () => {
+        const s = run(...EDITED, { type: "createSelected" }, { type: "opened" });
+        expect(s.drafts).toEqual({});
+        expect(s.newDraft).toBeNull();
+    });
+});
+
+describe("reduceThemeEditor: reset", () => {
+    test("restores a user theme to its saved values", () => {
+        const s = run(
+            ...LOADED_MIDNIGHT,
+            { type: "fieldChanged", field: "background", value: "#202040" },
+            { type: "fieldChanged", field: "name", value: "midnight-2" }
+        );
+        expect(canResetTheme(s)).toBe(true);
+        const reset = reduceThemeEditor(s, { type: "resetRequested" });
+        expect(reset.form).toBe(reset.saved!);
+        expect(reset.form.name).toBe("midnight");
+        expect(formIsDirty(reset)).toBe(false);
+        expect(canResetTheme(reset)).toBe(false);
+    });
+
+    test("restores what was last saved, not what was first loaded", () => {
+        const s = run(
+            ...LOADED_MIDNIGHT,
+            { type: "fieldChanged", field: "background", value: "#202040" },
+            { type: "saveSubmitted" },
+            { type: "saveSucceeded", name: "midnight" },
+            { type: "fieldChanged", field: "red", value: "#00ff00" },
+            { type: "resetRequested" }
+        );
+        expect(s.form.colors.background).toBe("#202040");
+        expect(s.form.colors.red).toBe("#ff5555");
+        expect(s.notice).toBeNull();
+    });
+
+    test("empties a new theme in progress", () => {
+        const s = run(...LISTED, { type: "fieldChanged", field: "name", value: "fresh" }, { type: "resetRequested" });
+        expect(s.form.name).toBe("");
+        expect(newThemeHasUnsavedChanges(s)).toBe(false);
+    });
+
+    test("does nothing without unsaved changes, for a read-only theme, or while saving", () => {
+        const clean = run(...LOADED_MIDNIGHT);
+        expect(reduceThemeEditor(clean, { type: "resetRequested" })).toBe(clean);
+        const builtin = run(
+            ...LISTED,
+            { type: "themeSelected", name: "dracula" },
+            { type: "themeLoaded", name: "dracula", config: MIDNIGHT }
+        );
+        expect(canResetTheme(builtin)).toBe(false);
+        const saving = run(
+            ...LOADED_MIDNIGHT,
+            { type: "fieldChanged", field: "red", value: "#00ff00" },
+            { type: "saveSubmitted" }
+        );
+        expect(reduceThemeEditor(saving, { type: "resetRequested" })).toBe(saving);
     });
 });
 

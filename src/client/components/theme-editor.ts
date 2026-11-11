@@ -40,19 +40,24 @@ import {
     canCopyTheme,
     canDeleteTheme,
     canExportTheme,
+    canResetTheme,
     canSaveTheme,
+    cardPalette,
     copyName,
     copyNameProblem,
+    hasAnyUnsavedChanges,
     hasUnsavedChanges,
     initialThemeEditorState,
     isEditable,
     isReadOnly,
     nameIsTaken,
-    previewPalette,
+    newThemeHasUnsavedChanges,
     reduceThemeEditor,
     selectedSource,
     themeDataFromForm,
     themeEntry,
+    themeHasUnsavedChanges,
+    unsavedChanges,
     type ThemeColorKey,
     type ThemeEditorAction,
     type ThemeEditorState,
@@ -72,7 +77,8 @@ export interface ThemeEditorOpenOptions {
  * Interface for the b3tty-theme-editor web component. refresh() rebuilds the theme
  * list of an open editor, e.g. after an import, and selects `select` when given.
  * After a copy or delete it dispatches b3tty-themes-changed (bubbles + composed) with
- * the updated ThemeLists.
+ * the updated ThemeLists. Save dispatches b3tty-theme-edited and keeps the editor
+ * open; Close asks before discarding unsaved changes. close() closes unconditionally.
  */
 export interface B3ttyThemeEditor {
     open(themes: ThemeEntry[], options?: ThemeEditorOpenOptions): void;
@@ -302,10 +308,11 @@ const THEME_EDITOR_STYLES = `
     ${TEXT_STYLES}
     .modal {
         padding: var(--space-2xl);
-        display: flex; flex-direction: row;
-        width: min(803px, 100%); height: min(617px, 90vh);
+        display: flex; flex-direction: column; gap: var(--space-lg);
+        width: min(803px, 100%); height: min(661px, 90vh);
         overflow: hidden;
     }
+    .panels { flex: 1; min-height: 0; display: flex; flex-direction: row; }
     ${SPLIT_PANEL_STYLES}
     .left-panel { width: 252px; overflow: hidden; }
     /* The list's scrollbar overlays its content, so the list keeps a gutter on the right
@@ -344,6 +351,8 @@ const THEME_EDITOR_STYLES = `
         display: flex; align-items: center; gap: var(--space-sm);
     }
     .name-section label { white-space: nowrap; min-width: 80px; }
+    /* Lets the name field shrink to make room for Export… and Reset. */
+    .name-row .name-input { min-width: 0; }
     /* Like .theme-list, the form keeps a right gutter for its overlay scrollbar. */
     .color-form {
         flex: 1; overflow-y: auto; min-height: 0;
@@ -371,8 +380,12 @@ const THEME_EDITOR_STYLES = `
         visibility: hidden;
     }
     .swatch.visible { visibility: visible; }
+    .create-card .badge { margin-left: auto; font-weight: var(--font-weight-semibold); }
+    .create-card .badge[hidden] { display: none; }
     ${BUTTON_STYLES}
     ${SAVE_ERROR_STYLES}
+    /* A successful save reuses the error's slot, in the accent color. */
+    .save-error.notice { color: var(--color-accent); font-weight: var(--font-weight-semibold); }
     ${PROMPT_STYLES}
 `;
 
@@ -416,6 +429,7 @@ const THEME_EDITOR_LEFT_PANEL = `
         <div class="create-card">
             <input type="radio" name="theme" checked>
             <span>Create new theme</span>
+            <span class="badge accent" hidden>Unsaved</span>
         </div>
         <button class="action-card import-card">
             <span class="action-card-icon" aria-hidden="true">⤓</span>
@@ -429,14 +443,19 @@ const THEME_EDITOR_LEFT_PANEL = `
     </div>
 `;
 
+// The card badge for a theme with unsaved changes.
+const UNSAVED_BADGE = "Unsaved";
+
 // Export… exports the selected saved user theme, so it is disabled while "Create new
-// theme" or a built-in or installed theme is selected.
+// theme" or a built-in or installed theme is selected. Reset, beside it, throws away
+// the form's unsaved changes.
 const THEME_EDITOR_NAME_SECTION = `
     <div class="name-section">
         <div class="name-row">
             <label class="field-label">Theme Name</label>
             <input type="text" class="name-input" placeholder="Enter theme name">
-            <button class="inline-btn" disabled>Export…</button>
+            <button class="inline-btn export-btn" disabled>Export…</button>
+            <button class="inline-btn reset-btn" disabled>Reset</button>
         </div>
         <span class="name-error field-error">Cannot use a built-in or installed theme name</span>
         <div class="read-only-note field-desc" role="status" hidden></div>
@@ -500,9 +519,9 @@ const THEME_EDITOR_RIGHT_PANEL = `
         ${THEME_EDITOR_NAME_SECTION}
         ${THEME_EDITOR_COLOR_FORM}
         <div class="actions">
-            <span class="save-error"></span>
-            <button class="cancel-btn">Cancel</button>
-            <button class="ok-btn" disabled>OK</button>
+            <span class="save-error" role="status" aria-live="polite"></span>
+            <button class="cancel-btn close-btn">Close</button>
+            <button class="ok-btn" disabled>Save</button>
         </div>
     </div>
 `;
@@ -513,6 +532,7 @@ if (typeof HTMLElement !== "undefined") {
         #themeList: HTMLDivElement;
         #createCard: HTMLDivElement;
         #createRadio: HTMLInputElement;
+        #createBadge: HTMLSpanElement;
         #nameInput: HTMLInputElement;
         #nameError: HTMLSpanElement;
         #readOnlyNote: HTMLDivElement;
@@ -522,8 +542,9 @@ if (typeof HTMLElement !== "undefined") {
         #bgImageInput: HTMLInputElement;
         #bgTransparencyInput: HTMLInputElement;
         #bgTransparencyError: HTMLSpanElement;
-        #okBtn: HTMLButtonElement;
-        #cancelBtn: HTMLButtonElement;
+        #saveBtn: HTMLButtonElement;
+        #closeBtn: HTMLButtonElement;
+        #resetBtn: HTMLButtonElement;
         #exportBtn: HTMLButtonElement;
         #copyBtn: HTMLButtonElement;
         #deleteBtn: HTMLButtonElement;
@@ -531,7 +552,7 @@ if (typeof HTMLElement !== "undefined") {
         #state: ThemeEditorState = initialThemeEditorState;
         /** The palettes the list was last built from, so it is only rebuilt when they change. */
         #renderedPalettes: Record<string, Palette> | null = null;
-        /** The palette each card last showed, serialized, so setup() only runs when it changes. */
+        /** The palette and badge each card last showed, serialized, so setup() only runs when they change. */
         #cardPalettes = new WeakMap<HTMLElement, string>();
 
         constructor() {
@@ -540,28 +561,33 @@ if (typeof HTMLElement !== "undefined") {
             shadow.innerHTML = `
                 <style>${THEME_EDITOR_STYLES}</style>
                 <div class="overlay">
-                    <div class="modal" role="dialog" aria-modal="true">
-                        ${THEME_EDITOR_LEFT_PANEL}
-                        ${THEME_EDITOR_RIGHT_PANEL}
+                    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="theme-editor-title">
+                        <h2 class="modal-title" id="theme-editor-title">Edit Theme</h2>
+                        <div class="panels">
+                            ${THEME_EDITOR_LEFT_PANEL}
+                            ${THEME_EDITOR_RIGHT_PANEL}
+                        </div>
                     </div>
                 </div>
             `;
             this.#leftPanel = shadow.querySelector<HTMLDivElement>(".left-panel")!;
             this.#createCard = shadow.querySelector<HTMLDivElement>(".create-card")!;
             this.#createRadio = this.#createCard.querySelector<HTMLInputElement>("input")!;
+            this.#createBadge = this.#createCard.querySelector<HTMLSpanElement>(".badge")!;
             this.#themeList = shadow.querySelector<HTMLDivElement>(".theme-list")!;
             this.#copyBtn = shadow.querySelector<HTMLButtonElement>(".copy-btn")!;
             this.#deleteBtn = shadow.querySelector<HTMLButtonElement>(".delete-theme-btn")!;
             this.#nameInput = shadow.querySelector<HTMLInputElement>(".name-input")!;
             this.#nameError = shadow.querySelector<HTMLSpanElement>(".name-error")!;
-            this.#exportBtn = shadow.querySelector<HTMLButtonElement>(".name-row .inline-btn")!;
+            this.#exportBtn = shadow.querySelector<HTMLButtonElement>(".name-row .export-btn")!;
             this.#readOnlyNote = shadow.querySelector<HTMLDivElement>(".read-only-note")!;
             this.#bgImageInput = shadow.querySelector<HTMLInputElement>(".bg-image-input")!;
             this.#bgTransparencyInput = shadow.querySelector<HTMLInputElement>(".bg-transparency-input")!;
             this.#bgTransparencyError = shadow.querySelector<HTMLSpanElement>(".transparency-error")!;
             this.#saveError = shadow.querySelector<HTMLSpanElement>(".right-panel .save-error")!;
-            this.#okBtn = shadow.querySelector<HTMLButtonElement>(".right-panel .ok-btn")!;
-            this.#cancelBtn = shadow.querySelector<HTMLButtonElement>(".right-panel .actions .cancel-btn")!;
+            this.#saveBtn = shadow.querySelector<HTMLButtonElement>(".right-panel .ok-btn")!;
+            this.#closeBtn = shadow.querySelector<HTMLButtonElement>(".right-panel .close-btn")!;
+            this.#resetBtn = shadow.querySelector<HTMLButtonElement>(".name-row .reset-btn")!;
             const importCard = shadow.querySelector<HTMLButtonElement>(".import-card")!;
             const colorForm = shadow.querySelector<HTMLDivElement>(".color-form")!;
 
@@ -616,8 +642,9 @@ if (typeof HTMLElement !== "undefined") {
             this.#leftPanel.addEventListener("b3tty-card-select", (e: Event) => {
                 void this.#selectTheme((e.target as unknown as B3ttyPaletteCard).value);
             });
-            this.#cancelBtn.addEventListener("click", () => this.close());
-            this.#okBtn.addEventListener("click", () => void this.#handleOk());
+            this.#resetBtn.addEventListener("click", () => this.#dispatch({ type: "resetRequested" }));
+            this.#closeBtn.addEventListener("click", () => void this.#requestClose());
+            this.#saveBtn.addEventListener("click", () => void this.#handleSave());
             this.#render();
         }
 
@@ -635,15 +662,29 @@ if (typeof HTMLElement !== "undefined") {
             closeOverlay(this);
         }
 
-        async refresh(themes: ThemeEntry[], select?: string): Promise<void> {
+        refresh(themes: ThemeEntry[], select?: string): Promise<void> {
+            return this.#refreshList(themes, select, false);
+        }
+
+        /**
+         * Rebuilds the list from themes; with keepSelection (after a save) the selection
+         * and form stay as they are, and only the cards are updated.
+         */
+        async #refreshList(themes: ThemeEntry[], select: string | undefined, keepSelection: boolean): Promise<void> {
             this.#dispatch({ type: "refreshStarted", entries: themes });
             const listId = this.#state.listId;
             const loaded = await fetchThemePalettes(themes);
             const palettes = Object.fromEntries(loaded.map(({ entry, palette }) => [entry.name, palette]));
             const before = this.#state;
-            this.#dispatch({ type: "refreshLoaded", listId, palettes, select });
+            this.#dispatch({ type: "refreshLoaded", listId, palettes, select, keepSelection });
             const state = this.#state;
-            if (state === before || state.phase !== "loading" || state.selected === null) return;
+            if (state === before || state.selected === null) return;
+            // A theme just saved for the first time gets a card; bring it into view.
+            if (keepSelection) {
+                this.#cardFor(state.selected)?.scrollIntoView({ block: "nearest" });
+                return;
+            }
+            if (state.phase !== "loading") return;
             void this.#loadTheme(state.selected);
             this.#cardFor(state.selected)?.scrollIntoView({ block: "nearest" });
         }
@@ -664,24 +705,26 @@ if (typeof HTMLElement !== "undefined") {
             this.#renderList();
             this.#createRadio.checked = state.selected === null;
             this.#createCard.toggleAttribute("selected", state.selected === null);
-            const preview = previewPalette(state);
+            this.#createBadge.hidden = !newThemeHasUnsavedChanges(state);
             for (const card of this.#cards()) {
                 const name = (card as unknown as B3ttyPaletteCard).value;
-                const selected = name === state.selected;
-                // The selected card shows the live preview; every other card its own palette.
-                const palette = (selected ? preview : null) ?? state.palettes[name];
-                const key = palette ? JSON.stringify(palette) : "";
+                // The selected card shows the live preview, a card with a draft that
+                // draft, and every other card its own palette.
+                const palette = cardPalette(state, name) ?? state.palettes[name];
+                const unsaved = themeHasUnsavedChanges(state, name);
+                const key = palette ? JSON.stringify([palette, unsaved]) : "";
                 if (palette && this.#cardPalettes.get(card) !== key) {
                     const entry = themeEntry(state, name);
+                    const details = entry ? cardDetails(entry) : undefined;
                     (card as unknown as B3ttyPaletteCard).setup(
                         name,
                         formatThemeName(name),
                         palette,
-                        entry ? cardDetails(entry) : undefined
+                        unsaved ? { ...details, badge: UNSAVED_BADGE, badgeTone: "accent" } : details
                     );
                     this.#cardPalettes.set(card, key);
                 }
-                card.toggleAttribute("selected", selected);
+                card.toggleAttribute("selected", name === state.selected);
             }
 
             // Values are set only when they differ, so typing isn't disturbed.
@@ -713,15 +756,18 @@ if (typeof HTMLElement !== "undefined") {
             const note = source ? READ_ONLY_NOTES[source] : undefined;
             this.#readOnlyNote.textContent = note ?? "";
             this.#readOnlyNote.hidden = !note;
-            this.#saveError.textContent = state.error ?? "";
-            this.#saveError.classList.toggle("visible", state.error !== null);
+            const status = state.error ?? (state.notice ? `✓ ${state.notice}` : null);
+            this.#saveError.textContent = status ?? "";
+            this.#saveError.classList.toggle("visible", status !== null);
+            this.#saveError.classList.toggle("notice", state.error === null && state.notice !== null);
 
             this.#copyBtn.disabled = !canCopyTheme(state);
             this.#deleteBtn.disabled = !canDeleteTheme(state);
             this.#exportBtn.disabled = !canExportTheme(state);
-            // Cancel too, so the editor can't close and reopen under a request in flight.
-            this.#cancelBtn.disabled = saving;
-            this.#okBtn.disabled = !canSaveTheme(state);
+            // Close too, so the editor can't close and reopen under a request in flight.
+            this.#closeBtn.disabled = saving;
+            this.#resetBtn.disabled = !canResetTheme(state);
+            this.#saveBtn.disabled = !canSaveTheme(state);
         }
 
         /**
@@ -742,8 +788,9 @@ if (typeof HTMLElement !== "undefined") {
                 body.className = "list-section";
                 for (const entry of inSection) {
                     const palette = palettes[entry.name]!;
+                    // #render then sets up any card whose palette or badge differs.
                     const card = createPaletteCard(entry, palette);
-                    this.#cardPalettes.set(card, JSON.stringify(palette));
+                    this.#cardPalettes.set(card, JSON.stringify([palette, false]));
                     body.appendChild(card);
                 }
                 const heading = document.createElement("div");
@@ -851,7 +898,43 @@ if (typeof HTMLElement !== "undefined") {
             });
         }
 
-        async #handleOk(): Promise<void> {
+        /** Closes, first asking to discard unsaved changes when there are any. */
+        async #requestClose(): Promise<void> {
+            const state = this.#state;
+            if (state.phase === "saving") return;
+            if (!hasAnyUnsavedChanges(state)) {
+                this.close();
+                return;
+            }
+            const { names, newTheme } = unsavedChanges(state);
+            const items: Array<string | Node> = names.map((name) => {
+                const bold = document.createElement("b");
+                bold.textContent = name;
+                return bold;
+            });
+            if (newTheme) items.push("a new theme");
+            const count = items.length;
+            const listed: Array<string | Node> = [];
+            items.forEach((item, i) => {
+                if (i > 0) listed.push(i === count - 1 ? (count > 2 ? ", and " : " and ") : ", ");
+                listed.push(item);
+            });
+            const discard = await this.#prompt.ask({
+                title: "Discard Unsaved Changes?",
+                message: [
+                    "You have unsaved changes to ",
+                    ...listed,
+                    `. Closing the editor will discard ${count === 1 ? "them" : "all of them"}.`,
+                ],
+                actionLabel: "Discard Changes",
+                destructive: true,
+                opener: this.#closeBtn,
+                submit: async () => {},
+            });
+            if (discard) this.close();
+        }
+
+        async #handleSave(): Promise<void> {
             const before = this.#state;
             this.#dispatch({ type: "saveSubmitted" });
             if (this.#state === before) return;
@@ -866,7 +949,10 @@ if (typeof HTMLElement !== "undefined") {
                         composed: true,
                     })
                 );
-                this.close();
+                this.#dispatch({ type: "saveSucceeded", name });
+                // The list picks up a new theme and the saved colors on its card; the
+                // editor stays on the saved theme.
+                if (response.themes) void this.#refreshList(response.themes, undefined, true);
             } catch (err) {
                 // Keep editor open so the user can retry, but tell them why —
                 // a save that silently does nothing looks indistinguishable
