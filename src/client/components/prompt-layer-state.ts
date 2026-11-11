@@ -1,6 +1,6 @@
 /**
- * State for the theme editor's Copy… / Delete… prompt (buildPromptLayer in
- * theme-editor.ts), kept free of DOM access so it can be tested under bun test.
+ * State for the editors' prompts (buildPromptLayer in prompt-layer.ts), kept free of
+ * DOM access so it can be tested under bun test.
  * Validating the field is up to the caller, which passes the result in as `problem`,
  * since what counts as a usable value depends on the prompt.
  */

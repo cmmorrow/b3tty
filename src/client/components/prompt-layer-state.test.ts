@@ -6,7 +6,7 @@ import {
     showPromptProblem,
     type PromptAction,
     type PromptState,
-} from "./theme-editor-prompt-state.ts";
+} from "./prompt-layer-state.ts";
 
 function run(...actions: PromptAction[]): PromptState {
     return actions.reduce(reducePrompt, initialPromptState);
