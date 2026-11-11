@@ -333,6 +333,15 @@ Installed themes and user-defined themes from the `themes` section of the config
 - **Delete…** asks for confirmation, then deletes one of your themes, uninstalls an installed one, or removes a built-in theme from the Themes menu (it stays in the Theme Selector). It's unavailable for a built-in theme that isn't in the menu. None of this can be undone. If you delete the active theme, b3tty switches to `default-theme`, or to no theme.
 - **Import theme…** installs a `.b3theme` package from a path on the server (see [Installing themes](#installing-themes)); the new theme is then selected under **Installed**.
 
+## Profile Editor
+
+**Profiles → Edit Profile…** (or `edit:profile` in the command palette) opens the Profile Editor, which works like the Theme Editor. Its left panel starts with **Create new profile**, then lists your profiles (every profile except `default`, which can't be edited here).
+
+- Select a profile, change its shell, title, working directory, root, or startup commands, and click **Save** to save it to the config file. Saving doesn't switch the current tab to the profile; open it from the **Profiles** menu. The editor stays open; **Reset** puts back the saved values, and **Close** closes the editor. A profile's name can't be changed once it's saved; copy it instead.
+- **Unsaved changes** are kept while you look at other profiles, with an **Unsaved** badge on the card, until the editor is closed or the page is reloaded; **Close** asks before discarding them.
+- **Copy…** saves a copy of the selected profile under a new name (`<name>-copy` by default) and selects it. Unsaved changes aren't copied.
+- **Delete…** asks for confirmation, then deletes the selected profile. This can't be undone.
+
 ## Sharing themes
 
 A user-defined theme can be exported as a `.b3theme` package to share with other b3tty users. The package holds only that theme. None of your settings, profiles, or other themes are included.
