@@ -98,7 +98,7 @@ export const PROFILE_NAMES = ["default", ...Object.keys(profiles)];
 
 export const SAMPLE_SETTINGS: SettingsConfig = {
     server: { port: 8080, noAuth: false, noBrowser: false, showMenubar: "hover" },
-    terminal: { fontFamily: "JetBrains Mono", fontSize: 14, autoResize: true, rows: 24, columns: 80 },
+    terminal: { fontFamily: "JetBrains Mono", fontSize: 14, autoResize: true, rows: 24, columns: 80, ligatures: false },
 };
 
 let settings: SettingsConfig = structuredClone(SAMPLE_SETTINGS);

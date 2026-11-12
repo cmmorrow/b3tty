@@ -153,6 +153,7 @@ func initConfig() {
 			AutoResize: autoResize,
 			Rows:       rows,
 			Columns:    columns,
+			Ligatures:  ligatures,
 		},
 	}
 
@@ -201,11 +202,13 @@ func initConfig() {
 	if !startCmd.Flags().Changed("auto-resize") {
 		autoResize = cfg.Terminal.AutoResize
 	}
-	// font-family and font-size have no corresponding start flag (CLI setting
-	// was deprecated for these — see startCmd's init()), so there is no
-	// precedence to guard; the seed value is already the effective default.
+	// font-family, font-size, and ligatures have no corresponding start flag
+	// (CLI setting was deprecated for the first two — see startCmd's init()),
+	// so there is no precedence to guard; the seed value is already the
+	// effective default.
 	fontFamily = cfg.Terminal.FontFamily
 	fontSize = cfg.Terminal.FontSize
+	ligatures = cfg.Terminal.Ligatures
 
 	// The theme state is derived later, by loadThemes, once it is known
 	// whether the command being run is `start`.

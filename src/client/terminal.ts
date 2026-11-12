@@ -136,6 +136,20 @@ export function buildTheme(themeConfig: ThemeConfig | ThemeActivateResponse): IT
 export const FONT_FALLBACK_STACK = "Menlo, DejaVu Sans Mono, Ubuntu Mono, Inconsolata, Fira, monospace";
 
 /**
+ * The `font-feature-settings` value for the terminal's rows, set as the
+ * `--b3tty-font-features` custom property that terminal.css applies to
+ * `.xterm-rows`. Ligatures are asked for explicitly because xterm's DOM renderer
+ * gives each row a tiny non-zero letter-spacing (to correct cell widths for
+ * rounding), and browsers turn optional ligatures off whenever letter-spacing
+ * isn't zero. Turning them off is explicit too, so a row whose spacing happens to
+ * be exactly zero doesn't show them anyway. A font without ligatures is
+ * unaffected either way.
+ */
+export function ligatureFeatures(enabled: boolean): string {
+    return enabled ? `"liga" 1, "calt" 1` : `"liga" 0, "calt" 0`;
+}
+
+/**
  * Builds the font-family value for xterm.js, appending FONT_FALLBACK_STACK after
  * the configured font family (or using it alone when fontFamily is empty).
  */
@@ -617,6 +631,7 @@ export function applyThemeStyles(
 export function applyPageStyles(config: TermConfig): void {
     document.documentElement.style.setProperty("--b3tty-font-size", `${config.fontSize}px`);
     document.documentElement.style.setProperty("--b3tty-font-family", buildFontFamilyCssVar(config.fontFamily));
+    document.documentElement.style.setProperty("--b3tty-font-features", ligatureFeatures(config.ligatures ?? false));
     applyThemeStyles(config.theme, false);
 }
 
@@ -773,8 +788,10 @@ export function applyTerminalSettings(t: TerminalClient, term: Terminal, config:
         term.options.fontSize = t.fontSize;
         document.documentElement.style.setProperty("--b3tty-font-size", `${t.fontSize}px`);
     }
+    document.documentElement.style.setProperty("--b3tty-font-features", ligatureFeatures(t.ligatures));
     config.fontFamily = t.fontFamily;
     config.fontSize = t.fontSize;
+    config.ligatures = t.ligatures;
     if (!config.autoResize) {
         config.rows = t.rows;
         config.columns = t.columns;

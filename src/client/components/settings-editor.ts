@@ -52,6 +52,7 @@ if (typeof HTMLElement !== "undefined") {
         // Terminal tab inputs
         #fontFamilyInput: HTMLInputElement;
         #fontSizeInput: HTMLInputElement;
+        #ligaturesInput: HTMLInputElement;
         #autoResizeInput: HTMLInputElement;
         #rowsInput: HTMLInputElement;
         #columnsInput: HTMLInputElement;
@@ -266,6 +267,17 @@ if (typeof HTMLElement !== "undefined") {
                 )
             );
 
+            this.#ligaturesInput = document.createElement("input");
+            this.#ligaturesInput.type = "checkbox";
+            this.#ligaturesInput.className = "toggle";
+            terminalPanel.appendChild(
+                this.#makeSettingGroup(
+                    "Ligatures",
+                    "Show the font's ligatures, such as → for ->, when it has them. Applied immediately.",
+                    this.#ligaturesInput
+                )
+            );
+
             const divider = document.createElement("div");
             divider.className = "section-divider";
             terminalPanel.appendChild(divider);
@@ -349,6 +361,7 @@ if (typeof HTMLElement !== "undefined") {
             onInput(this.#columnsInput, (value) => ({ type: "fieldChanged", field: "columns", value }));
             onToggle(this.#noAuthInput, (value) => ({ type: "fieldChanged", field: "noAuth", value }));
             onToggle(this.#noBrowserInput, (value) => ({ type: "fieldChanged", field: "noBrowser", value }));
+            onToggle(this.#ligaturesInput, (value) => ({ type: "fieldChanged", field: "ligatures", value }));
             onToggle(this.#autoResizeInput, (value) => ({ type: "fieldChanged", field: "autoResize", value }));
             this.#showMenubarInput.addEventListener("change", () =>
                 this.#dispatch({
@@ -408,6 +421,7 @@ if (typeof HTMLElement !== "undefined") {
             const toggles: [HTMLInputElement, boolean][] = [
                 [this.#noAuthInput, form.noAuth],
                 [this.#noBrowserInput, form.noBrowser],
+                [this.#ligaturesInput, form.ligatures],
                 [this.#autoResizeInput, form.autoResize],
             ];
             for (const [el, checked] of toggles) {
