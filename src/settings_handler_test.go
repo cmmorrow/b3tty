@@ -3,6 +3,7 @@ package src
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -293,4 +294,34 @@ func TestSettingsHandlerPost(t *testing.T) {
 		assert.Contains(t, content, "no-browser: true")
 		assert.Contains(t, content, "show-menubar: visible")
 	})
+}
+
+func TestSettingsHandlerLigatures(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		t.Run(fmt.Sprintf("POST ligatures=%v applies, persists, and echoes it", enabled), func(t *testing.T) {
+			ts := newSettingsTestServer()
+			ts.Client.Ligatures = !enabled
+			ts.ConfigFile = filepath.Join(t.TempDir(), "conf.yaml")
+			require.NoError(t, os.WriteFile(ts.ConfigFile, []byte("theme: b3tty-dark\n"), 0644))
+
+			body, err := json.Marshal(settingsConfigResponse{
+				Server:   NewSettingsServerConfig(8080, false, false, "hover"),
+				Terminal: TerminalClient{FontSize: 14, AutoResize: true, Rows: 24, Columns: 80, Ligatures: enabled},
+			})
+			require.NoError(t, err)
+			req := httptest.NewRequest(http.MethodPost, "/settings", bytes.NewBuffer(body))
+			req.Header.Set("Sec-Fetch-Site", "same-origin")
+			w := httptest.NewRecorder()
+			ts.settingsHandler(w, req)
+			require.Equal(t, http.StatusOK, w.Code)
+
+			assert.Equal(t, enabled, ts.Client.Ligatures)
+			var resp settingsConfigResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, enabled, resp.Terminal.Ligatures)
+			data, err := os.ReadFile(ts.ConfigFile)
+			require.NoError(t, err)
+			assert.Contains(t, string(data), fmt.Sprintf("ligatures: %v", enabled))
+		})
+	}
 }

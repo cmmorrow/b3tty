@@ -28,6 +28,7 @@ var (
 	setFontFamily  string
 	setFontSize    int
 	setAutoResize  bool
+	setLigatures   bool
 	setRows        int
 	setColumns     int
 	editEditor     string
@@ -52,6 +53,7 @@ var settingsGetCmd = &cobra.Command{
 		fmt.Fprintf(w, "  font-family:\t%s\n", fontFamily)
 		fmt.Fprintf(w, "  font-size:\t%d\n", fontSize)
 		fmt.Fprintf(w, "  auto-resize:\t%v\n", autoResize)
+		fmt.Fprintf(w, "  ligatures:\t%v\n", ligatures)
 		if configKeys.Has("terminal.rows") {
 			fmt.Fprintf(w, "  rows:\t%d\n", rows)
 		}
@@ -69,8 +71,8 @@ var settingsSetCmd = &cobra.Command{
 explicitly provide are changed; all other settings keep their current values.
 
 Server settings (--port, --no-auth, --no-browser) and terminal dimensions
-(--rows, --columns) require a server restart to take effect. Font and
-font-size apply to live sessions immediately.`,
+(--rows, --columns) require a server restart to take effect. Font,
+font-size, and ligatures apply to live sessions immediately.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if !anySettingFlagChanged(cmd) {
 			cmdLog.Fatal("no settings specified; run 'b3tty settings set --help' to see available flags")
@@ -85,6 +87,7 @@ font-size apply to live sessions immediately.`,
 		currentFontFamily := fontFamily
 		currentFontSize := fontSize
 		currentAutoResize := autoResize
+		currentLigatures := ligatures
 		currentRows := rows
 		currentColumns := columns
 
@@ -108,6 +111,9 @@ font-size apply to live sessions immediately.`,
 		}
 		if cmd.Flags().Changed("auto-resize") {
 			currentAutoResize = setAutoResize
+		}
+		if cmd.Flags().Changed("ligatures") {
+			currentLigatures = setLigatures
 		}
 		if cmd.Flags().Changed("rows") {
 			currentRows = setRows
@@ -138,6 +144,7 @@ font-size apply to live sessions immediately.`,
 			AutoResize: currentAutoResize,
 			Rows:       currentRows,
 			Columns:    currentColumns,
+			Ligatures:  currentLigatures,
 		}
 
 		if err := src.SaveSettingsToConfig(configPath, serverCfg, terminalCfg); err != nil {
@@ -317,7 +324,7 @@ func resolveConfigPath() string {
 }
 
 func anySettingFlagChanged(cmd *cobra.Command) bool {
-	for _, name := range []string{"port", "no-auth", "no-browser", "show-menubar", "font-family", "font-size", "auto-resize", "rows", "columns"} {
+	for _, name := range []string{"port", "no-auth", "no-browser", "show-menubar", "font-family", "font-size", "auto-resize", "ligatures", "rows", "columns"} {
 		if cmd.Flags().Changed(name) {
 			return true
 		}
@@ -338,6 +345,7 @@ func init() {
 	settingsSetCmd.Flags().StringVar(&setFontFamily, "font-family", "", "Terminal font family (empty to use system monospace)")
 	settingsSetCmd.Flags().IntVar(&setFontSize, "font-size", 14, "Terminal font size")
 	settingsSetCmd.Flags().BoolVar(&setAutoResize, "auto-resize", true, "Auto-resize terminal to fit browser window; when false, rows and columns are used (requires restart)")
+	settingsSetCmd.Flags().BoolVar(&setLigatures, "ligatures", src.DEFAULT_LIGATURES, "Show font ligatures when the font has them")
 	settingsSetCmd.Flags().IntVar(&setRows, "rows", src.DEFAULT_ROWS, "Fixed terminal height in rows, minimum 10 (requires restart; ignored when auto-resize is true)")
 	settingsSetCmd.Flags().IntVar(&setColumns, "columns", src.DEFAULT_COLS, "Fixed terminal width in columns, minimum 10 (requires restart; ignored when auto-resize is true)")
 

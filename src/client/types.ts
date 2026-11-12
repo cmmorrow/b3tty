@@ -45,6 +45,8 @@ export interface TermConfig {
     fontSize: number;
     fontFamily: string;
     autoResize?: boolean;
+    /** Show the font's ligatures, when it has any. Absent means off. */
+    ligatures?: boolean;
     rows: number;
     columns: number;
     theme: ThemeConfig;
@@ -218,6 +220,7 @@ export interface TerminalClient {
     autoResize: boolean;
     rows: number;
     columns: number;
+    ligatures: boolean;
 }
 
 export interface SettingsConfig {

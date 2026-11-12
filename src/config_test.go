@@ -251,6 +251,20 @@ terminal:
 		assert.False(t, cfg.Terminal.AutoResize)
 	})
 
+	t.Run("ligatures keeps its false seed unless the file turns it on", func(t *testing.T) {
+		absent := writeTempConfig(t, "terminal:\n  font-size: 16\n")
+		cfg := Config{Terminal: TerminalClient{Ligatures: DEFAULT_LIGATURES}}
+		_, err := LoadConfig(absent, &cfg)
+		require.NoError(t, err)
+		assert.False(t, cfg.Terminal.Ligatures)
+
+		on := writeTempConfig(t, "terminal:\n  ligatures: true\n")
+		cfg = Config{Terminal: TerminalClient{Ligatures: DEFAULT_LIGATURES}}
+		_, err = LoadConfig(on, &cfg)
+		require.NoError(t, err)
+		assert.True(t, cfg.Terminal.Ligatures)
+	})
+
 	t.Run("theme and profile name case is preserved", func(t *testing.T) {
 		path := writeTempConfig(t, `
 themes:

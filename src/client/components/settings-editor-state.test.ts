@@ -15,7 +15,7 @@ import type { SettingsConfig } from "../types.ts";
 
 const SETTINGS: SettingsConfig = {
     server: { port: 8080, noAuth: false, noBrowser: false, showMenubar: "hover" },
-    terminal: { fontFamily: "Fira Code", fontSize: 14, autoResize: true, rows: 24, columns: 80 },
+    terminal: { fontFamily: "Fira Code", fontSize: 14, autoResize: true, rows: 24, columns: 80, ligatures: false },
 };
 const OPENED: SettingsEditorAction = { type: "opened", settings: SETTINGS };
 
@@ -50,6 +50,14 @@ describe("reduceSettingsEditor", () => {
         const font = run(OPENED, { type: "fieldChanged", field: "fontFamily", value: "Menlo" });
         expect(autoResizeChanged(font)).toBe(false);
         expect(serverSettingsChanged(font)).toBe(false);
+    });
+
+    test("toggling Ligatures can be saved without a restart and is sent on save", () => {
+        const s = run(OPENED, { type: "fieldChanged", field: "ligatures", value: true });
+        expect(canSaveSettings(s)).toBe(true);
+        expect(autoResizeChanged(s)).toBe(false);
+        expect(serverSettingsChanged(s)).toBe(false);
+        expect(settingsFromForm(s.form).terminal.ligatures).toBe(true);
     });
 
     test("an invalid value disables OK and says why", () => {

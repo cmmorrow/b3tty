@@ -21,15 +21,19 @@ type TerminalClient struct {
 	AutoResize bool   `yaml:"auto-resize" json:"autoResize"`
 	Rows       int    `yaml:"rows" json:"rows"`
 	Columns    int    `yaml:"columns" json:"columns"`
+	// Ligatures turns the font's ligatures on or off, through the
+	// font-feature-settings rule on .xterm-rows in src/assets/terminal.css.
+	Ligatures bool `yaml:"ligatures" json:"ligatures"`
 }
 
-func NewTerminalClient(rows *int, columns *int, autoResize *bool, fontFamily *string, fontSize *int) *TerminalClient {
+func NewTerminalClient(rows *int, columns *int, autoResize *bool, fontFamily *string, fontSize *int, ligatures *bool) *TerminalClient {
 	return &TerminalClient{
 		Rows:       *rows,
 		Columns:    *columns,
 		AutoResize: *autoResize,
 		FontFamily: *fontFamily,
 		FontSize:   *fontSize,
+		Ligatures:  *ligatures,
 	}
 }
 
@@ -234,6 +238,7 @@ type TermConfig struct {
 	Rows               int      `json:"rows"`
 	Columns            int      `json:"columns"`
 	AutoResize         bool     `json:"autoResize"`
+	Ligatures          bool     `json:"ligatures"`
 	Theme              Theme    `json:"theme"`
 	Uri                string   `json:"uri"`
 	Port               int      `json:"port"`
@@ -255,6 +260,7 @@ func NewTermConfig(srv *Server, clnt *TerminalClient, thm *Theme, themeNames []s
 		Rows:               clnt.Rows,
 		Columns:            clnt.Columns,
 		AutoResize:         clnt.AutoResize,
+		Ligatures:          clnt.Ligatures,
 		Theme:              *thm,
 		Uri:                srv.URL.Hostname(),
 		Port:               srv.Port(),

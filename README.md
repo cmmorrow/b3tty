@@ -154,8 +154,9 @@ Controls the appearance and dimensions of the terminal.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `font-family` | string | `"monospace"` | The font used in the terminal. Multi-word names (e.g. `"Fira Code"`) are supported. Note: the font must be available in the browser. |
+| `font-family` | string | `"monospace"` | The font used in the terminal. Multi-word names (e.g. `"Fira Code"`) are supported. Note: the font must be available in the browser. Safari only lets web pages use fonts that come with macOS, so a font you installed yourself (for example a Nerd Font in `~/Library/Fonts`) isn't used there and the terminal falls back to a system monospace font; Chrome and Firefox use installed fonts. |
 | `font-size` | int | `14` | Terminal font size in pixels. |
+| `ligatures` | bool | `false` | Show the font's ligatures (for example `->` drawn as an arrow) when the font has them, such as Fira Code or JetBrains Mono. Off unless you turn it on; a font without ligatures looks the same either way. Can also be changed with `b3tty settings set --ligatures` (or `--ligatures=false`) or in the Settings editor's Terminal tab, and takes effect in open sessions immediately. In Safari, ligatures only show with a font that comes with macOS (see `font-family`). |
 | `rows` | int | `24` | Number of terminal rows. |
 | `columns` | int | `0` | Number of terminal columns. `0` means auto-fit to the browser window width. |
 

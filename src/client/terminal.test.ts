@@ -27,6 +27,7 @@ import {
     disableCursor,
     applyThemeStyles,
     applyPageStyles,
+    ligatureFeatures,
     handleThemeChange,
     handleProfileChange,
     handleThemeSelected,
@@ -2079,7 +2080,7 @@ describe("applyTerminalSettings", () => {
             theme: {},
         };
         applyTerminalSettings(
-            { fontFamily: "mono", fontSize: 14, autoResize: false, rows: 30, columns: 100 },
+            { fontFamily: "mono", fontSize: 14, autoResize: false, rows: 30, columns: 100, ligatures: true },
             term,
             config
         );
@@ -2115,7 +2116,7 @@ describe("applyTerminalSettings", () => {
             theme: {},
         };
         applyTerminalSettings(
-            { fontFamily: "mono", fontSize: 14, autoResize: true, rows: 30, columns: 100 },
+            { fontFamily: "mono", fontSize: 14, autoResize: true, rows: 30, columns: 100, ligatures: true },
             term,
             config
         );
@@ -3310,5 +3311,65 @@ describe("recent command ids", () => {
             },
         };
         expect(() => recordRecentCommandId(storage, "a")).not.toThrow();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// ligatures
+// ---------------------------------------------------------------------------
+
+describe("ligatures", () => {
+    let saved: unknown;
+
+    beforeEach(() => {
+        saved = (globalThis as Record<string, unknown>)["document"];
+    });
+
+    afterEach(() => {
+        (globalThis as Record<string, unknown>)["document"] = saved;
+    });
+
+    const baseConfig = {
+        tls: false,
+        uri: "localhost",
+        port: 8080,
+        fontSize: 14,
+        fontFamily: "Fira Code",
+        rows: 24,
+        columns: 80,
+        theme: {},
+    };
+
+    it("asks for ligatures explicitly whether they're on or off", () => {
+        expect(ligatureFeatures(true)).toBe(`"liga" 1, "calt" 1`);
+        expect(ligatureFeatures(false)).toBe(`"liga" 0, "calt" 0`);
+    });
+
+    it("applyPageStyles leaves ligatures off when the config doesn't say", () => {
+        const { doc, documentElementStyle } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        applyPageStyles(baseConfig);
+        expect(documentElementStyle.setProperty).toHaveBeenCalledWith("--b3tty-font-features", ligatureFeatures(false));
+    });
+
+    it("applyPageStyles turns ligatures on when the config does", () => {
+        const { doc, documentElementStyle } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        applyPageStyles({ ...baseConfig, ligatures: true });
+        expect(documentElementStyle.setProperty).toHaveBeenCalledWith("--b3tty-font-features", ligatureFeatures(true));
+    });
+
+    it("applyTerminalSettings applies a ligatures change live", () => {
+        const { doc, documentElementStyle } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const term = terminalFactory({ ...baseConfig, autoResize: true });
+        const config = { ...baseConfig, autoResize: true, ligatures: false };
+        applyTerminalSettings(
+            { fontFamily: "Fira Code", fontSize: 14, autoResize: true, rows: 24, columns: 80, ligatures: true },
+            term,
+            config
+        );
+        expect(documentElementStyle.setProperty).toHaveBeenCalledWith("--b3tty-font-features", ligatureFeatures(true));
+        expect(config.ligatures).toBe(true);
     });
 });

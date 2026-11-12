@@ -10,6 +10,10 @@ const DEFAULT_COLS = 80
 const DEFAULT_AUTO_RESIZE = true
 const DEFAULT_FONT_FAMILY = ""
 const DEFAULT_FONT_SIZE = 14
+
+// DEFAULT_LIGATURES leaves font ligatures off until the user turns them on
+// (terminal.ligatures); when on, they appear whenever the font has them.
+const DEFAULT_LIGATURES = false
 const DEFAULT_PROFILE_NAME = "default"
 const DEFAULT_SHOW_MENUBAR = "hover"
 const SHOW_MENUBAR_HOVER = "hover"
