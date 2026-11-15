@@ -25,7 +25,7 @@ const wait = (ms = 120): Promise<void> => new Promise((r) => setTimeout(r, ms));
 /** User-defined themes, so the theme editor has an existing entry to edit. */
 export const USER_THEMES: Record<string, ThemeFixture> = {
     "midnight-ops": {
-        ...THEMES["tokyo-night"],
+        ...THEMES["b3tty-dark"],
         background: "#0f1117",
         backgroundImage: "~/Pictures/grid.png",
         backgroundImageTransparency: 70,
@@ -41,7 +41,7 @@ const INSTALLED_THEMES: Record<
     { theme: ThemeFixture; details: Omit<ThemeEntry, "name" | "source" | "inMenu"> }
 > = {
     aurora: {
-        theme: { ...THEMES["catppuccin-mocha"], background: "#101820", cursor: "#7fdbca" },
+        theme: { ...THEMES["b3tty-dark"], background: "#101820", cursor: "#7fdbca" },
         details: {
             author: "Northern Lights Co.",
             themeVersion: "1.4.0",
@@ -50,13 +50,13 @@ const INSTALLED_THEMES: Record<
         },
     },
     "paper-white": {
-        theme: { ...THEMES["one-light"], background: "#fbfaf7" },
+        theme: { ...THEMES["b3tty-light"], background: "#fbfaf7" },
         details: { author: "Jane Doe", themeVersion: "2.0", repo: "https://github.com/example/paper-white" },
     },
 };
 
 /** The Themes menu, in order. */
-let menu = ["midnight-ops", "dracula", "aurora"];
+let menu = ["midnight-ops", "b3tty-dark", "aurora"];
 
 /** Every theme as the server describes it (see ThemeEntry), sorted by name. */
 export function themeEntries(): ThemeEntry[] {
@@ -173,7 +173,7 @@ const IMPORTABLE: Record<
 > = {
     "~/Downloads/aurora-2.0.b3theme": {
         name: "aurora",
-        theme: { ...THEMES["catppuccin-mocha"], background: "#0c141c", cursor: "#7fdbca" },
+        theme: { ...THEMES["b3tty-dark"], background: "#0c141c", cursor: "#7fdbca" },
         details: {
             author: "Northern Lights Co.",
             themeVersion: "2.0.0",
@@ -182,7 +182,7 @@ const IMPORTABLE: Record<
     },
     "~/Downloads/sunrise.b3theme": {
         name: "sunrise",
-        theme: { ...THEMES["gruvbox-light"], background: "#fff4e0" },
+        theme: { ...THEMES["b3tty-light"], background: "#fff4e0" },
         details: { author: "Dawn Studio", themeVersion: "0.9", repo: "https://github.com/example/sunrise" },
     },
 };

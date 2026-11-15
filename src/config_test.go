@@ -425,12 +425,12 @@ themes:
     foreground: "#ffffff"
   alpha:
     foreground: "#000000"
-  dracula:
+  b3tty-dark:
     foreground: "#f8f8f2"
 `)
-		require.NoError(t, ActivateThemeInConfig(cfgPath, "one-light"))
-		// dracula, an old copy of a built-in, stays in the menu as the built-in.
-		assert.Equal(t, []any{"alpha", "dracula", "zebra", "one-light"}, menu(readConfig()))
+		require.NoError(t, ActivateThemeInConfig(cfgPath, "b3tty-light"))
+		// b3tty-dark, an old copy of a built-in, stays in the menu as the built-in.
+		assert.Equal(t, []any{"alpha", "b3tty-dark", "zebra", "b3tty-light"}, menu(readConfig()))
 	})
 
 	t.Run("an existing empty menu stays otherwise empty", func(t *testing.T) {

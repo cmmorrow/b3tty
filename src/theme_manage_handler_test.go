@@ -132,8 +132,8 @@ func importBody(path string, replace bool) string {
 
 func TestImportThemeHandler(t *testing.T) {
 	t.Run("installs a package without activating it or adding it to the menu", func(t *testing.T) {
-		ts := newManageTestServer(t, "available-themes: [dracula]\n")
-		ts.AvailableThemes = []string{"dracula"}
+		ts := newManageTestServer(t, "available-themes: [b3tty-dark]\n")
+		ts.AvailableThemes = []string{"b3tty-dark"}
 		messages := watchBroadcasts(t, ts)
 		path := writePackageFile(t, testPackage(t, "midnight", testThemeID, "1.0", true))
 
@@ -143,14 +143,14 @@ func TestImportThemeHandler(t *testing.T) {
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.Equal(t, "midnight", resp.Name)
 		assert.True(t, resp.Theme.HasBackgroundImage)
-		assert.Equal(t, []string{"dracula"}, resp.ThemeNames)
+		assert.Equal(t, []string{"b3tty-dark"}, resp.ThemeNames)
 		assert.False(t, resp.Upgraded)
 
 		assert.Contains(t, ts.InstalledThemes, "midnight")
 		assert.Equal(t, "", ts.ActiveTheme)
 		msg := nextBroadcast(t, messages, "themes")
 		assert.Contains(t, broadcastThemeNames(msg), "midnight")
-		assert.Equal(t, []string{"dracula"}, resp.ThemeNames)
+		assert.Equal(t, []string{"b3tty-dark"}, resp.ThemeNames)
 		assert.Contains(t, entryNames(resp.Themes), "midnight")
 	})
 
@@ -217,16 +217,16 @@ func TestCopyThemeHandler(t *testing.T) {
 	}
 
 	t.Run("copies an installed theme, extracting its image", func(t *testing.T) {
-		ts := newManageTestServer(t, "theme: dracula\navailable-themes: [dracula]\n")
-		ts.ActiveTheme = "dracula"
-		ts.AvailableThemes = []string{"dracula"}
+		ts := newManageTestServer(t, "theme: b3tty-dark\navailable-themes: [b3tty-dark]\n")
+		ts.ActiveTheme = "b3tty-dark"
+		ts.AvailableThemes = []string{"b3tty-dark"}
 		ts.InstalledThemes["midnight"] = installTestTheme(t, ts.Plugins, "midnight", testThemeID, true)
 
 		w := postJSON(ts.copyThemeHandler, "/copy-theme", copyBody("midnight", "my midnight"))
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 		var resp themeConfigResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		assert.Equal(t, []string{"dracula", "my midnight"}, resp.ThemeNames)
+		assert.Equal(t, []string{"b3tty-dark", "my midnight"}, resp.ThemeNames)
 		assert.Contains(t, resp.Themes, ThemeEntry{Name: "my midnight", Source: ThemeSourceUser, InMenu: true})
 		assert.True(t, resp.HasBackgroundImage)
 
@@ -237,10 +237,10 @@ func TestCopyThemeHandler(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, pngMagic, data)
 		assert.Nil(t, ts.Themes["my midnight"].Package)
-		assert.Equal(t, "dracula", ts.ActiveTheme, "a copy is not activated")
+		assert.Equal(t, "b3tty-dark", ts.ActiveTheme, "a copy is not activated")
 
 		out := readTestConfig(t)
-		assert.Equal(t, "dracula", out["theme"])
+		assert.Equal(t, "b3tty-dark", out["theme"])
 		entry := out["themes"].(map[string]any)["my midnight"].(map[string]any)
 		assert.Equal(t, image, entry["background-image"])
 		assert.Equal(t, "#ffffff", entry["foreground"])
@@ -263,9 +263,9 @@ func TestCopyThemeHandler(t *testing.T) {
 
 	t.Run("copies a built-in theme and drops a user theme's package details", func(t *testing.T) {
 		ts := newManageTestServer(t, "")
-		w := postJSON(ts.copyThemeHandler, "/copy-theme", copyBody("dracula", "my-dracula"))
+		w := postJSON(ts.copyThemeHandler, "/copy-theme", copyBody("b3tty-dark", "my-b3tty-dark"))
 		require.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, builtinThemes["dracula"].Background, ts.Themes["my-dracula"].Background)
+		assert.Equal(t, builtinThemes["b3tty-dark"].Background, ts.Themes["my-b3tty-dark"].Background)
 
 		details := testPackageDetails
 		ts.Themes["shared"] = Theme{Foreground: "#ffffff", Package: &details}
@@ -278,10 +278,10 @@ func TestCopyThemeHandler(t *testing.T) {
 	t.Run("rejects unknown sources and taken or invalid names", func(t *testing.T) {
 		ts := newManageTestServer(t, "")
 		assert.Equal(t, http.StatusNotFound, postJSON(ts.copyThemeHandler, "/copy-theme", copyBody("nope", "x")).Code)
-		w := postJSON(ts.copyThemeHandler, "/copy-theme", copyBody("dracula", "one-light"))
+		w := postJSON(ts.copyThemeHandler, "/copy-theme", copyBody("b3tty-dark", "b3tty-light"))
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Contains(t, w.Body.String(), "already exists")
-		w = postJSON(ts.copyThemeHandler, "/copy-theme", copyBody("dracula", " spaced"))
+		w = postJSON(ts.copyThemeHandler, "/copy-theme", copyBody("b3tty-dark", " spaced"))
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Contains(t, w.Body.String(), "leading or trailing spaces")
 	})
@@ -292,32 +292,32 @@ func TestDeleteThemeHandler(t *testing.T) {
 
 	t.Run("deleting the active user theme falls back to the default theme", func(t *testing.T) {
 		ts := newManageTestServer(t, `theme: mine
-default-theme: one-light
-available-themes: [one-light, mine]
+default-theme: b3tty-light
+available-themes: [b3tty-light, mine]
 themes:
   mine:
     foreground: "#ffffff"
 `)
 		ts.Themes["mine"] = Theme{Foreground: "#ffffff"}
-		ts.AvailableThemes = []string{"one-light", "mine"}
-		ts.ActiveTheme, ts.Theme, ts.DefaultTheme = "mine", ts.Themes["mine"], "one-light"
+		ts.AvailableThemes = []string{"b3tty-light", "mine"}
+		ts.ActiveTheme, ts.Theme, ts.DefaultTheme = "mine", ts.Themes["mine"], "b3tty-light"
 		messages := watchBroadcasts(t, ts)
 
 		w := postJSON(ts.deleteThemeHandler, "/delete-theme", deleteBody("mine"))
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 		var resp themeNamesResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		assert.Equal(t, []string{"one-light"}, resp.ThemeNames)
+		assert.Equal(t, []string{"b3tty-light"}, resp.ThemeNames)
 		assert.NotContains(t, entryNames(resp.Themes), "mine")
 		assert.NotContains(t, ts.Themes, "mine")
-		assert.Equal(t, "one-light", ts.ActiveTheme)
-		assert.Equal(t, "one-light", nextBroadcast(t, messages, "theme")["name"])
+		assert.Equal(t, "b3tty-light", ts.ActiveTheme)
+		assert.Equal(t, "b3tty-light", nextBroadcast(t, messages, "theme")["name"])
 		assert.NotContains(t, broadcastThemeNames(nextBroadcast(t, messages, "themes")), "mine")
 
 		out := readTestConfig(t)
 		assert.NotContains(t, out, "theme")
 		assert.NotContains(t, out["themes"], "mine")
-		assert.Equal(t, "one-light", out["default-theme"])
+		assert.Equal(t, "b3tty-light", out["default-theme"])
 	})
 
 	t.Run("uninstalls an installed theme", func(t *testing.T) {
@@ -340,17 +340,17 @@ themes:
 	})
 
 	t.Run("a built-in theme is only removed from the menu", func(t *testing.T) {
-		ts := newManageTestServer(t, "theme: dracula\navailable-themes: [dracula]\n")
-		ts.ActiveTheme, ts.Theme = "dracula", builtinThemes["dracula"]
-		ts.AvailableThemes = []string{"dracula"}
+		ts := newManageTestServer(t, "theme: b3tty-dark\navailable-themes: [b3tty-dark]\n")
+		ts.ActiveTheme, ts.Theme = "b3tty-dark", builtinThemes["b3tty-dark"]
+		ts.AvailableThemes = []string{"b3tty-dark"}
 
-		w := postJSON(ts.deleteThemeHandler, "/delete-theme", deleteBody("dracula"))
+		w := postJSON(ts.deleteThemeHandler, "/delete-theme", deleteBody("b3tty-dark"))
 		require.Equal(t, http.StatusOK, w.Code)
 		assert.Empty(t, ts.AvailableThemes)
-		assert.Equal(t, "dracula", ts.ActiveTheme)
-		assert.Equal(t, "dracula", readTestConfig(t)["theme"])
+		assert.Equal(t, "b3tty-dark", ts.ActiveTheme)
+		assert.Equal(t, "b3tty-dark", readTestConfig(t)["theme"])
 
-		w = postJSON(ts.deleteThemeHandler, "/delete-theme", deleteBody("dracula"))
+		w = postJSON(ts.deleteThemeHandler, "/delete-theme", deleteBody("b3tty-dark"))
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Contains(t, w.Body.String(), "isn't in the Themes menu")
 	})
@@ -363,8 +363,8 @@ themes:
 
 func TestReloadThemesHandler(t *testing.T) {
 	t.Run("picks up themes changed on disk and applies the active one", func(t *testing.T) {
-		ts := newManageTestServer(t, "theme: dracula\n")
-		ts.ActiveTheme, ts.Theme = "dracula", builtinThemes["dracula"]
+		ts := newManageTestServer(t, "theme: b3tty-dark\n")
+		ts.ActiveTheme, ts.Theme = "b3tty-dark", builtinThemes["b3tty-dark"]
 		messages := watchBroadcasts(t, ts)
 
 		// What `b3tty theme import` and `b3tty theme set` do from another process.
@@ -391,8 +391,8 @@ func TestReloadThemesHandler(t *testing.T) {
 	})
 
 	t.Run("doesn't re-send an unchanged active theme", func(t *testing.T) {
-		ts := newManageTestServer(t, "theme: dracula\n")
-		ts.ActiveTheme, ts.Theme = "dracula", builtinThemes["dracula"]
+		ts := newManageTestServer(t, "theme: b3tty-dark\n")
+		ts.ActiveTheme, ts.Theme = "b3tty-dark", builtinThemes["b3tty-dark"]
 		messages := watchBroadcasts(t, ts)
 		require.Equal(t, http.StatusOK, postJSON(ts.reloadThemesHandler, "/reload-themes", "").Code)
 		assert.Equal(t, "themes", (<-messages)["type"])
@@ -400,10 +400,10 @@ func TestReloadThemesHandler(t *testing.T) {
 
 	t.Run("keeps the current state when the config file is broken", func(t *testing.T) {
 		ts := newManageTestServer(t, "theme: [\n")
-		ts.ActiveTheme = "dracula"
+		ts.ActiveTheme = "b3tty-dark"
 		w := postJSON(ts.reloadThemesHandler, "/reload-themes", "")
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
-		assert.Equal(t, "dracula", ts.ActiveTheme)
+		assert.Equal(t, "b3tty-dark", ts.ActiveTheme)
 	})
 }
 
