@@ -43,8 +43,9 @@ func requireSameOriginPost(w http.ResponseWriter, r *http.Request) bool {
 
 // importThemeHandler handles POST /import-theme. It accepts
 // { "path": "<file>", "replace": bool } and installs the .b3theme package at
-// path, a file on the server's filesystem, via ImportThemePackage. The theme is
-// installed but not activated or added to the Themes menu. A new version of an
+// path, a file on the server's filesystem, via ImportThemePackage. A newly
+// installed theme is added to the Themes menu (AddInstalledThemeToMenu) but not
+// activated; an upgrade keeps its menu place. A new version of an
 // installed theme replaces it only with "replace": true; without it the answer
 // is 409 with the reason, which names any change of author or repository, so
 // the caller can ask the user. Any other failure is 400 with the reason as a
@@ -86,11 +87,19 @@ func (ts *TerminalServer) importThemeHandler(w http.ResponseWriter, r *http.Requ
 	installed := result.Theme
 	name := installed.Manifest.Name
 	themeResp := themeConfigResponse{Theme: installed.Theme, HasBackgroundImage: installed.HasImage()}
+	// A new theme joins the Themes menu; the file is written before taking the lock.
+	addedToMenu, err := AddInstalledThemeToMenu(ts.ConfigFile, result)
+	if err != nil {
+		Warnf("%s %s: %v", r.Method, r.URL.Path, err)
+	}
 	ts.StateMu.Lock()
 	if ts.InstalledThemes == nil {
 		ts.InstalledThemes = make(map[string]InstalledTheme)
 	}
 	ts.InstalledThemes[name] = installed
+	if addedToMenu {
+		ts.addMenuTheme(name)
+	}
 	isActive := ts.ActiveTheme == name
 	if isActive {
 		ts.Theme = installed.Theme

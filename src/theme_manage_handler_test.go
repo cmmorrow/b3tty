@@ -131,7 +131,7 @@ func importBody(path string, replace bool) string {
 }
 
 func TestImportThemeHandler(t *testing.T) {
-	t.Run("installs a package without activating it or adding it to the menu", func(t *testing.T) {
+	t.Run("installs a package and adds it to the menu without activating it", func(t *testing.T) {
 		ts := newManageTestServer(t, "available-themes: [b3tty-dark]\n")
 		ts.AvailableThemes = []string{"b3tty-dark"}
 		messages := watchBroadcasts(t, ts)
@@ -143,15 +143,35 @@ func TestImportThemeHandler(t *testing.T) {
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 		assert.Equal(t, "midnight", resp.Name)
 		assert.True(t, resp.Theme.HasBackgroundImage)
-		assert.Equal(t, []string{"b3tty-dark"}, resp.ThemeNames)
+		assert.Equal(t, []string{"b3tty-dark", "midnight"}, resp.ThemeNames)
 		assert.False(t, resp.Upgraded)
 
 		assert.Contains(t, ts.InstalledThemes, "midnight")
 		assert.Equal(t, "", ts.ActiveTheme)
+		assert.Equal(t, []string{"b3tty-dark", "midnight"}, ts.AvailableThemes)
 		msg := nextBroadcast(t, messages, "themes")
 		assert.Contains(t, broadcastThemeNames(msg), "midnight")
-		assert.Equal(t, []string{"b3tty-dark"}, resp.ThemeNames)
 		assert.Contains(t, entryNames(resp.Themes), "midnight")
+
+		out := readTestConfig(t)
+		assert.Equal(t, []any{"b3tty-dark", "midnight"}, out["available-themes"])
+		assert.NotContains(t, out, "theme", "an installed theme is not activated")
+	})
+
+	t.Run("an upgrade or reinstall leaves a theme taken out of the menu out", func(t *testing.T) {
+		ts := newManageTestServer(t, "available-themes: [b3tty-dark]\n")
+		ts.AvailableThemes = []string{"b3tty-dark"}
+		v1 := writePackageFile(t, testPackage(t, "midnight", testThemeID, "1.0", false))
+		require.Equal(t, http.StatusOK, postJSON(ts.importThemeHandler, "/import-theme", importBody(v1, false)).Code)
+		require.NoError(t, RemoveThemeFromMenuInConfig(ts.ConfigFile, "midnight"))
+		ts.AvailableThemes = []string{"b3tty-dark"}
+
+		require.Equal(t, http.StatusOK, postJSON(ts.importThemeHandler, "/import-theme", importBody(v1, false)).Code)
+		v2 := writePackageFile(t, testPackage(t, "midnight", testThemeID, "2.0", false))
+		require.Equal(t, http.StatusOK, postJSON(ts.importThemeHandler, "/import-theme", importBody(v2, true)).Code)
+
+		assert.Equal(t, []string{"b3tty-dark"}, ts.AvailableThemes)
+		assert.Equal(t, []any{"b3tty-dark"}, readTestConfig(t)["available-themes"])
 	})
 
 	t.Run("asks before upgrading, then applies the new version to the active theme", func(t *testing.T) {

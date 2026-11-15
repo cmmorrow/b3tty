@@ -19,6 +19,7 @@ import {
     SPLIT_PANEL_STYLES,
     TEXT_STYLES,
 } from "../design.ts";
+import { listChanges, placeInOrder, prefersReducedMotion, slideIn, slideOut } from "./list-motion.ts";
 import { closeOverlay } from "./overlay.ts";
 import {
     type B3ttyPaletteCard,
@@ -134,7 +135,9 @@ const THEME_EDITOR_STYLES = `
         display: flex; flex-direction: column; gap: var(--space-xs);
         padding-right: var(--space-md);
     }
-    .list-section { display: flex; flex-direction: column; gap: var(--space-xs); }
+    /* flex-shrink: 0, or a section the list overflows collapses while list-motion.ts
+       animates it (its overflow: hidden drops the min-height that otherwise holds it). */
+    .list-section { display: flex; flex-direction: column; gap: var(--space-xs); flex-shrink: 0; }
     .list-section .section-title { margin: var(--space-xs) 0 0; }
     .list-footer {
         flex-shrink: 0; display: flex; gap: var(--space-xs);
@@ -147,6 +150,9 @@ const THEME_EDITOR_STYLES = `
     .list-footer .cancel-btn:disabled { background: var(--color-surface-2); }
     ${EDITOR_CARD_STYLES}
     ${PALETTE_CARD_VARS}
+    /* Each card sits in a slot without padding or border, which list-motion.ts can
+       shrink to zero height when the card enters or leaves the list. */
+    .card-slot { flex-shrink: 0; display: flex; flex-direction: column; }
     b3tty-palette-card { flex-shrink: 0; }
     .name-section {
         display: flex; flex-direction: column; gap: var(--space-2xs);
@@ -364,6 +370,12 @@ if (typeof HTMLElement !== "undefined") {
         #renderedPalettes: Record<string, Palette> | null = null;
         /** The palette and badge each card last showed, serialized, so setup() only runs when they change. */
         #cardPalettes = new WeakMap<HTMLElement, string>();
+        /** Each listed theme's card slot (the card's parent), by name; leaving slots are dropped. */
+        #slots = new Map<string, HTMLDivElement>();
+        /** Each shown list section and its card container, by source. */
+        #sections = new Map<ThemeSource, { section: HTMLDivElement; body: HTMLDivElement }>();
+        /** False until the list is first built after opening, so opening doesn't animate. */
+        #animateList = false;
 
         constructor() {
             super();
@@ -459,6 +471,7 @@ if (typeof HTMLElement !== "undefined") {
         }
 
         open(themes: ThemeEntry[], options: ThemeEditorOpenOptions = {}): void {
+            this.#animateList = false;
             this.#dispatch({ type: "opened" });
             this.setAttribute("open", "");
             void this.refresh(themes, options.select).then(() => {
@@ -522,9 +535,10 @@ if (typeof HTMLElement !== "undefined") {
                 // draft, and every other card its own palette.
                 const palette = cardPalette(state, name) ?? state.palettes[name];
                 const unsaved = themeHasUnsavedChanges(state, name);
-                const key = palette ? JSON.stringify([palette, unsaved]) : "";
+                const entry = themeEntry(state, name);
+                // The entry is part of the key, so an upgraded package's card shows its new details.
+                const key = palette ? JSON.stringify([palette, unsaved, entry]) : "";
                 if (palette && this.#cardPalettes.get(card) !== key) {
-                    const entry = themeEntry(state, name);
                     const details = entry ? cardDetails(entry) : undefined;
                     (card as unknown as B3ttyPaletteCard).setup(
                         name,
@@ -588,31 +602,81 @@ if (typeof HTMLElement !== "undefined") {
             const { entries, palettes } = this.#state;
             if (palettes === this.#renderedPalettes) return;
             this.#renderedPalettes = palettes;
-            this.#themeList.replaceChildren();
-            for (const { source, title } of THEME_SECTIONS) {
-                const inSection = entries.filter((e) => e.source === source && palettes[e.name]);
-                if (inSection.length === 0) continue;
-                const section = document.createElement("div");
-                section.className = "list-section";
-                const body = document.createElement("div");
-                body.className = "list-section";
-                for (const entry of inSection) {
-                    const palette = palettes[entry.name]!;
-                    // #render then sets up any card whose palette or badge differs.
-                    const card = createPaletteCard(entry, palette);
-                    this.#cardPalettes.set(card, JSON.stringify([palette, false]));
-                    body.appendChild(card);
-                }
-                const heading = document.createElement("div");
-                heading.className = "section-title";
-                heading.textContent = title;
-                section.append(heading, body);
-                this.#themeList.appendChild(section);
+            // Cards are kept by name, so only added and removed themes animate, and not
+            // in the list's first build after opening.
+            const animate = this.#animateList && this.hasAttribute("open") && !prefersReducedMotion();
+            const layout = THEME_SECTIONS.map(({ source, title }) => ({
+                source,
+                title,
+                entries: entries.filter((e) => e.source === source && palettes[e.name]),
+            })).filter((s) => s.entries.length > 0);
+            const { removed } = listChanges(
+                this.#slots.keys(),
+                layout.flatMap((s) => s.entries.map((e) => e.name))
+            );
+
+            const leavingSections = new Set<HTMLElement>();
+            for (const [source, { section }] of this.#sections) {
+                if (layout.some((s) => s.source === source)) continue;
+                this.#sections.delete(source);
+                leavingSections.add(section);
+                if (animate) slideOut(section);
+                else section.remove();
             }
+            for (const name of removed) {
+                const slot = this.#slots.get(name)!;
+                this.#slots.delete(name);
+                // A card in a leaving section goes with it.
+                if (leavingSections.has(slot.parentElement?.parentElement as HTMLElement)) continue;
+                if (animate) slideOut(slot);
+                else slot.remove();
+            }
+
+            const entering: HTMLElement[] = [];
+            const placedSections: HTMLElement[] = [];
+            for (const { source, title, entries: inSection } of layout) {
+                let parts = this.#sections.get(source);
+                const newSection = !parts;
+                if (!parts) {
+                    const section = document.createElement("div");
+                    section.className = "list-section";
+                    const heading = document.createElement("div");
+                    heading.className = "section-title";
+                    heading.textContent = title;
+                    const body = document.createElement("div");
+                    body.className = "list-section";
+                    section.append(heading, body);
+                    parts = { section, body };
+                    this.#sections.set(source, parts);
+                    // A new section's cards arrive with it.
+                    entering.push(section);
+                }
+                const slots = inSection.map((entry) => {
+                    let slot = this.#slots.get(entry.name);
+                    if (!slot) {
+                        const palette = palettes[entry.name]!;
+                        // #render then sets up any card whose palette, badge, or details differ.
+                        const card = createPaletteCard(entry, palette);
+                        this.#cardPalettes.set(card, JSON.stringify([palette, false, entry]));
+                        slot = document.createElement("div");
+                        slot.className = "card-slot";
+                        slot.appendChild(card);
+                        this.#slots.set(entry.name, slot);
+                        if (!newSection) entering.push(slot);
+                    }
+                    return slot;
+                });
+                placeInOrder(parts.body, slots);
+                placedSections.push(parts.section);
+            }
+            placeInOrder(this.#themeList, placedSections);
+
+            if (animate) entering.forEach(slideIn);
+            if (layout.length > 0) this.#animateList = true;
         }
 
         #cards(): HTMLElement[] {
-            return Array.from(this.#themeList.querySelectorAll<HTMLElement>("b3tty-palette-card"));
+            return Array.from(this.#slots.values(), (slot) => slot.firstElementChild as HTMLElement);
         }
 
         #cardFor(name: string): HTMLElement | undefined {

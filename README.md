@@ -170,7 +170,7 @@ The theme to fall back on when `theme` is missing or names a theme that no longe
 
 #### `available-themes`
 
-The list of themes shown in the menu bar's **Themes** menu and as `theme:<name>` commands in the command palette, in the order given. Entries can be built-in, installed, or your own themes. Picking a theme in the Theme Selector, creating one in the theme editor, or running `b3tty theme set` adds it to the end of the list; to remove or reorder entries, edit the list. Names that don't match any theme are skipped with a warning.
+The list of themes shown in the menu bar's **Themes** menu and as `theme:<name>` commands in the command palette, in the order given. Entries can be built-in, installed, or your own themes. Picking a theme in the Theme Selector, creating or copying one in the theme editor, installing a theme package, or running `b3tty theme set` adds it to the end of the list; to remove or reorder entries, edit the list. Names that don't match any theme are skipped with a warning.
 
 If the key is missing entirely, as in config files from earlier versions, the menu lists every name under `themes`, sorted. Writing the list yourself takes over from that.
 
@@ -387,9 +387,9 @@ b3tty theme import ~/Downloads/midnight.b3theme
 b3tty theme set midnight
 ```
 
-Either way the theme is installed but not applied; select it in the Theme Selector, or with `b3tty theme set`, to use it.
+Either way the theme is installed and added to the end of the Themes menu, but not applied; pick it from the Themes menu or the Theme Selector, or run `b3tty theme set`, to use it.
 
-Installed themes appear in the Theme Selector and can be added to the Themes menu like any other theme, but they can't be edited or exported: an installed theme stays exactly as its author published it. To change one, copy it into a theme of your own with the Theme Editor's **Copy…** or the CLI, then edit and export the copy (it gets its own package ID, so it's never mistaken for the original):
+Installed themes appear in the Theme Selector, and can be removed from or re-added to the Themes menu like any other theme, but they can't be edited or exported: an installed theme stays exactly as its author published it. To change one, copy it into a theme of your own with the Theme Editor's **Copy…** or the CLI, then edit and export the copy (it gets its own package ID, so it's never mistaken for the original):
 
 ```bash
 b3tty theme copy midnight my-midnight
@@ -405,7 +405,7 @@ A package is installed only if it is a valid `.b3theme` file of at most 20 MB (a
 
 ### Upgrades
 
-Importing a package with the same package ID as an installed theme replaces it with the new version, keeping its place in the Themes menu, and keeping it active if it was. Since anyone can copy a package ID, b3tty asks before replacing, and says so when the new version has a different author or repository than the installed one: the import dialog shows the details and turns **Import** into **Replace**, and the CLI asks unless you pass `--yes`. An upgrade can't rename a theme: a package with an installed theme's ID but a different name is rejected. Importing the exact package that's already installed does nothing.
+Importing a package with the same package ID as an installed theme replaces it with the new version, keeping its place in the Themes menu (or its absence, if you took it out), and keeping it active if it was. Since anyone can copy a package ID, b3tty asks before replacing, and says so when the new version has a different author or repository than the installed one: the import dialog shows the details and turns **Import** into **Replace**, and the CLI asks unless you pass `--yes`. An upgrade can't rename a theme: a package with an installed theme's ID but a different name is rejected. Importing the exact package that's already installed does nothing.
 
 ### Deleting
 
