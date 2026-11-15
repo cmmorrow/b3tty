@@ -29,7 +29,8 @@ go test -v ./src -run TestName   # single Go test
   - handlers: `display_handler.go` (`/`, `/background`, auth helpers), `terminal_handler.go` (`/ws`), `theme_handler.go`, `theme_manage_handler.go` (import/copy/delete/reload), `profile_handler.go`, `settings_handler.go` (and WebSocket broadcasts), `setup_handler.go` (first-run page)
   - themes: `theme_catalog.go` (lookup across sources, `LoadThemeState`), `theme_package.go` (`.b3theme` export/import), `plugin_store.go` (installed packages on disk), `theme_ops.go` (operations shared by the handlers and the CLI)
   - `config.go` (typed config + all config-writing functions), `models.go` (data types), `defaults.go` (constants), `utils.go`, `lock.go`, `logger.go`, `asset_compression.go`
-  - `templates/` (`terminal.tmpl`, `setup.tmpl`), `default_themes/*.json` (built-in themes), `assets/` (hand-authored static files, committed), `dist/` (bun output, gitignored)
+  - `templates/` (`terminal.tmpl`, `setup.tmpl`), `default_themes/*.json` (the two built-in themes, b3tty-dark and b3tty-light, which the setup page offers), `assets/` (hand-authored static files, committed), `dist/` (bun output, gitignored)
+- `scripts/export-legacy-themes.sh` — exports the themes removed from the built-ins in 1.14.0 as `.b3theme` packages (built-ins can't be exported, so it re-adds them as user themes in a scratch HOME first)
 - `src/client/` — `terminal.ts` (entry: xterm setup, WebSocket, event wiring), `api.ts` (all HTTP calls), `types.ts`, `validators.ts`, `design.ts` (design tokens and shared CSS), `command-search.ts`, `components/` (web components), `design-system/` (design-system artifact build)
 
 ## Server

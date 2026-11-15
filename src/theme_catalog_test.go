@@ -10,13 +10,13 @@ import (
 func TestResolveTheme(t *testing.T) {
 	ts := newTestTerminalServer()
 	ts.Themes["mine"] = Theme{Foreground: "#123456"}
-	ts.Themes["dracula"] = Theme{Foreground: "#000000"} // a shadowing copy
+	ts.Themes["b3tty-dark"] = Theme{Foreground: "#000000"} // a shadowing copy
 
 	t.Run("finds a built-in theme", func(t *testing.T) {
-		got, src, ok := ts.resolveTheme("one-light")
+		got, src, ok := ts.resolveTheme("b3tty-light")
 		require.True(t, ok)
 		assert.Equal(t, ThemeSourceBuiltin, src)
-		assert.Equal(t, builtinThemes["one-light"], got)
+		assert.Equal(t, builtinThemes["b3tty-light"], got)
 	})
 
 	t.Run("finds a user theme", func(t *testing.T) {
@@ -27,10 +27,10 @@ func TestResolveTheme(t *testing.T) {
 	})
 
 	t.Run("a built-in wins over a user theme of the same name", func(t *testing.T) {
-		got, src, ok := ts.resolveTheme("dracula")
+		got, src, ok := ts.resolveTheme("b3tty-dark")
 		require.True(t, ok)
 		assert.Equal(t, ThemeSourceBuiltin, src)
-		assert.Equal(t, builtinThemes["dracula"], got)
+		assert.Equal(t, builtinThemes["b3tty-dark"], got)
 	})
 
 	t.Run("reports an unknown name", func(t *testing.T) {
@@ -63,11 +63,11 @@ func TestHasBackgroundImage(t *testing.T) {
 func TestFallBackToDefaultTheme(t *testing.T) {
 	ts := newTestTerminalServer()
 	ts.ActiveTheme, ts.Theme = "gone", Theme{Foreground: "#123456"}
-	ts.DefaultTheme = "one-light"
+	ts.DefaultTheme = "b3tty-light"
 	name, resp := ts.fallBackToDefaultTheme()
-	assert.Equal(t, "one-light", name)
-	assert.Equal(t, builtinThemes["one-light"], resp.Theme)
-	assert.Equal(t, "one-light", ts.ActiveTheme)
+	assert.Equal(t, "b3tty-light", name)
+	assert.Equal(t, builtinThemes["b3tty-light"], resp.Theme)
+	assert.Equal(t, "b3tty-light", ts.ActiveTheme)
 
 	ts.DefaultTheme = "also-gone"
 	name, resp = ts.fallBackToDefaultTheme()
@@ -79,8 +79,8 @@ func TestFallBackToDefaultTheme(t *testing.T) {
 func TestThemeNameLists(t *testing.T) {
 	ts := newTestTerminalServer()
 	ts.Themes["zzz-mine"] = Theme{}
-	ts.Themes["dracula"] = Theme{}
-	ts.AvailableThemes = []string{"zzz-mine", "dracula"}
+	ts.Themes["b3tty-dark"] = Theme{}
+	ts.AvailableThemes = []string{"zzz-mine", "b3tty-dark"}
 
 	entryNames := func(entries []ThemeEntry) []string {
 		names := make([]string, len(entries))
@@ -104,27 +104,27 @@ func TestThemeNameLists(t *testing.T) {
 		assert.IsIncreasing(t, names)
 		assert.Len(t, names, len(builtinThemes)+1)
 		assert.Equal(t, ThemeEntry{Name: "zzz-mine", Source: ThemeSourceUser, InMenu: true}, entry("zzz-mine"))
-		assert.Equal(t, ThemeEntry{Name: "dracula", Source: ThemeSourceBuiltin, InMenu: true}, entry("dracula"),
+		assert.Equal(t, ThemeEntry{Name: "b3tty-dark", Source: ThemeSourceBuiltin, InMenu: true}, entry("b3tty-dark"),
 			"the user copy of a built-in is shadowed")
-		assert.Equal(t, ThemeEntry{Name: "one-light", Source: ThemeSourceBuiltin}, entry("one-light"))
+		assert.Equal(t, ThemeEntry{Name: "b3tty-light", Source: ThemeSourceBuiltin}, entry("b3tty-light"))
 	})
 
 	t.Run("menuThemeNames is a copy in menu order", func(t *testing.T) {
 		names := ts.menuThemeNames()
-		assert.Equal(t, []string{"zzz-mine", "dracula"}, names)
+		assert.Equal(t, []string{"zzz-mine", "b3tty-dark"}, names)
 		names[0] = "changed"
 		assert.Equal(t, "zzz-mine", ts.AvailableThemes[0])
 	})
 
 	t.Run("addMenuTheme appends once", func(t *testing.T) {
-		ts.addMenuTheme("one-light")
-		ts.addMenuTheme("dracula")
-		assert.Equal(t, []string{"zzz-mine", "dracula", "one-light"}, ts.AvailableThemes)
+		ts.addMenuTheme("b3tty-light")
+		ts.addMenuTheme("b3tty-dark")
+		assert.Equal(t, []string{"zzz-mine", "b3tty-dark", "b3tty-light"}, ts.AvailableThemes)
 	})
 
 	t.Run("removeMenuTheme removes", func(t *testing.T) {
-		ts.removeMenuTheme("dracula")
-		assert.Equal(t, []string{"zzz-mine", "one-light"}, ts.AvailableThemes)
+		ts.removeMenuTheme("b3tty-dark")
+		assert.Equal(t, []string{"zzz-mine", "b3tty-light"}, ts.AvailableThemes)
 	})
 
 	t.Run("installed entries carry their package details", func(t *testing.T) {
@@ -159,7 +159,7 @@ func TestLoadThemeState(t *testing.T) {
 	t.Run("resolves installed themes, which shadow user themes", func(t *testing.T) {
 		installed := map[string]InstalledTheme{
 			"midnight": {Theme: Theme{Foreground: "#abcdef"}},
-			"dracula":  {Theme: Theme{Foreground: "#000000"}},
+			"b3tty-dark":  {Theme: Theme{Foreground: "#000000"}},
 		}
 		state, logged := loadWith(t, `
 theme: midnight
@@ -175,27 +175,27 @@ themes:
 		assert.Equal(t, []string{"midnight", "mine"}, state.AvailableThemes)
 		assert.NotContains(t, state.Themes, "midnight")
 		assert.Contains(t, state.Installed, "midnight")
-		assert.NotContains(t, state.Installed, "dracula", "a built-in hides an installed theme")
+		assert.NotContains(t, state.Installed, "b3tty-dark", "a built-in hides an installed theme")
 		assert.Contains(t, logged, "themes.midnight is ignored: an installed theme")
-		assert.Contains(t, logged, `installed theme "dracula" is hidden`)
+		assert.Contains(t, logged, `installed theme "b3tty-dark" is hidden`)
 	})
 
 	t.Run("resolves the active theme from either source", func(t *testing.T) {
 		state, logged := load(t, `
 theme: mine
-available-themes: [dracula, mine]
+available-themes: [b3tty-dark, mine]
 themes:
   mine:
     foreground: "#123456"
 `)
 		assert.Equal(t, "mine", state.ActiveName)
 		assert.Equal(t, "#123456", state.Active.Foreground)
-		assert.Equal(t, []string{"dracula", "mine"}, state.AvailableThemes)
+		assert.Equal(t, []string{"b3tty-dark", "mine"}, state.AvailableThemes)
 		assert.Empty(t, logged)
 
-		state, _ = load(t, "theme: dracula\n")
-		assert.Equal(t, "dracula", state.ActiveName)
-		assert.Equal(t, builtinThemes["dracula"], state.Active)
+		state, _ = load(t, "theme: b3tty-dark\n")
+		assert.Equal(t, "b3tty-dark", state.ActiveName)
+		assert.Equal(t, builtinThemes["b3tty-dark"], state.Active)
 	})
 
 	t.Run("seeds the menu from the user themes when available-themes is absent", func(t *testing.T) {
@@ -221,27 +221,27 @@ themes:
 
 	t.Run("drops a user theme a built-in shadows, with a warning", func(t *testing.T) {
 		state, logged := load(t, `
-theme: dracula
+theme: b3tty-dark
 themes:
-  dracula:
+  b3tty-dark:
     foreground: "#000000"
 `)
-		assert.NotContains(t, state.Themes, "dracula")
-		assert.Equal(t, builtinThemes["dracula"], state.Active, "the built-in wins")
-		assert.Equal(t, []string{"dracula"}, state.AvailableThemes, "the menu keeps the name, now meaning the built-in")
-		assert.Contains(t, logged, "themes.dracula is ignored")
+		assert.NotContains(t, state.Themes, "b3tty-dark")
+		assert.Equal(t, builtinThemes["b3tty-dark"], state.Active, "the built-in wins")
+		assert.Equal(t, []string{"b3tty-dark"}, state.AvailableThemes, "the menu keeps the name, now meaning the built-in")
+		assert.Contains(t, logged, "themes.b3tty-dark is ignored")
 	})
 
 	t.Run("skips menu entries that name no theme, and duplicates", func(t *testing.T) {
-		state, logged := load(t, "available-themes: [dracula, gone, dracula]\n")
-		assert.Equal(t, []string{"dracula"}, state.AvailableThemes)
+		state, logged := load(t, "available-themes: [b3tty-dark, gone, b3tty-dark]\n")
+		assert.Equal(t, []string{"b3tty-dark"}, state.AvailableThemes)
 		assert.Contains(t, logged, `skipping "gone"`)
 	})
 
 	t.Run("falls back to default-theme, then to no theme", func(t *testing.T) {
-		state, logged := load(t, "theme: gone\ndefault-theme: one-light\n")
-		assert.Equal(t, "one-light", state.ActiveName)
-		assert.Equal(t, "one-light", state.DefaultTheme)
+		state, logged := load(t, "theme: gone\ndefault-theme: b3tty-light\n")
+		assert.Equal(t, "b3tty-light", state.ActiveName)
+		assert.Equal(t, "b3tty-light", state.DefaultTheme)
 		assert.Contains(t, logged, `theme: "gone"`)
 
 		state, logged = load(t, "theme: gone\ndefault-theme: also-gone\n")

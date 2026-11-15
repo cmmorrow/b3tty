@@ -1498,7 +1498,7 @@ func TestEditThemeHandler(t *testing.T) {
 		ts.Themes = map[string]Theme{
 			"alpha": {Foreground: "#111"},
 		}
-		ts.AvailableThemes = []string{"dracula", "alpha"}
+		ts.AvailableThemes = []string{"b3tty-dark", "alpha"}
 		body := strings.NewReader(editBody("zebra", "#fff", "#000"))
 		req := httptest.NewRequest(http.MethodPost, "/edit-theme", body)
 		req.Header.Set("Content-Type", "application/json")
@@ -1507,7 +1507,7 @@ func TestEditThemeHandler(t *testing.T) {
 
 		var resp themeConfigResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		require.Equal(t, []string{"dracula", "alpha", "zebra"}, resp.ThemeNames)
+		require.Equal(t, []string{"b3tty-dark", "alpha", "zebra"}, resp.ThemeNames)
 	})
 
 	t.Run("POST response contains activated theme colors", func(t *testing.T) {
@@ -1709,9 +1709,9 @@ func TestExportThemeHandler(t *testing.T) {
 
 	t.Run("built-in theme returns 400 even when added to ts.Themes", func(t *testing.T) {
 		ts := newTestTerminalServer()
-		ts.Themes["dracula"] = builtinThemes["dracula"]
-		out := filepath.Join(t.TempDir(), "dracula.b3theme")
-		w, _ := post(ts, exportBody("dracula", out), nil)
+		ts.Themes["b3tty-dark"] = builtinThemes["b3tty-dark"]
+		out := filepath.Join(t.TempDir(), "b3tty-dark.b3theme")
+		w, _ := post(ts, exportBody("b3tty-dark", out), nil)
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Contains(t, w.Body.String(), "built-in theme")
 		assert.NoFileExists(t, out)
@@ -1806,7 +1806,7 @@ func TestThemePackageHandler(t *testing.T) {
 
 	t.Run("missing or built-in name returns 400", func(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, get(newTestTerminalServer(), "").Code)
-		assert.Equal(t, http.StatusBadRequest, get(newTestTerminalServer(), "dracula").Code)
+		assert.Equal(t, http.StatusBadRequest, get(newTestTerminalServer(), "b3tty-dark").Code)
 	})
 
 	t.Run("returns {} for a theme never exported", func(t *testing.T) {
@@ -2039,7 +2039,7 @@ func TestBackgroundHandler(t *testing.T) {
 	})
 
 	t.Run("theme param naming an unknown theme returns 404", func(t *testing.T) {
-		w, _ := serveBackground(newTestTerminalServer(), writeTempFile(t, "active.png", pngMagic), authQuery+"&theme=dracula")
+		w, _ := serveBackground(newTestTerminalServer(), writeTempFile(t, "active.png", pngMagic), authQuery+"&theme=b3tty-dark")
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 
@@ -2219,32 +2219,32 @@ func TestAddThemeHandler(t *testing.T) {
 		ts.Themes["mine"] = Theme{Foreground: "#123456"}
 		ts.AvailableThemes = []string{"mine"}
 
-		w := post(ts, `{"theme":"dracula"}`)
+		w := post(ts, `{"theme":"b3tty-dark"}`)
 		require.Equal(t, http.StatusOK, w.Code)
 		var resp themeConfigResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		assert.Equal(t, builtinThemes["dracula"].Foreground, resp.Foreground)
-		assert.Equal(t, []string{"mine", "dracula"}, resp.ThemeNames)
-		assert.Contains(t, resp.Themes, ThemeEntry{Name: "dracula", Source: ThemeSourceBuiltin, InMenu: true})
+		assert.Equal(t, builtinThemes["b3tty-dark"].Foreground, resp.Foreground)
+		assert.Equal(t, []string{"mine", "b3tty-dark"}, resp.ThemeNames)
+		assert.Contains(t, resp.Themes, ThemeEntry{Name: "b3tty-dark", Source: ThemeSourceBuiltin, InMenu: true})
 		assert.Contains(t, resp.Themes, ThemeEntry{Name: "mine", Source: ThemeSourceUser, InMenu: true})
 
-		assert.Equal(t, "dracula", ts.ActiveTheme)
-		assert.Equal(t, builtinThemes["dracula"], ts.Theme)
-		assert.NotContains(t, ts.Themes, "dracula")
+		assert.Equal(t, "b3tty-dark", ts.ActiveTheme)
+		assert.Equal(t, builtinThemes["b3tty-dark"], ts.Theme)
+		assert.NotContains(t, ts.Themes, "b3tty-dark")
 
 		out := readTestConfig(t)
-		assert.Equal(t, "dracula", out["theme"])
-		assert.Equal(t, []any{"mine", "dracula"}, out["available-themes"])
-		assert.NotContains(t, out["themes"], "dracula")
+		assert.Equal(t, "b3tty-dark", out["theme"])
+		assert.Equal(t, []any{"mine", "b3tty-dark"}, out["available-themes"])
+		assert.NotContains(t, out["themes"], "b3tty-dark")
 	})
 
 	t.Run("a theme already in the menu isn't added twice", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		ts := newTestTerminalServer()
-		ts.AvailableThemes = []string{"dracula", "one-light"}
-		w := post(ts, `{"theme":"dracula"}`)
+		ts.AvailableThemes = []string{"b3tty-dark", "b3tty-light"}
+		w := post(ts, `{"theme":"b3tty-dark"}`)
 		require.Equal(t, http.StatusOK, w.Code)
-		assert.Equal(t, []string{"dracula", "one-light"}, ts.AvailableThemes)
+		assert.Equal(t, []string{"b3tty-dark", "b3tty-light"}, ts.AvailableThemes)
 	})
 
 	t.Run("unknown theme returns 404 and changes nothing", func(t *testing.T) {
@@ -2264,22 +2264,22 @@ func TestAddThemeHandler(t *testing.T) {
 func TestThemeConfigHandlerAddsToMenu(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	ts := newTestTerminalServer()
-	req := httptest.NewRequest(http.MethodPost, "/theme-config?name=one-light", nil)
+	req := httptest.NewRequest(http.MethodPost, "/theme-config?name=b3tty-light", nil)
 	w := httptest.NewRecorder()
 	captureLog(func() { ts.themeConfigHandler(w, req) })
 	require.Equal(t, http.StatusOK, w.Code)
 
-	assert.Equal(t, []string{"one-light"}, ts.AvailableThemes)
+	assert.Equal(t, []string{"b3tty-light"}, ts.AvailableThemes)
 	out := readTestConfig(t)
-	assert.Equal(t, "one-light", out["theme"])
-	assert.Equal(t, []any{"one-light"}, out["available-themes"])
+	assert.Equal(t, "b3tty-light", out["theme"])
+	assert.Equal(t, []any{"b3tty-light"}, out["available-themes"])
 	assert.NotContains(t, out, "themes", "a built-in's colors are never written")
 }
 
 func TestEditThemeHandlerRejectsBuiltinName(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	ts := newTestTerminalServer()
-	body := strings.NewReader(`{"name":"dracula","theme":{"foreground":"#fff","background":"#000"}}`)
+	body := strings.NewReader(`{"name":"b3tty-dark","theme":{"foreground":"#fff","background":"#000"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/edit-theme", body)
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -2287,7 +2287,7 @@ func TestEditThemeHandlerRejectsBuiltinName(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "built-in theme")
-	assert.NotContains(t, ts.Themes, "dracula")
+	assert.NotContains(t, ts.Themes, "b3tty-dark")
 	assert.Empty(t, ts.AvailableThemes)
 }
 

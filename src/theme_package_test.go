@@ -283,8 +283,9 @@ func TestExportUserTheme(t *testing.T) {
 }
 
 func TestIsBuiltinThemeName(t *testing.T) {
-	assert.True(t, IsBuiltinThemeName("dracula"))
 	assert.True(t, IsBuiltinThemeName("b3tty-dark"))
+	assert.True(t, IsBuiltinThemeName("b3tty-light"))
+	assert.False(t, IsBuiltinThemeName("dracula"), "removed in 1.14.0")
 	assert.False(t, IsBuiltinThemeName("my-theme"))
 	assert.False(t, IsBuiltinThemeName(""))
 }

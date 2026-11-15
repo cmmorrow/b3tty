@@ -63,7 +63,7 @@ func TestPluginStoreInstall(t *testing.T) {
 
 	t.Run("rejects name clashes", func(t *testing.T) {
 		store := newTestStore(t)
-		_, err := store.Install(testPackage(t, "dracula", testThemeID, "1.0", false), noUserThemes, false)
+		_, err := store.Install(testPackage(t, "b3tty-dark", testThemeID, "1.0", false), noUserThemes, false)
 		require.ErrorContains(t, err, "built-in theme")
 
 		_, err = store.Install(testPackage(t, "mine", testThemeID, "1.0", false), func(n string) bool { return n == "mine" }, false)

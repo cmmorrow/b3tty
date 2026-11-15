@@ -16,30 +16,6 @@ var defaultDarkThemeJSON []byte
 //go:embed default_themes/b3tty_light.json
 var defaultLightThemeJSON []byte
 
-//go:embed default_themes/catppuccin-mocha.json
-var catppuccinMochaThemeJSON []byte
-
-//go:embed default_themes/catppuccin-latte.json
-var catppuccinLatteThemeJSON []byte
-
-//go:embed default_themes/solarized-dark.json
-var solarizedDarkThemeJSON []byte
-
-//go:embed default_themes/solarized-light.json
-var solarizedLightThemeJSON []byte
-
-//go:embed default_themes/tokyo-night.json
-var tokyoNightThemeJSON []byte
-
-//go:embed default_themes/dracula.json
-var draculaThemeJSON []byte
-
-//go:embed default_themes/one-light.json
-var oneLightThemeJSON []byte
-
-//go:embed default_themes/gruvbox-light.json
-var gruvboxLightThemeJSON []byte
-
 // defaultDarkTheme and defaultLightTheme are the themes offered by the
 // first-run setup page; they are also entries in builtinThemes below.
 var defaultDarkTheme = mustUnmarshalTheme(defaultDarkThemeJSON)
@@ -49,16 +25,8 @@ var defaultLightTheme = mustUnmarshalTheme(defaultLightThemeJSON)
 // never copied into ts.Themes or the config file; every handler finds them
 // through resolveTheme.
 var builtinThemes = map[string]Theme{
-	"b3tty-dark":       defaultDarkTheme,
-	"b3tty-light":      defaultLightTheme,
-	"catppuccin-mocha": mustUnmarshalTheme(catppuccinMochaThemeJSON),
-	"catppuccin-latte": mustUnmarshalTheme(catppuccinLatteThemeJSON),
-	"solarized-dark":   mustUnmarshalTheme(solarizedDarkThemeJSON),
-	"solarized-light":  mustUnmarshalTheme(solarizedLightThemeJSON),
-	"tokyo-night":      mustUnmarshalTheme(tokyoNightThemeJSON),
-	"dracula":          mustUnmarshalTheme(draculaThemeJSON),
-	"one-light":        mustUnmarshalTheme(oneLightThemeJSON),
-	"gruvbox-light":    mustUnmarshalTheme(gruvboxLightThemeJSON),
+	"b3tty-dark":  defaultDarkTheme,
+	"b3tty-light": defaultLightTheme,
 }
 
 // GetBuiltinThemeNames returns the sorted names of all built-in themes.

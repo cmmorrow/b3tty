@@ -101,10 +101,10 @@ profiles:
     title: "Project Development"
     shell: "/bin/fish"
 theme: "my-theme"
-default-theme: "dracula"
+default-theme: "b3tty-dark"
 available-themes:
   - "my-theme"
-  - "dracula"
+  - "b3tty-dark"
 themes:
   my-theme:
     black: "#14181d"
@@ -274,7 +274,7 @@ Each command's label starts with its kind, so commands that open a dialog are ea
 - `select:theme`, `edit:theme`, `edit:profile`, `b3tty:settings`, and `b3tty:about` open the same dialogs as the menu bar
 - `export:theme` exports the active theme as a `.b3theme` package (see [Sharing themes](#sharing-themes)), and `import:theme` opens the theme import dialog
 - `copy:theme` and `delete:theme` open the Theme Editor on the active theme and go straight to its **Copy…** or **Delete…** (see [Theme Editor](#theme-editor))
-- `theme:<name>` (for example `theme:solarized-dark`), one per theme in the Themes menu, switches to that theme
+- `theme:<name>` (for example `theme:b3tty-light`), one per theme in the Themes menu, switches to that theme
 - `profile:<name>`, one per non-default profile, opens that profile in a new browser tab
 
 Themes and profiles added while the page is open appear in the palette right away. With an empty search, recently run commands are listed first; recents are remembered in the browser across page reloads.
@@ -306,20 +306,14 @@ Click **Cancel** at any time to close the overlay without making any changes.
 
 ### Built-in themes
 
-b3tty ships with the following built-in themes, all available in the Theme Selector without any config file changes:
+b3tty ships with two built-in themes, both available in the Theme Selector without any config file changes:
 
 | Theme | Style |
 |---|---|
 | b3tty-dark | Dark (default dark theme) |
 | b3tty-light | Light (default light theme) |
-| Catppuccin Mocha | Dark |
-| Catppuccin Latte | Light |
-| Dracula | Dark |
-| Tokyo Night | Dark |
-| Solarized Dark | Dark |
-| Solarized Light | Light |
-| One Light | Light |
-| Gruvbox Light | Light |
+
+Before 1.14.0, b3tty also had Catppuccin Mocha, Catppuccin Latte, Dracula, Tokyo Night, Solarized Dark, Solarized Light, One Light, and Gruvbox Light built in. They are now `.b3theme` packages you can install like any other theme (see [Installing themes](#installing-themes)). If your config still names one of them in `theme`, `default-theme`, or `available-themes` and you don't install it, b3tty warns about the unknown name and falls back as it would for any missing theme. The packages are made by `scripts/export-legacy-themes.sh`.
 
 Installed themes and user-defined themes from the `themes` section of the config file also appear in the Theme Selector alongside the built-in ones.
 
