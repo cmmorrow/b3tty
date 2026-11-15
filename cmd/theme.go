@@ -103,7 +103,8 @@ var themeImportCmd = &cobra.Command{
 matches what was installed. Installed themes can't be edited or exported; copy
 one with 'b3tty theme copy' to make your own version.
 
-The theme's name must not match any other theme's. A package that is a new
+A newly installed theme is added to the end of the Themes menu but not
+activated. The theme's name must not match any other theme's. A package that is a new
 version of an installed theme (it has the same package id) replaces it after
 you confirm, keeping its place in the Themes menu; --yes confirms without
 asking. The confirmation says when the new version has a different author or
@@ -134,6 +135,9 @@ A running b3tty picks the theme up right away.`,
 			cmdLog.Fatalf("failed to import theme: %v", err)
 		}
 
+		if _, err := src.AddInstalledThemeToMenu(resolveConfigPath(), result); err != nil {
+			cmdLog.Warnf("%v", err)
+		}
 		m := result.Theme.Manifest
 		switch {
 		case result.Unchanged:

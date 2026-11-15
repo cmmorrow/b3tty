@@ -45,6 +45,22 @@ func ImportThemePackage(store *PluginStore, path string, isUserTheme func(string
 	return store.Install(data, isUserTheme, replace)
 }
 
+// AddInstalledThemeToMenu adds a theme that result shows was installed for the
+// first time to the Themes menu in the config file at configPath, without
+// activating it, and reports whether it did. An upgrade or a reinstall of the
+// same package leaves the menu alone, so a theme the user took out of the menu
+// stays out. Callers treat an error as a warning: the theme is installed
+// either way.
+func AddInstalledThemeToMenu(configPath string, result InstallResult) (bool, error) {
+	if result.Upgraded || result.Unchanged {
+		return false, nil
+	}
+	if err := AddThemeToMenuInConfig(configPath, result.Theme.Manifest.Name); err != nil {
+		return false, fmt.Errorf("adding %q to the Themes menu: %w", result.Theme.Manifest.Name, err)
+	}
+	return true, nil
+}
+
 // CopyTheme saves source, the definition of a theme of any source, as the new
 // user theme newName in the config file at configPath, and adds it to the
 // Themes menu without activating it. The copy is a new theme: it has no

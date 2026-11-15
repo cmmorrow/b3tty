@@ -335,6 +335,27 @@ func DeleteThemeFromConfig(configPath string, themeName string) error {
 	return writeConfigMap(configPath, cfg, "DeleteThemeFromConfig")
 }
 
+// AddThemeToMenuInConfig adds themeName to the end of the Themes menu
+// (available-themes) in the config file at configPath unless it is already
+// there, leaving everything else as it is. It is how a newly installed theme
+// joins the menu.
+func AddThemeToMenuInConfig(configPath string, themeName string) error {
+	configFileMu.Lock()
+	defer configFileMu.Unlock()
+
+	configPath, err := resolveConfigPath(configPath)
+	if err != nil {
+		return err
+	}
+	cfg, err := loadConfigMap(configPath, "AddThemeToMenuInConfig")
+	if err != nil {
+		return err
+	}
+	appendAvailableTheme(cfg, themeName)
+
+	return writeConfigMap(configPath, cfg, "AddThemeToMenuInConfig")
+}
+
 // RemoveThemeFromMenuInConfig removes themeName from the Themes menu
 // (available-themes) in the config file at configPath, leaving everything else
 // as it is. It is how a built-in theme is "deleted".

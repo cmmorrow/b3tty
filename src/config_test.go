@@ -754,6 +754,25 @@ themes:
 	})
 }
 
+func TestAddThemeToMenuInConfig(t *testing.T) {
+	t.Run("appends the name once, leaving the active theme alone", func(t *testing.T) {
+		readConfig, cfgPath := setupUpdateThemeTest(t)
+		writeInitialConfig(t, "theme: b3tty-dark\navailable-themes: [b3tty-dark]\n")
+		require.NoError(t, AddThemeToMenuInConfig(cfgPath, "midnight"))
+		require.NoError(t, AddThemeToMenuInConfig(cfgPath, "midnight"))
+		out := readConfig()
+		assert.Equal(t, []any{"b3tty-dark", "midnight"}, out["available-themes"])
+		assert.Equal(t, "b3tty-dark", out["theme"])
+	})
+
+	t.Run("seeds a missing menu from the user themes first", func(t *testing.T) {
+		readConfig, cfgPath := setupUpdateThemeTest(t)
+		writeInitialConfig(t, "themes:\n  mine:\n    foreground: \"#ffffff\"\n")
+		require.NoError(t, AddThemeToMenuInConfig(cfgPath, "midnight"))
+		assert.Equal(t, []any{"mine", "midnight"}, readConfig()["available-themes"])
+	})
+}
+
 func TestRemoveThemeFromMenuInConfig(t *testing.T) {
 	readConfig, cfgPath := setupUpdateThemeTest(t)
 	writeInitialConfig(t, "theme: dracula\ndefault-theme: dracula\navailable-themes: [dracula, one-light]\n")
