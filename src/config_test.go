@@ -265,6 +265,20 @@ terminal:
 		assert.True(t, cfg.Terminal.Ligatures)
 	})
 
+	t.Run("translucent-shades keeps its false seed unless the file turns it on", func(t *testing.T) {
+		absent := writeTempConfig(t, "terminal:\n  font-size: 16\n")
+		cfg := Config{Terminal: TerminalClient{TranslucentShades: DEFAULT_TRANSLUCENT_SHADES}}
+		_, err := LoadConfig(absent, &cfg)
+		require.NoError(t, err)
+		assert.False(t, cfg.Terminal.TranslucentShades)
+
+		on := writeTempConfig(t, "terminal:\n  translucent-shades: true\n")
+		cfg = Config{Terminal: TerminalClient{TranslucentShades: DEFAULT_TRANSLUCENT_SHADES}}
+		_, err = LoadConfig(on, &cfg)
+		require.NoError(t, err)
+		assert.True(t, cfg.Terminal.TranslucentShades)
+	})
+
 	t.Run("theme and profile name case is preserved", func(t *testing.T) {
 		path := writeTempConfig(t, `
 themes:

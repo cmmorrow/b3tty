@@ -24,16 +24,21 @@ type TerminalClient struct {
 	// Ligatures turns the font's ligatures on or off, through the
 	// font-feature-settings rule on .xterm-rows in src/assets/terminal.css.
 	Ligatures bool `yaml:"ligatures" json:"ligatures"`
+	// TranslucentShades draws the shade characters ░▒▓ (U+2591–U+2593) as
+	// solid blocks at 25%, 50%, and 75% opacity instead of the font's
+	// dithered glyphs (see shade-swap.ts in the client).
+	TranslucentShades bool `yaml:"translucent-shades" json:"translucentShades"`
 }
 
-func NewTerminalClient(rows *int, columns *int, autoResize *bool, fontFamily *string, fontSize *int, ligatures *bool) *TerminalClient {
+func NewTerminalClient(rows *int, columns *int, autoResize *bool, fontFamily *string, fontSize *int, ligatures *bool, translucentShades *bool) *TerminalClient {
 	return &TerminalClient{
-		Rows:       *rows,
-		Columns:    *columns,
-		AutoResize: *autoResize,
-		FontFamily: *fontFamily,
-		FontSize:   *fontSize,
-		Ligatures:  *ligatures,
+		Rows:              *rows,
+		Columns:           *columns,
+		AutoResize:        *autoResize,
+		FontFamily:        *fontFamily,
+		FontSize:          *fontSize,
+		Ligatures:         *ligatures,
+		TranslucentShades: *translucentShades,
 	}
 }
 
@@ -239,6 +244,7 @@ type TermConfig struct {
 	Columns            int      `json:"columns"`
 	AutoResize         bool     `json:"autoResize"`
 	Ligatures          bool     `json:"ligatures"`
+	TranslucentShades  bool     `json:"translucentShades"`
 	Theme              Theme    `json:"theme"`
 	Uri                string   `json:"uri"`
 	Port               int      `json:"port"`
@@ -261,6 +267,7 @@ func NewTermConfig(srv *Server, clnt *TerminalClient, thm *Theme, themeNames []s
 		Columns:            clnt.Columns,
 		AutoResize:         clnt.AutoResize,
 		Ligatures:          clnt.Ligatures,
+		TranslucentShades:  clnt.TranslucentShades,
 		Theme:              *thm,
 		Uri:                srv.URL.Hostname(),
 		Port:               srv.Port(),

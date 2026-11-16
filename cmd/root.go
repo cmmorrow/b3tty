@@ -148,12 +148,13 @@ func initConfig() {
 			SettingsServerConfig: src.NewSettingsServerConfig(port, noAuth, noBrowser, showMenubar),
 		},
 		Terminal: src.TerminalClient{
-			FontFamily: fontFamily,
-			FontSize:   fontSize,
-			AutoResize: autoResize,
-			Rows:       rows,
-			Columns:    columns,
-			Ligatures:  ligatures,
+			FontFamily:        fontFamily,
+			FontSize:          fontSize,
+			AutoResize:        autoResize,
+			Rows:              rows,
+			Columns:           columns,
+			Ligatures:         ligatures,
+			TranslucentShades: translucentShades,
 		},
 	}
 
@@ -202,13 +203,14 @@ func initConfig() {
 	if !startCmd.Flags().Changed("auto-resize") {
 		autoResize = cfg.Terminal.AutoResize
 	}
-	// font-family, font-size, and ligatures have no corresponding start flag
+	// font-family, font-size, ligatures, and translucent-shades have no corresponding start flag
 	// (CLI setting was deprecated for the first two — see startCmd's init()),
 	// so there is no precedence to guard; the seed value is already the
 	// effective default.
 	fontFamily = cfg.Terminal.FontFamily
 	fontSize = cfg.Terminal.FontSize
 	ligatures = cfg.Terminal.Ligatures
+	translucentShades = cfg.Terminal.TranslucentShades
 
 	// The theme state is derived later, by loadThemes, once it is known
 	// whether the command being run is `start`.
