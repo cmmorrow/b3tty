@@ -47,6 +47,8 @@ export interface TermConfig {
     autoResize?: boolean;
     /** Show the font's ligatures, when it has any. Absent means off. */
     ligatures?: boolean;
+    /** Draw ░▒▓ as translucent blocks instead of the font's glyphs. Absent means off. */
+    translucentShades?: boolean;
     rows: number;
     columns: number;
     theme: ThemeConfig;
@@ -221,6 +223,7 @@ export interface TerminalClient {
     rows: number;
     columns: number;
     ligatures: boolean;
+    translucentShades: boolean;
 }
 
 export interface SettingsConfig {

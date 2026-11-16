@@ -14,6 +14,7 @@ var autoResize bool
 var fontFamily string
 var fontSize int
 var ligatures bool
+var translucentShades bool
 var rows int
 var columns int
 var uri string
@@ -77,7 +78,7 @@ configuration. For additional security, b3tty supports TLS over https and wss.`,
 			startupProfile = src.DEFAULT_PROFILE_NAME
 		}
 		ts := src.TerminalServer{
-			Client:          src.NewTerminalClient(&rows, &columns, &autoResize, &fontFamily, &fontSize, &ligatures),
+			Client:          src.NewTerminalClient(&rows, &columns, &autoResize, &fontFamily, &fontSize, &ligatures, &translucentShades),
 			Theme:           theme,
 			Server:          src.NewServer(&uri, &port, &noAuth, &src.TLS{CertFilePath: certFile, KeyFilePath: keyFile, Enabled: tls}),
 			Profiles:        profiles,
@@ -111,6 +112,7 @@ func init() {
 	fontFamily = src.DEFAULT_FONT_FAMILY
 	fontSize = src.DEFAULT_FONT_SIZE
 	ligatures = src.DEFAULT_LIGATURES
+	translucentShades = src.DEFAULT_TRANSLUCENT_SHADES
 	startCmd.Flags().IntVar(&rows, "rows", src.DEFAULT_ROWS, "Fixed terminal height in rows (minimum 10). Used only when auto-resize is disabled.")
 	startCmd.Flags().IntVar(&columns, "columns", src.DEFAULT_COLS, "Fixed terminal width in columns (minimum 10). Used only when auto-resize is disabled.")
 	startCmd.Flags().BoolVar(&autoResize, "auto-resize", src.DEFAULT_AUTO_RESIZE, "Automatically resize the terminal to fit the browser window.")

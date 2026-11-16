@@ -325,3 +325,33 @@ func TestSettingsHandlerLigatures(t *testing.T) {
 		})
 	}
 }
+
+func TestSettingsHandlerTranslucentShades(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		t.Run(fmt.Sprintf("POST translucentShades=%v applies, persists, and echoes it", enabled), func(t *testing.T) {
+			ts := newSettingsTestServer()
+			ts.Client.TranslucentShades = !enabled
+			ts.ConfigFile = filepath.Join(t.TempDir(), "conf.yaml")
+			require.NoError(t, os.WriteFile(ts.ConfigFile, []byte("theme: b3tty-dark\n"), 0644))
+
+			body, err := json.Marshal(settingsConfigResponse{
+				Server:   NewSettingsServerConfig(8080, false, false, "hover"),
+				Terminal: TerminalClient{FontSize: 14, AutoResize: true, Rows: 24, Columns: 80, TranslucentShades: enabled},
+			})
+			require.NoError(t, err)
+			req := httptest.NewRequest(http.MethodPost, "/settings", bytes.NewBuffer(body))
+			req.Header.Set("Sec-Fetch-Site", "same-origin")
+			w := httptest.NewRecorder()
+			ts.settingsHandler(w, req)
+			require.Equal(t, http.StatusOK, w.Code)
+
+			assert.Equal(t, enabled, ts.Client.TranslucentShades)
+			var resp settingsConfigResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, enabled, resp.Terminal.TranslucentShades)
+			data, err := os.ReadFile(ts.ConfigFile)
+			require.NoError(t, err)
+			assert.Contains(t, string(data), fmt.Sprintf("translucent-shades: %v", enabled))
+		})
+	}
+}

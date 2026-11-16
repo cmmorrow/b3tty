@@ -535,6 +535,7 @@ func SaveSettingsToConfig(configPath string, server SettingsServerConfig, termin
 	termSection["font-size"] = terminal.FontSize
 	termSection["auto-resize"] = terminal.AutoResize
 	termSection["ligatures"] = terminal.Ligatures
+	termSection["translucent-shades"] = terminal.TranslucentShades
 	termSection["rows"] = terminal.Rows
 	termSection["columns"] = terminal.Columns
 

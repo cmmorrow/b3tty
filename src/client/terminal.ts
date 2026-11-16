@@ -21,6 +21,7 @@ import type {
 import { DEFAULT_BACKGROUND_IMAGE_TRANSPARENCY } from "./types.ts";
 import { isValidWsProtocol, isValidPort, isValidUri } from "./validators.ts";
 import { postThemeConfig, postAddTheme, getSettings } from "./api.ts";
+import { ShadeSwapper } from "./shade-swap.ts";
 import type {
     B3ttyDialog,
     B3ttyMenuBar,
@@ -778,8 +779,14 @@ export async function handleThemeEdited(
  * When the session started in fixed-size mode (auto-resize false), rows and columns
  * are also applied live via term.resize(); the registered term.onResize listener
  * propagates the new dimensions to the server PTY over WebSocket.
+ * shades, when given, is turned on or off to match t.translucentShades.
  */
-export function applyTerminalSettings(t: TerminalClient, term: Terminal, config: TermConfig): void {
+export function applyTerminalSettings(
+    t: TerminalClient,
+    term: Terminal,
+    config: TermConfig,
+    shades?: Pick<ShadeSwapper, "setEnabled">
+): void {
     if (t.fontFamily) {
         term.options.fontFamily = buildFontFamily(t.fontFamily);
         document.documentElement.style.setProperty("--b3tty-font-family", buildFontFamilyCssVar(t.fontFamily));
@@ -792,6 +799,8 @@ export function applyTerminalSettings(t: TerminalClient, term: Terminal, config:
     config.fontFamily = t.fontFamily;
     config.fontSize = t.fontSize;
     config.ligatures = t.ligatures;
+    shades?.setEnabled(t.translucentShades);
+    config.translucentShades = t.translucentShades;
     if (!config.autoResize) {
         config.rows = t.rows;
         config.columns = t.columns;
@@ -800,9 +809,14 @@ export function applyTerminalSettings(t: TerminalClient, term: Terminal, config:
     config.autoResize = t.autoResize;
 }
 
-export function handleSettingsEdited(e: Event, term: Terminal, config: TermConfig): void {
+export function handleSettingsEdited(
+    e: Event,
+    term: Terminal,
+    config: TermConfig,
+    shades?: Pick<ShadeSwapper, "setEnabled">
+): void {
     const { response } = (e as CustomEvent<{ response: SettingsConfig }>).detail;
-    applyTerminalSettings(response.terminal, term, config);
+    applyTerminalSettings(response.terminal, term, config, shades);
 }
 
 /**
@@ -960,6 +974,8 @@ export async function main(config: TermConfig): Promise<void> {
 
     const term = terminalFactory(config);
     term.open(requireElement("terminal"));
+    const shades = new ShadeSwapper(term);
+    shades.setEnabled(config.translucentShades ?? false);
     if (config.backgroundImage) void applyThemeWithBackground(config.theme, term, true, config.activeTheme ?? "");
 
     let fitAddon: FitAddon | undefined;
@@ -1006,7 +1022,7 @@ export async function main(config: TermConfig): Promise<void> {
             term,
             writeCallback,
             (t) => {
-                applyTerminalSettings(t, term, config);
+                applyTerminalSettings(t, term, config, shades);
                 refit();
             },
             (name, themeResp) => {
@@ -1139,7 +1155,7 @@ export async function main(config: TermConfig): Promise<void> {
         settingsEditor.addEventListener(
             "b3tty-settings-edited",
             (e) => {
-                handleSettingsEdited(e, term, config);
+                handleSettingsEdited(e, term, config, shades);
                 refit();
             },
             { signal }

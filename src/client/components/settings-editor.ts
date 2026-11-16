@@ -53,6 +53,7 @@ if (typeof HTMLElement !== "undefined") {
         #fontFamilyInput: HTMLInputElement;
         #fontSizeInput: HTMLInputElement;
         #ligaturesInput: HTMLInputElement;
+        #translucentShadesInput: HTMLInputElement;
         #autoResizeInput: HTMLInputElement;
         #rowsInput: HTMLInputElement;
         #columnsInput: HTMLInputElement;
@@ -278,6 +279,17 @@ if (typeof HTMLElement !== "undefined") {
                 )
             );
 
+            this.#translucentShadesInput = document.createElement("input");
+            this.#translucentShadesInput.type = "checkbox";
+            this.#translucentShadesInput.className = "toggle";
+            terminalPanel.appendChild(
+                this.#makeSettingGroup(
+                    "Translucent Shades",
+                    "Draw the shade characters ░ ▒ ▓ as solid blocks at 25%, 50%, and 75% opacity instead of the font's dithered patterns. Applied immediately.",
+                    this.#translucentShadesInput
+                )
+            );
+
             const divider = document.createElement("div");
             divider.className = "section-divider";
             terminalPanel.appendChild(divider);
@@ -362,6 +374,11 @@ if (typeof HTMLElement !== "undefined") {
             onToggle(this.#noAuthInput, (value) => ({ type: "fieldChanged", field: "noAuth", value }));
             onToggle(this.#noBrowserInput, (value) => ({ type: "fieldChanged", field: "noBrowser", value }));
             onToggle(this.#ligaturesInput, (value) => ({ type: "fieldChanged", field: "ligatures", value }));
+            onToggle(this.#translucentShadesInput, (value) => ({
+                type: "fieldChanged",
+                field: "translucentShades",
+                value,
+            }));
             onToggle(this.#autoResizeInput, (value) => ({ type: "fieldChanged", field: "autoResize", value }));
             this.#showMenubarInput.addEventListener("change", () =>
                 this.#dispatch({
@@ -422,6 +439,7 @@ if (typeof HTMLElement !== "undefined") {
                 [this.#noAuthInput, form.noAuth],
                 [this.#noBrowserInput, form.noBrowser],
                 [this.#ligaturesInput, form.ligatures],
+                [this.#translucentShadesInput, form.translucentShades],
                 [this.#autoResizeInput, form.autoResize],
             ];
             for (const [el, checked] of toggles) {

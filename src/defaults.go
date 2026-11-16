@@ -14,6 +14,10 @@ const DEFAULT_FONT_SIZE = 14
 // DEFAULT_LIGATURES leaves font ligatures off until the user turns them on
 // (terminal.ligatures); when on, they appear whenever the font has them.
 const DEFAULT_LIGATURES = false
+
+// DEFAULT_TRANSLUCENT_SHADES leaves the shade characters ░▒▓ to the font
+// (usually dithered) until the user turns on terminal.translucent-shades.
+const DEFAULT_TRANSLUCENT_SHADES = false
 const DEFAULT_PROFILE_NAME = "default"
 const DEFAULT_SHOW_MENUBAR = "hover"
 const SHOW_MENUBAR_HOVER = "hover"
