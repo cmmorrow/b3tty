@@ -31,7 +31,7 @@ go test -v ./src -run TestName   # single Go test
   - `config.go` (typed config + all config-writing functions), `models.go` (data types), `defaults.go` (constants), `utils.go`, `lock.go`, `logger.go`, `asset_compression.go`
   - `templates/` (`terminal.tmpl`, `setup.tmpl`), `default_themes/*.json` (the two built-in themes, b3tty-dark and b3tty-light, which the setup page offers), `assets/` (hand-authored static files, committed), `dist/` (bun output, gitignored)
 - `scripts/export-legacy-themes.sh` — exports the themes removed from the built-ins in 1.14.0 as `.b3theme` packages (built-ins can't be exported, so it re-adds them as user themes in a scratch HOME first)
-- `src/client/` — `terminal.ts` (entry: xterm setup, WebSocket, event wiring), `api.ts` (all HTTP calls), `types.ts`, `validators.ts`, `design.ts` (design tokens and shared CSS), `command-search.ts`, `components/` (web components), `design-system/` (design-system artifact build)
+- `src/client/` — `terminal.ts` (entry: xterm setup, WebSocket, event wiring), `api.ts` (all HTTP calls), `types.ts`, `validators.ts`, `design.ts` (design tokens and shared CSS), `command-search.ts`, `shade-swap.ts`, `components/` (web components), `design-system/` (design-system artifact build)
 
 ## Server
 
@@ -41,7 +41,7 @@ go test -v ./src -run TestName   # single Go test
 
 **Shared state.** `TerminalServer` is shared by every request goroutine. `StateMu` guards the fields handlers mutate (`Client`, `Theme`, `Profiles`, `Themes`, `InstalledThemes`, `AvailableThemes`, `DefaultTheme`, `ActiveTheme`, `ProfileName`); hold it only long enough to copy values out — never across template execution, JSON encoding, or file I/O. Fields set before `Serve()` and never changed (`Server`, `ConfigFile`, `Plugins`, `NoBrowser`, `ShowMenubar`, `Version`, …) need no lock.
 
-**Restart-only settings.** Server settings (port, no-auth, no-browser, show-menubar) are persisted by `POST /settings` and `b3tty settings set` but apply only on restart. Terminal settings (fonts, ligatures, rows/columns, auto-resize) are applied live and broadcast to open sessions.
+**Restart-only settings.** Server settings (port, no-auth, no-browser, show-menubar) are persisted by `POST /settings` and `b3tty settings set` but apply only on restart. Terminal settings (fonts, ligatures, translucent shades, rows/columns, auto-resize) are applied live and broadcast to open sessions.
 
 **Adding an API endpoint.** Add it to `apiRoutes()` in `serve.go`, not directly to `newMux`: that wraps it in `requireToken` and `TestNewMuxRequiresTokenOnEveryAPIRoute` covers it. Mutating handlers must also call `requireSameOrigin`. Add the client call to `api.ts` (via `apiFetch`) and the same export to `design-system/mock-api.ts`. Return validation failures as a 400 with a plain-text reason (`http.Error`); the client shows that text.
 
@@ -80,6 +80,7 @@ go test -v ./src -run TestName   # single Go test
 - All runtime theme changes go through `applyResolvedTheme`. A background image is shown only after an `Image` probe confirms it loads.
 - `allowTransparency` is always on so switching to an image theme needs no reload.
 - Ligatures are pure CSS (`font-feature-settings` on `.xterm-rows`); no character joiner or addon is needed with the DOM renderer.
+- Translucent shades (`shade-swap.ts`) are the one place b3tty edits xterm's rendered rows: the DOM renderer has no per-cell styling hook and rebuilds a row's spans on every redraw, so a MutationObserver on `.xterm-rows` re-wraps ░▒▓ runs before paint. The characters stay inside the span (only their glyph is hidden) so xterm's own cell widths are kept. An xterm upgrade that changes the DOM renderer can break it.
 - The version comes from bun's `--define __B3TTY_VERSION__` (declared in `global.d.ts`), not from `window.B3TTY`.
 
 ## Security

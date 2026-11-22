@@ -2080,7 +2080,15 @@ describe("applyTerminalSettings", () => {
             theme: {},
         };
         applyTerminalSettings(
-            { fontFamily: "mono", fontSize: 14, autoResize: false, rows: 30, columns: 100, ligatures: true },
+            {
+                fontFamily: "mono",
+                fontSize: 14,
+                autoResize: false,
+                rows: 30,
+                columns: 100,
+                ligatures: true,
+                translucentShades: false,
+            },
             term,
             config
         );
@@ -2116,7 +2124,15 @@ describe("applyTerminalSettings", () => {
             theme: {},
         };
         applyTerminalSettings(
-            { fontFamily: "mono", fontSize: 14, autoResize: true, rows: 30, columns: 100, ligatures: true },
+            {
+                fontFamily: "mono",
+                fontSize: 14,
+                autoResize: true,
+                rows: 30,
+                columns: 100,
+                ligatures: true,
+                translucentShades: false,
+            },
             term,
             config
         );
@@ -3365,11 +3381,42 @@ describe("ligatures", () => {
         const term = terminalFactory({ ...baseConfig, autoResize: true });
         const config = { ...baseConfig, autoResize: true, ligatures: false };
         applyTerminalSettings(
-            { fontFamily: "Fira Code", fontSize: 14, autoResize: true, rows: 24, columns: 80, ligatures: true },
+            {
+                fontFamily: "Fira Code",
+                fontSize: 14,
+                autoResize: true,
+                rows: 24,
+                columns: 80,
+                ligatures: true,
+                translucentShades: false,
+            },
             term,
             config
         );
         expect(documentElementStyle.setProperty).toHaveBeenCalledWith("--b3tty-font-features", ligatureFeatures(true));
         expect(config.ligatures).toBe(true);
+    });
+
+    it("applyTerminalSettings turns translucent shades on and off live", () => {
+        const { doc } = makeDomStub();
+        (globalThis as Record<string, unknown>)["document"] = doc;
+        const term = terminalFactory({ ...baseConfig, autoResize: true });
+        const config: TermConfig = { ...baseConfig, autoResize: true };
+        const shades = { setEnabled: mock((_on: boolean) => {}) };
+        const settings = {
+            fontFamily: "Fira Code",
+            fontSize: 14,
+            autoResize: true,
+            rows: 24,
+            columns: 80,
+            ligatures: false,
+            translucentShades: true,
+        };
+        applyTerminalSettings(settings, term, config, shades);
+        expect(shades.setEnabled).toHaveBeenLastCalledWith(true);
+        expect(config.translucentShades).toBe(true);
+        applyTerminalSettings({ ...settings, translucentShades: false }, term, config, shades);
+        expect(shades.setEnabled).toHaveBeenLastCalledWith(false);
+        expect(config.translucentShades).toBe(false);
     });
 });

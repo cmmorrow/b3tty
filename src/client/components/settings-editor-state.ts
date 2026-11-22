@@ -16,6 +16,7 @@ export interface SettingsForm {
     fontFamily: string;
     fontSize: string;
     ligatures: boolean;
+    translucentShades: boolean;
     autoResize: boolean;
     rows: string;
     columns: string;
@@ -53,6 +54,7 @@ export function formFromSettings(settings: SettingsConfig): SettingsForm {
         fontFamily: settings.terminal.fontFamily,
         fontSize: String(settings.terminal.fontSize),
         ligatures: settings.terminal.ligatures,
+        translucentShades: settings.terminal.translucentShades,
         autoResize: settings.terminal.autoResize,
         rows: String(settings.terminal.rows),
         columns: String(settings.terminal.columns),
@@ -61,7 +63,15 @@ export function formFromSettings(settings: SettingsConfig): SettingsForm {
 
 const BLANK_FORM: SettingsForm = formFromSettings({
     server: { port: 0, noAuth: false, noBrowser: false, showMenubar: "hover" },
-    terminal: { fontFamily: "", fontSize: 0, autoResize: false, rows: 0, columns: 0, ligatures: false },
+    terminal: {
+        fontFamily: "",
+        fontSize: 0,
+        autoResize: false,
+        rows: 0,
+        columns: 0,
+        ligatures: false,
+        translucentShades: false,
+    },
 });
 
 export const initialSettingsEditorState: SettingsEditorState = {
@@ -102,7 +112,7 @@ export function serverSettingsChanged(state: SettingsEditorState): boolean {
 }
 
 /**
- * Whether Auto-Resize changed, which needs a restart. Font and ligature changes apply
+ * Whether Auto-Resize changed, which needs a restart. Font, ligature, and shade changes apply
  * immediately, and so do rows and columns while auto-resize stays off.
  */
 export function autoResizeChanged(state: SettingsEditorState): boolean {
@@ -136,6 +146,7 @@ export function settingsFromForm(form: SettingsForm): SettingsConfig {
             rows: wholeNumber(form.rows),
             columns: wholeNumber(form.columns),
             ligatures: form.ligatures,
+            translucentShades: form.translucentShades,
         },
     };
 }

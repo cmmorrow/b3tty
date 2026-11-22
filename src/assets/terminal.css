@@ -49,6 +49,21 @@ body {
     font-feature-settings: var(--b3tty-font-features, "liga" 0, "calt" 0);
 }
 
+/*
+ * Translucent shade characters (terminal.translucent-shades): shade-swap.ts
+ * wraps each run of ░, ▒, or ▓ in a span of this class, with the opacity
+ * for that shade. The characters stay in the span so it keeps exactly the
+ * width xterm laid out for them; only their glyphs are hidden, and the text
+ * color fills the whole row height instead.
+ */
+#terminal .xterm-rows .b3tty-shade {
+    display: inline-block;
+    height: 100%;
+    vertical-align: top;
+    background-color: currentColor;
+    -webkit-text-fill-color: transparent;
+}
+
 body > div:nth-of-type(2) {
     width: 100% !important;
 }

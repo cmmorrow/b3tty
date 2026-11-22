@@ -21,17 +21,18 @@ import (
 )
 
 var (
-	setPort        int
-	setNoAuth      bool
-	setNoBrowser   bool
-	setShowMenubar string
-	setFontFamily  string
-	setFontSize    int
-	setAutoResize  bool
-	setLigatures   bool
-	setRows        int
-	setColumns     int
-	editEditor     string
+	setPort              int
+	setNoAuth            bool
+	setNoBrowser         bool
+	setShowMenubar       string
+	setFontFamily        string
+	setFontSize          int
+	setAutoResize        bool
+	setLigatures         bool
+	setTranslucentShades bool
+	setRows              int
+	setColumns           int
+	editEditor           string
 )
 
 var settingsCmd = &cobra.Command{
@@ -54,6 +55,7 @@ var settingsGetCmd = &cobra.Command{
 		fmt.Fprintf(w, "  font-size:\t%d\n", fontSize)
 		fmt.Fprintf(w, "  auto-resize:\t%v\n", autoResize)
 		fmt.Fprintf(w, "  ligatures:\t%v\n", ligatures)
+		fmt.Fprintf(w, "  translucent-shades:\t%v\n", translucentShades)
 		if configKeys.Has("terminal.rows") {
 			fmt.Fprintf(w, "  rows:\t%d\n", rows)
 		}
@@ -72,7 +74,8 @@ explicitly provide are changed; all other settings keep their current values.
 
 Server settings (--port, --no-auth, --no-browser) and terminal dimensions
 (--rows, --columns) require a server restart to take effect. Font,
-font-size, and ligatures apply to live sessions immediately.`,
+font-size, ligatures, and translucent-shades apply to live sessions
+immediately.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if !anySettingFlagChanged(cmd) {
 			cmdLog.Fatal("no settings specified; run 'b3tty settings set --help' to see available flags")
@@ -88,6 +91,7 @@ font-size, and ligatures apply to live sessions immediately.`,
 		currentFontSize := fontSize
 		currentAutoResize := autoResize
 		currentLigatures := ligatures
+		currentTranslucentShades := translucentShades
 		currentRows := rows
 		currentColumns := columns
 
@@ -115,6 +119,9 @@ font-size, and ligatures apply to live sessions immediately.`,
 		if cmd.Flags().Changed("ligatures") {
 			currentLigatures = setLigatures
 		}
+		if cmd.Flags().Changed("translucent-shades") {
+			currentTranslucentShades = setTranslucentShades
+		}
 		if cmd.Flags().Changed("rows") {
 			currentRows = setRows
 		}
@@ -139,12 +146,13 @@ font-size, and ligatures apply to live sessions immediately.`,
 		}
 		serverCfg := src.NewSettingsServerConfig(currentPort, currentNoAuth, currentNoBrowser, currentShowMenubar)
 		terminalCfg := src.TerminalClient{
-			FontFamily: currentFontFamily,
-			FontSize:   currentFontSize,
-			AutoResize: currentAutoResize,
-			Rows:       currentRows,
-			Columns:    currentColumns,
-			Ligatures:  currentLigatures,
+			FontFamily:        currentFontFamily,
+			FontSize:          currentFontSize,
+			AutoResize:        currentAutoResize,
+			Rows:              currentRows,
+			Columns:           currentColumns,
+			Ligatures:         currentLigatures,
+			TranslucentShades: currentTranslucentShades,
 		}
 
 		if err := src.SaveSettingsToConfig(configPath, serverCfg, terminalCfg); err != nil {
@@ -324,7 +332,7 @@ func resolveConfigPath() string {
 }
 
 func anySettingFlagChanged(cmd *cobra.Command) bool {
-	for _, name := range []string{"port", "no-auth", "no-browser", "show-menubar", "font-family", "font-size", "auto-resize", "ligatures", "rows", "columns"} {
+	for _, name := range []string{"port", "no-auth", "no-browser", "show-menubar", "font-family", "font-size", "auto-resize", "ligatures", "translucent-shades", "rows", "columns"} {
 		if cmd.Flags().Changed(name) {
 			return true
 		}
@@ -346,6 +354,7 @@ func init() {
 	settingsSetCmd.Flags().IntVar(&setFontSize, "font-size", 14, "Terminal font size")
 	settingsSetCmd.Flags().BoolVar(&setAutoResize, "auto-resize", true, "Auto-resize terminal to fit browser window; when false, rows and columns are used (requires restart)")
 	settingsSetCmd.Flags().BoolVar(&setLigatures, "ligatures", src.DEFAULT_LIGATURES, "Show font ligatures when the font has them")
+	settingsSetCmd.Flags().BoolVar(&setTranslucentShades, "translucent-shades", src.DEFAULT_TRANSLUCENT_SHADES, "Draw the shade characters ░▒▓ as solid blocks at 25%, 50%, and 75% opacity instead of the font's dithered glyphs")
 	settingsSetCmd.Flags().IntVar(&setRows, "rows", src.DEFAULT_ROWS, "Fixed terminal height in rows, minimum 10 (requires restart; ignored when auto-resize is true)")
 	settingsSetCmd.Flags().IntVar(&setColumns, "columns", src.DEFAULT_COLS, "Fixed terminal width in columns, minimum 10 (requires restart; ignored when auto-resize is true)")
 
