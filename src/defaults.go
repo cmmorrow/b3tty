@@ -24,6 +24,9 @@ const SHOW_MENUBAR_HOVER = "hover"
 const SHOW_MENUBAR_VISIBLE = "visible"
 const SHOW_MENUBAR_DISABLE = "disable"
 const BUFFER_SIZE = 4096
+
+// DEFAULT_REPLAY_BUFFER_SIZE caps a persistent session's replay buffer, in bytes.
+const DEFAULT_REPLAY_BUFFER_SIZE = 1 << 20
 const MAX_REQUEST_BODY_SIZE = 4096
 const TOKEN_LENGTH = 24
 const CONFIG_FILE_NAME = "conf.yaml"

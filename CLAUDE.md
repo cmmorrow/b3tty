@@ -26,7 +26,7 @@ go test -v ./src -run TestName   # single Go test
 - `cmd/` — CLI: `root.go` (config loading, shared state), `start.go` (server), `profile.go`, `settings.go`, `theme.go`. Only `cmd/settings_test.go` has tests.
 - `src/` — server, one concern per file:
   - `serve.go` — `TerminalServer`, `Serve`, `newMux`, `apiRoutes`, CSP headers, embeds
-  - handlers: `display_handler.go` (`/`, `/background`, auth helpers), `terminal_handler.go` (`/ws`), `theme_handler.go`, `theme_manage_handler.go` (import/copy/delete/reload), `profile_handler.go`, `settings_handler.go` (and WebSocket broadcasts), `setup_handler.go` (first-run page)
+  - handlers: `display_handler.go` (`/`, `/background`, auth helpers), `terminal_handler.go` (`/ws`, bridged to a `Session` from `session.go`), `theme_handler.go`, `theme_manage_handler.go` (import/copy/delete/reload), `profile_handler.go`, `settings_handler.go` (and WebSocket broadcasts), `setup_handler.go` (first-run page)
   - themes: `theme_catalog.go` (lookup across sources, `LoadThemeState`), `theme_package.go` (`.b3theme` export/import), `plugin_store.go` (installed packages on disk), `theme_ops.go` (operations shared by the handlers and the CLI)
   - `config.go` (typed config + all config-writing functions), `models.go` (data types), `defaults.go` (constants), `utils.go`, `lock.go`, `logger.go`, `asset_compression.go`
   - `templates/` (`terminal.tmpl`, `setup.tmpl`), `default_themes/*.json` (the two built-in themes, b3tty-dark and b3tty-light, which the setup page offers), `assets/` (hand-authored static files, committed), `dist/` (bun output, gitignored)
@@ -47,7 +47,9 @@ go test -v ./src -run TestName   # single Go test
 
 **WebSocket protocol (`/ws?cols=&rows=&token=`).** pty output → binary messages; keyboard input → text; resize → JSON `{type:"resize",cols,rows}`. Server → browser control messages are JSON `{type:"theme"|"settings"|"themes",…}`, sent by `broadcastTheme`/`broadcastSettings`/`broadcastThemeLists`. Every write to a connection holds that `wsClient`'s mutex.
 
-**Session teardown.** End sessions with `terminateSession()` (kill the child, then close the pty), never a bare `ptmx.Close()`: on macOS closing the master doesn't unblock a concurrent `Read()`, which leaks the goroutine and its `WSClients` entry.
+**Sessions.** `terminalHandler` is only a WebSocket ↔ `Session` bridge (`session.go`); it must not touch the pty directly, so a session can later live in another process. `localSession` owns the pty and child, runs the profile's startup commands once at creation, and reads the pty continuously even with nothing attached (an unread pty blocks the shell). A persistent session keeps recent output in a byte-capped `outputBuffer` (`session_buffer.go`) whose front is trimmed only where its escape/UTF-8 parser is in ground state; a quick one keeps only what arrives before its first `Attach`. Every session is quick for now, so closing the WebSocket kills it.
+
+**Session teardown.** End sessions with `Kill()` (kill the child, then close the pty), never a bare `ptmx.Close()`: on macOS closing the master doesn't unblock a concurrent `Read()`, which leaks the read goroutine and, through the handler, its `WSClients` entry.
 
 **Lock file.** `~/.config/b3tty/b3tty.lock` (port, pid, token, protocol; mode 0600) is how CLI commands find and authenticate to a running server (`postToRunningServer`), which they notify best-effort after changing config.
 

@@ -3,16 +3,13 @@ package src
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
 )
 
@@ -76,14 +73,35 @@ func (ts *TerminalServer) logFirstSessionTiming() {
 	})
 }
 
-// terminalHandler upgrades the HTTP connection to a WebSocket, starts the
-// active profile's shell under a pty sized to the "cols"/"rows" query
-// parameters carried on the /ws upgrade request itself (falling back to
-// DEFAULT_COLS/DEFAULT_ROWS via parseSizeParams when absent), then runs two
-// goroutines bridging pty output → WebSocket and WebSocket input → pty. A
-// done channel coordinated with sync.Once lets the input goroutine
-// distinguish a clean PTY-initiated shutdown from an unexpected WebSocket
-// error.
+// wsOutput is a Session's output target: it sends each chunk to the
+// WebSocket as a binary message. failed is closed on the first write error,
+// after which the session detaches it.
+type wsOutput struct {
+	client   *wsClient
+	failed   chan struct{}
+	failOnce sync.Once
+}
+
+func (o *wsOutput) Write(p []byte) (int, error) {
+	o.client.mu.Lock()
+	o.client.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	err := o.client.conn.WriteMessage(websocket.BinaryMessage, p)
+	o.client.mu.Unlock()
+	if err != nil {
+		Errorf("write from pty: %v", err)
+		o.failOnce.Do(func() { close(o.failed) })
+		return 0, err
+	}
+	return len(p), nil
+}
+
+// terminalHandler upgrades the HTTP connection to a WebSocket and bridges it
+// to a new quick Session running the active profile's shell, under a pty
+// sized to the "cols"/"rows" query parameters of the /ws request (falling
+// back to DEFAULT_COLS/DEFAULT_ROWS via parseSizeParams when absent).
+// Session output goes to the WebSocket through wsOutput; a goroutine
+// forwards WebSocket input and resizes to the session. Closing the WebSocket
+// kills the session; the session ending closes the WebSocket.
 func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request) {
 	Debugf(" %s -> %s %s %s", r.RemoteAddr, r.Host, r.Method, redactedURL(r.URL))
 	Debugf("content length: %d", r.ContentLength)
@@ -120,53 +138,37 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 	profile := ts.Profiles[ts.ProfileName]
 	ts.StateMu.RUnlock()
 
-	// Start the active profile's shell via /bin/sh -c so that shell flags and
-	// paths are handled uniformly regardless of the configured shell binary.
-	c := exec.Command("/bin/sh", "-c", profile.Shell)
-	c, err = profile.ApplyToCommand(c)
+	var sess Session
+	sess, err = newLocalSession(SessionOptions{
+		Mode:         SessionQuick,
+		Profile:      profile,
+		Cols:         orgCols,
+		Rows:         orgRows,
+		CommandSleep: ts.CommandSleep,
+	})
 	if err != nil {
-		Errorf("apply profile to command: %v", err)
-		return
-	}
-
-	windowSize := &pty.Winsize{
-		Cols: orgCols,
-		Rows: orgRows,
-	}
-
-	Debugf("cols: %d", windowSize.Cols)
-	Debugf("rows: %d", windowSize.Rows)
-	Debug("starting pty....")
-	ptmx, err := pty.StartWithSize(c, windowSize)
-	if err != nil {
-		Errorf("start pty: %v", err)
+		Errorf("%v", err)
 		return
 	}
 	ts.logFirstSessionTiming()
+	// Every session is quick for now, so it ends with its WebSocket.
+	defer func() { _ = sess.Kill() }()
 
-	defer func() { _ = ptmx.Close() }() // Best effort.
-
-	// terminateSession kills the child process and closes the pty master.
-	// Killing the process is essential, not just cosmetic: on some platforms
-	// (observed on macOS) closing ptmx from one goroutine does not interrupt
-	// a concurrent blocking Read() on it from another goroutine, and
-	// SetReadDeadline is not supported on pty file descriptors either
-	// ("file type does not support deadline"), so a still-running child
-	// process can leave the output goroutine blocked on Read() forever —
-	// leaking the goroutine and never releasing this session's entry in
-	// ts.WSClients. Killing the child process closes its pty slave, which
-	// reliably unblocks any pending master-side Read() with EOF.
-	terminateSession := func() {
-		_ = c.Process.Kill()
-		_ = ptmx.Close()
+	out := &wsOutput{client: client, failed: make(chan struct{})}
+	replay, err := sess.Attach(out)
+	if err != nil {
+		Errorf("attach session: %v", err)
+		return
+	}
+	if len(replay) > 0 {
+		_, _ = out.Write(replay)
 	}
 
-	// done is closed by the PTY output goroutine just before it calls
-	// ws.Close(). This lets the WebSocket input goroutine distinguish a
-	// planned shutdown (PTY exited) from a genuine unexpected error.
+	// done is closed just before the handler closes the WebSocket on its
+	// own (the session ended, or writing to the WebSocket failed). This
+	// lets the input goroutine distinguish a planned shutdown from a
+	// genuine unexpected error.
 	done := make(chan struct{})
-	var closeOnce sync.Once
-	signalDone := func() { closeOnce.Do(func() { close(done) }) }
 
 	// Handle input from the WebSocket
 	go func() {
@@ -175,7 +177,7 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 			if err != nil {
 				select {
 				case <-done:
-					// ws.Close() was called by us after the PTY exited — not an error.
+					// ws.Close() was called by us after the session ended — not an error.
 					Warn("websocket closed after terminal session ended")
 				default:
 					switch err.(type) {
@@ -192,8 +194,8 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 						Errorf("websocket read: %v", err)
 					}
 				}
-				terminateSession()
-				break
+				_ = sess.Kill()
+				return
 			}
 			if msgType == websocket.TextMessage {
 				if cols, rows, ok := parseResizeMessage(message); ok {
@@ -202,76 +204,31 @@ func (ts *TerminalServer) terminalHandler(w http.ResponseWriter, r *http.Request
 						continue
 					}
 					Debugf("resizing to %d, %d", cols, rows)
-					err = pty.Setsize(ptmx, &pty.Winsize{Cols: cols, Rows: rows})
-					if err != nil {
+					if err := sess.Resize(cols, rows); err != nil {
 						Errorf("error calling pty resize: %v", err)
 					}
 					continue
 				}
 			}
-			_, err = ptmx.Write(message)
-			if err != nil {
+			if _, err := sess.Write(message); err != nil {
 				if errors.Is(err, os.ErrClosed) {
 					Debugf("write to pty: %v", err)
 				} else {
 					Errorf("write to pty: %v", err)
 				}
-				terminateSession()
-				break
+				_ = sess.Kill()
+				return
 			}
 		}
 	}()
 
-	// Handle output from the pty
-	go func() {
-		buf := make([]byte, BUFFER_SIZE)
-		for {
-			n, err := ptmx.Read(buf)
-			Debugf("bytes read from buffer: %d", n)
-			if err != nil {
-				switch err {
-				case io.EOF:
-					Info("terminal session closed")
-				default:
-					Errorf("pty read: %v", err)
-				}
-				terminateSession()
-				signalDone()
-				ws.Close()
-				return
-			}
-			client.mu.Lock()
-			ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			err = ws.WriteMessage(websocket.BinaryMessage, buf[:n])
-			client.mu.Unlock()
-			if err != nil {
-				Errorf("write from pty: %v", err)
-				terminateSession()
-				signalDone()
-				break
-			}
-		}
-	}()
-
-	if len(profile.Commands) > 0 {
-		ts.CommandSleep(time.Second * 1)
-		for _, command := range profile.Commands {
-			_, err = ptmx.Write(formatCommand(command))
-			if err != nil {
-				if errors.Is(err, os.ErrClosed) {
-					Debugf("write to pty: %v", err)
-				} else {
-					Errorf("write to pty: %v", err)
-				}
-				terminateSession()
-				return
-			}
-			ts.CommandSleep(time.Millisecond * 200)
-		}
+	// Wait for the session to end (the shell exited, or the input goroutine
+	// killed it after the WebSocket closed), or for a write to the
+	// WebSocket to fail. Returning runs the deferred Kill and ws.Close.
+	select {
+	case <-sess.Done():
+	case <-out.failed:
+		_ = sess.Kill()
 	}
-
-	// Wait for the PTY session to end. The output goroutine closes done
-	// when the PTY exits; waiting here lets the deferred ws.Close() and
-	// ptmx.Close() run on exit rather than leaking this goroutine forever.
-	<-done
+	close(done)
 }
