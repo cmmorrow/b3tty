@@ -237,6 +237,9 @@ func (ts *TerminalServer) newMux() *http.ServeMux {
 func Serve(ts *TerminalServer, shouldOpenBrowser bool, useTLS bool) {
 	ts.WSClients = make(map[*websocket.Conn]*wsClient)
 	Debug("starting b3tty server....")
+	// Compress the embedded assets now rather than on the first request.
+	compressedAssets()
+	compressedDistAssets()
 
 	if existing, err := ReadLockFile(); err == nil && existing != nil {
 		Warnf("lock file found: another b3tty instance may already be running on port %d (pid %d)", existing.Port, existing.PID)

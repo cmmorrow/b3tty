@@ -99,6 +99,10 @@ func init() {
 
 // initConfig reads in config file and ENV variables if set.
 func initConfig() {
+	// A session host needs none of the config; keep its startup light.
+	if isSessionHostInvocation() {
+		return
+	}
 	profiles = make(map[string]src.Profile)
 	profiles[src.DEFAULT_PROFILE_NAME] = src.NewProfile(src.DEFAULT_SHELL, src.DEFAULT_WORKING_DIRECTORY, src.DEFAULT_ROOT, src.DEFAULT_TITLE, []string{})
 

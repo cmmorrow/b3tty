@@ -142,10 +142,7 @@ func TestMustBuildCompressedAssets(t *testing.T) {
 	})
 
 	t.Run("real embedded assets build without panicking", func(t *testing.T) {
-		// compressedAssets is already computed at package init from the real
-		// assets embed.FS; this just asserts it actually happened and is
-		// non-empty rather than re-invoking the panic path.
-		assert.NotEmpty(t, compressedAssets)
+		assert.NotEmpty(t, compressedAssets())
 	})
 }
 
@@ -228,7 +225,7 @@ func TestDistHandler(t *testing.T) {
 	t.Run("serves a real dist asset with the correct bytes", func(t *testing.T) {
 		var path string
 		var asset compressedAsset
-		for p, a := range compressedDistAssets {
+		for p, a := range compressedDistAssets() {
 			path, asset = p, a
 			break
 		}
@@ -243,7 +240,7 @@ func TestDistHandler(t *testing.T) {
 
 	t.Run("a dist-only path is not reachable through assetsHandler, and vice versa", func(t *testing.T) {
 		var distPath string
-		for p := range compressedDistAssets {
+		for p := range compressedDistAssets() {
 			distPath = p
 			break
 		}
@@ -263,10 +260,10 @@ func TestDistHandler(t *testing.T) {
 }
 
 // anyCompressedAsset returns an arbitrary path/asset pair from the real,
-// package-init-computed compressedAssets map, failing the test if it's empty.
+// compressedAssets map, failing the test if it's empty.
 func anyCompressedAsset(t *testing.T) (string, compressedAsset) {
 	t.Helper()
-	for path, asset := range compressedAssets {
+	for path, asset := range compressedAssets() {
 		return path, asset
 	}
 	t.Fatal("compressedAssets is empty")
@@ -278,7 +275,7 @@ func anyCompressedAsset(t *testing.T) (string, compressedAsset) {
 // no file compresses under a given algorithm).
 func assetWithCompressionOrSkip(t *testing.T, pred func(compressedAsset) bool) (string, compressedAsset) {
 	t.Helper()
-	for path, asset := range compressedAssets {
+	for path, asset := range compressedAssets() {
 		if pred(asset) {
 			return path, asset
 		}
