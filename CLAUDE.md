@@ -49,6 +49,8 @@ go test -v ./src -run TestName   # single Go test
 
 **Sessions.** `terminalHandler` is only a WebSocket ↔ `Session` bridge (`session.go`); it must not touch the pty directly, so a session can later live in another process. `localSession` owns the pty and child, runs the profile's startup commands once at creation, and reads the pty continuously even with nothing attached (an unread pty blocks the shell). A persistent session keeps recent output in a byte-capped `outputBuffer` (`session_buffer.go`) whose front is trimmed only where its escape/UTF-8 parser is in ground state; a quick one keeps only what arrives before its first `Attach`. Every session is quick for now, so closing the WebSocket kills it.
 
+**Session protocol.** `session_protocol.go` is the codec the server and a session-host process will speak over a Unix socket: a type byte, a 4-byte big-endian length, then a payload (JSON for control messages, raw bytes for terminal data, capped at `MaxFramePayload`). Bump `ProtocolVersion` for any incompatible change, but keep hello and its reply decodable across versions so a server can still identify, and kill, a host running an older binary.
+
 **Session teardown.** End sessions with `Kill()` (kill the child, then close the pty), never a bare `ptmx.Close()`: on macOS closing the master doesn't unblock a concurrent `Read()`, which leaks the read goroutine and, through the handler, its `WSClients` entry.
 
 **Lock file.** `~/.config/b3tty/b3tty.lock` (port, pid, token, protocol; mode 0600) is how CLI commands find and authenticate to a running server (`postToRunningServer`), which they notify best-effort after changing config.
