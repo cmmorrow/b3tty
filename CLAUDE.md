@@ -23,10 +23,11 @@ go test -v ./src -run TestName   # single Go test
 ## Layout
 
 - `main.go` → `cmd.Execute()`
-- `cmd/` — CLI: `root.go` (config loading, shared state), `start.go` (server), `profile.go`, `settings.go`, `theme.go`. Only `cmd/settings_test.go` has tests.
+- `cmd/` — CLI: `root.go` (config loading, shared state), `start.go` (server), `profile.go`, `settings.go`, `theme.go`, `session_host.go` (hidden `session-host`). Only `cmd/settings_test.go` has tests.
 - `src/` — server, one concern per file:
   - `serve.go` — `TerminalServer`, `Serve`, `newMux`, `apiRoutes`, CSP headers, embeds
   - handlers: `display_handler.go` (`/`, `/background`, auth helpers), `terminal_handler.go` (`/ws`, bridged to a `Session` from `session.go`), `theme_handler.go`, `theme_manage_handler.go` (import/copy/delete/reload), `profile_handler.go`, `settings_handler.go` (and WebSocket broadcasts), `setup_handler.go` (first-run page)
+  - sessions: `session.go` (`Session`, `localSession`), `session_buffer.go` (replay buffer), `session_protocol.go` (codec), `session_host.go` (host logic, socket placement), `session_host_process.go` (the host process and `SpawnSessionHost`)
   - themes: `theme_catalog.go` (lookup across sources, `LoadThemeState`), `theme_package.go` (`.b3theme` export/import), `plugin_store.go` (installed packages on disk), `theme_ops.go` (operations shared by the handlers and the CLI)
   - `config.go` (typed config + all config-writing functions), `models.go` (data types), `defaults.go` (constants), `utils.go`, `lock.go`, `logger.go`, `asset_compression.go`
   - `templates/` (`terminal.tmpl`, `setup.tmpl`), `default_themes/*.json` (the two built-in themes, b3tty-dark and b3tty-light, which the setup page offers), `assets/` (hand-authored static files, committed), `dist/` (bun output, gitignored)
@@ -50,6 +51,8 @@ go test -v ./src -run TestName   # single Go test
 **Sessions.** `terminalHandler` is only a WebSocket ↔ `Session` bridge (`session.go`); it must not touch the pty directly, so a session can later live in another process. `localSession` owns the pty and child, runs the profile's startup commands once at creation, and reads the pty continuously even with nothing attached (an unread pty blocks the shell). A persistent session keeps recent output in a byte-capped `outputBuffer` (`session_buffer.go`) whose front is trimmed only where its escape/UTF-8 parser is in ground state; a quick one keeps only what arrives before its first `Attach`. Every session is quick for now, so closing the WebSocket kills it.
 
 **Session protocol.** `session_protocol.go` is the codec the server and a session-host process will speak over a Unix socket: a type byte, a 4-byte big-endian length, then a payload (JSON for control messages, raw bytes for terminal data, capped at `MaxFramePayload`). Bump `ProtocolVersion` for any incompatible change, but keep hello and its reply decodable across versions so a server can still identify, and kill, a host running an older binary.
+
+**Session host.** `b3tty session-host` (hidden) is the same binary re-executed to own one session behind `~/.config/b3tty/sessions/<id>.sock` (or a private dir under `$XDG_RUNTIME_DIR`/`$TMPDIR` when that path exceeds `sun_path`). `SpawnSessionHost` starts it with `setsid`, writes its spec as JSON on stdin (never argv or env, and never the auth token), and hands it an owner socket on fd 3; a quick host exits when that socket hits EOF, so it dies with the server even on SIGKILL. The host path must stay light: `initConfig` skips it, and package-level init anywhere in `src` is paid by every host (asset compression is lazy for that reason). The host never writes registry files; that is the server's job.
 
 **Session teardown.** End sessions with `Kill()` (kill the child, then close the pty), never a bare `ptmx.Close()`: on macOS closing the master doesn't unblock a concurrent `Read()`, which leaks the read goroutine and, through the handler, its `WSClients` entry.
 

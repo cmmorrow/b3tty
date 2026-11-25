@@ -53,8 +53,12 @@ const (
 
 // SessionOptions configures newLocalSession.
 type SessionOptions struct {
-	Mode       SessionMode
-	Profile    Profile
+	// ID is the session's id; empty means a new random one.
+	ID      string
+	Mode    SessionMode
+	Profile Profile
+	// Env is the shell's environment; nil means this process's own.
+	Env        []string
 	Cols, Rows uint16
 	// BufferSize caps a persistent session's replay buffer, in bytes;
 	// 0 means DEFAULT_REPLAY_BUFFER_SIZE.
@@ -97,15 +101,19 @@ func newSessionID() (string, error) {
 // newLocalSession starts the profile's shell under a pty of the given size,
 // starts reading its output, and runs the profile's startup commands once.
 func newLocalSession(opts SessionOptions) (*localSession, error) {
-	id, err := newSessionID()
-	if err != nil {
-		return nil, fmt.Errorf("session id: %w", err)
+	id := opts.ID
+	if id == "" {
+		var err error
+		if id, err = newSessionID(); err != nil {
+			return nil, fmt.Errorf("session id: %w", err)
+		}
 	}
 	profile := opts.Profile
 	// Start the shell via /bin/sh -c so that shell flags and paths are
 	// handled uniformly regardless of the configured shell binary.
 	c := exec.Command("/bin/sh", "-c", profile.Shell)
-	c, err = profile.ApplyToCommand(c)
+	c.Env = opts.Env
+	c, err := profile.ApplyToCommand(c)
 	if err != nil {
 		return nil, fmt.Errorf("apply profile to command: %w", err)
 	}
@@ -147,17 +155,24 @@ func (s *localSession) Resize(cols, rows uint16) error {
 }
 
 func (s *localSession) Attach(w io.Writer) ([]byte, error) {
+	replay, _, err := s.AttachScreen(w)
+	return replay, err
+}
+
+// AttachScreen is Attach that also reports whether the replay left the
+// alternate screen on, taken atomically with the replay.
+func (s *localSession) AttachScreen(w io.Writer) (replay []byte, altScreen bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var replay []byte
 	if s.buf != nil {
 		replay = s.buf.Bytes()
+		altScreen = s.buf.AltScreen()
 		if s.mode == SessionQuick {
 			s.buf = nil
 		}
 	}
 	s.out = w
-	return replay, nil
+	return replay, altScreen, nil
 }
 
 func (s *localSession) Detach() {
